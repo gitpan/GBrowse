@@ -137,10 +137,10 @@ sub run {
   # EXPERIMENTAL CODE -- GET RID OF THE URL PARAMETERS
   if ($ENV{QUERY_STRING} && $ENV{QUERY_STRING} =~ /reset/) {
       print CGI::redirect(CGI::url(-absolute=>1,-path_info=>1));
-      exit 0;
+  } else {
+      $self->render();
   }
 
-  $self->render();
   $self->cleanup();
   select($old_fh);
 
@@ -169,10 +169,16 @@ sub set_source {
 
 sub init {
     my $self = shift;
+    warn "init()" if DEBUG;
+    warn "set_default_state()" if DEBUG;
     $self->set_default_state();
+    warn "init_database()" if DEBUG;
     $self->init_database();
+    warn "init_plugins()" if DEBUG;
     $self->init_plugins();
+    warn "init_remote_sources()" if DEBUG;
     $self->init_remote_sources();
+    warn "init done" if DEBUG;
 }
 
 # this prints out the HTTP data from an asynchronous event
@@ -374,13 +380,13 @@ sub asynchronous_event {
 		    );
 
 		my $panel_id = 'detail_panels';
-		if ( $track_name =~ /:overview$/ ) {
+		if ( $track_id =~ /:overview$/ ) {
 		    $panel_id = 'overview_panels';
 		}
-		elsif ( $track_name =~ /:region$/ ) {
+		elsif ( $track_id =~ /:region$/ ) {
 		    $panel_id = 'region_panels';
 		}
-		warn "returning track_id=$track_id, key=$track_key, name=$track_name" if DEBUG;
+		warn "add_track() returning track_id=$track_id, key=$track_key, name=$track_name, panel_id=$panel_id" if DEBUG;
 		
 		$track_data{$track_id} = {
 		    track_key        => $track_key,
@@ -402,6 +408,8 @@ sub asynchronous_event {
     if ( param('set_track_visibility') ) {
         my $visible    = param('visible');
         my $track_name = param('track_name');
+
+	warn "set_track_visibility: ",param('track_name'),'=>',param('visible') if DEBUG;
 
         if ($visible) {
             $self->add_track_to_state($track_name);
@@ -444,10 +452,11 @@ sub asynchronous_event {
 
         return ( 204, 'text/plain', undef ) unless ( $edited_file and $data );
         $self->init_remote_sources();
-        my $file_created = $self->handle_edit( $edited_file, $self->state, $data );
+        my ($file_created,$tracks) = $self->handle_edit( $edited_file, $self->state, $data );
 
         my $return_object = {
             file_created   => $file_created,
+	    tracks         => $tracks,
         };
 
         return (200,'application/json',$return_object);
@@ -525,6 +534,11 @@ sub asynchronous_event {
 	return (302,undef,$self->bookmark_link($self->state));
     }
 
+    # redirect to galaxy form submission
+    if (param('galaxy')) {
+	return (302,undef,$self->galaxy_link($self->state));
+    }
+
     # redirect to the imagelink
     if (my $format = param('make_image')) {
 	return (302,undef,$self->image_link($self->state,$format));
@@ -553,10 +567,10 @@ sub background_track_render {
     my $details_msg       = '';
     my %requests;
 
-    if ( $self->segment->length <= $self->get_max_segment() ) {
+    if ( $self->segment->length <= $self->get_max_segment+1 ) {
         $requests{'detail'} =
             $self->render_deferred(
-            labels          => [ $self->detail_tracks ],
+            labels          => [ $self->expand_track_names($self->detail_tracks) ],
             segment         => $self->segment,
             section         => 'detail',
             cache_extra     => $cache_extra,
@@ -574,7 +588,7 @@ sub background_track_render {
     }
 
     $requests{'region'} =
-        $self->render_deferred( labels          => [ $self->regionview_tracks ],
+        $self->render_deferred( labels          => [ $self->expand_track_names($self->regionview_tracks) ],
 				segment         => $self->region_segment,
 				section         => 'region', 
 				cache_extra     => $cache_extra, 
@@ -583,7 +597,7 @@ sub background_track_render {
         if ( $self->state->{region_size} );
 
     $requests{'overview'} =
-        $self->render_deferred( labels          => [ $self->overview_tracks ],
+        $self->render_deferred( labels          => [ $self->expand_track_names($self->overview_tracks) ],
 				segment         => $self->whole_segment,
 				section         => 'overview', 
 				cache_extra     => $cache_extra, 
@@ -615,7 +629,7 @@ sub create_cache_extra {
         );
     push @cache_extra,sort keys %{$settings->{h_feat}} if $settings->{h_feat};
     push @cache_extra,sort @{$settings->{h_region}}    if $settings->{h_region};
-     push @cache_extra, map { $_->config_hash() } $self->plugins->plugins;
+    push @cache_extra, map { $_->config_hash() } $self->plugins->plugins;
     return \@cache_extra;
 }
 
@@ -666,7 +680,7 @@ sub background_individual_track_render {
 	segment     => $segment, 
         section     => $section, 
 	cache_extra => $cache_extra, 
-	external_tracks => $self->external_data,
+	external_tracks => $external,
 	);
 
     my %track_keys;
@@ -685,6 +699,8 @@ sub background_individual_track_render {
 
 sub render {
   my $self           = shift;
+
+  warn "render()" if DEBUG;
 
   # NOTE: these handle_* methods will return true
   # if they want us to exit before printing the header
@@ -731,6 +747,8 @@ sub allparams {
 sub render_body {
   my $self     = shift;
 
+  warn "render_body()" if DEBUG;
+
   my $region   = $self->region;
   my $features = $region->features;
 
@@ -750,6 +768,7 @@ sub render_body {
       print $self->render_navbar($seg);
       print $self->render_panels($seg,{overview=>1,regionview=>1,detailview=>1});
       print $self->render_config($seg);
+      print $self->render_galaxy_form($seg);
   }
   else {
       print $self->render_navbar();
@@ -847,6 +866,8 @@ sub render_panels {
     my $self    = shift;
     my $seg     = shift;
     my $section = shift;
+
+    warn "render_panels()" if DEBUG;
 
     my $html = '';
 
@@ -959,6 +980,7 @@ sub scale_bar {
 sub render_config {
   my $self = shift;
   my $seg = shift;
+  warn "render_config()" if DEBUG;
   return $self->render_toggle_track_table(). 
       $self->render_global_config().
       $self->render_toggle_external_table;
@@ -1042,14 +1064,7 @@ sub region {
 	$region->set_features_by_region(@{$self->state}{'ref','start','stop'});
     }
     else { # a feature search
-	my $search = Bio::Graphics::Browser::RegionSearch->new(
-	    { source => $self->data_source,
-	      state  => $self->state,
-	    });
-	$search->init_databases(
-	    param('dbid') ? [param('dbid')]
-	                  :()
-	    );
+	my $search   = $self->get_search_object();
 	my $features = $search->search_features();
 	$region->features($features);
     }
@@ -1087,6 +1102,20 @@ sub region_segment {
     my $settings      = $self->state;
     return $self->{region_segment} = 
 	$self->region->region_segment($segment,$settings,$self->whole_segment);
+}
+
+sub get_search_object {
+    my $self = shift;
+    return $self->{searchobj} if defined $self->{searchobj};
+    my $search = Bio::Graphics::Browser::RegionSearch->new(
+	{ source => $self->data_source,
+	  state  => $self->state,
+	});
+    $search->init_databases(
+	param('dbid') ? [param('dbid')]
+	:()
+	);
+    return $self->{searchobj} = $search;
 }
 
 # ========================= plugins =======================
@@ -1159,7 +1188,6 @@ sub handle_gff_dump {
 
     my $dumper = Bio::Graphics::Browser::GFFPrinter->new(
         -data_source => $self->data_source(),
-        -source_name => param('src') || param('source') || path_info(),
         -segment    => param('q')          || param('segment'),
         -seqid      => param('ref')        || param('seqid'),
         -start      => param('start')      || 1,
@@ -1167,10 +1195,10 @@ sub handle_gff_dump {
         -stylesheet => param('stylesheet') || param('s'),
         -id         => param('id'),
         '-dump'     => param('d')          || '',
-        -labels => [ param('type'), param('t') ],
-    );
-    $dumper->get_segment();
+        -labels     => [ param('type'), param('t') ],
+    ) or return 1;
 
+    $dumper->get_segment() or return 1;
     print header( $dumper->get_mime_type );
     $dumper->print_gff3();
 
@@ -1212,7 +1240,7 @@ sub handle_plugins {
     ### CONFIGURE  ###############################################
     if ($plugin_action eq $self->tr('Configure')) {
 	$self->plugin_configuration_form($plugin);
-	exit 0;
+	return 1;
     }
     
 
@@ -1238,8 +1266,10 @@ sub handle_plugins {
             or $plugin->verb eq ( $self->tr('Import') || 'Import' ) )
         )
     {
+	my $search      = $self->get_search_object();
+	my $metasegment = $search->segment($segment);
         $self->do_plugin_header( $plugin, $cookie );
-        $self->do_plugin_dump( $plugin, $segment, $state )
+        $self->do_plugin_dump( $plugin, $metasegment, $state )
             && return 1;
     }
 
@@ -1261,19 +1291,32 @@ sub do_plugin_dump {
     my $state   = shift;
     my @additional_feature_sets;
 
-    #if ($segment && $state && $segment->length <= $MAX_SEGMENT) {
-    #   my $feature_files = load_external_sources($segment,$state);
-    #   @additional_feature_sets = values %{$feature_files};
-    #}
     $plugin->dump( $segment, @additional_feature_sets );
     return 1;
 }
 
+# this generates the form that is sent to Galaxy
+# defined in HTML.pm
+sub render_galaxy_form {
+    my $self = shift;
+    my $seg  = shift;
+    $self->wrap_in_div('galaxy_form',
+		     $self->galaxy_form($seg));
+}
+
+# to be inherited
+sub galaxy_form { }
+
 #======================== remote sources ====================
 sub init_remote_sources {
   my $self = shift;
-  my $uploaded_sources = Bio::Graphics::Browser::UploadSet->new($self->data_source,$self->state);
-  my $remote_sources   = Bio::Graphics::Browser::RemoteSet->new($self->data_source,$self->state);
+  my $uploaded_sources = Bio::Graphics::Browser::UploadSet->new($self->data_source,
+								$self->state,
+								$self->language);
+  my $remote_sources   = Bio::Graphics::Browser::RemoteSet->new($self->data_source,
+								$self->state,
+								$self->language);
+  for ($uploaded_sources,$remote_sources) { $_->add_files_from_state; }
   $self->uploaded_sources($uploaded_sources);
   $self->remote_sources($remote_sources);
   return $uploaded_sources && $remote_sources;  # true if both defined
@@ -1281,6 +1324,7 @@ sub init_remote_sources {
 
 sub cleanup {
   my $self = shift;
+  warn "cleanup()" if DEBUG;
   my $state = $self->state;
   $state->{name} = "$state->{ref}:$state->{start}..$state->{stop}"
       if $state->{ref};  # to remember us by :-)
@@ -1440,7 +1484,18 @@ sub handle_edit {
     my $fh = $uploaded_sources->open_file( $file, '>' ) or return;
     print $fh $data;
     close $fh;
-    return $file_created;
+
+    # parse the new file to find out what tracks it contains
+    my $uploads = Bio::Graphics::Browser::UploadSet->new($self->data_source,
+							 $self->state,
+							 $self->language);
+    $uploads->add_file($uploads->name_file($file));
+    my @sections = eval {$self->_featurefile_sections($uploads->feature_file($file))};
+    my @tracks   = map {"$file:$_"} @sections;
+
+    warn "will return tracks @tracks" if DEBUG;
+    
+    return ($file_created,\@tracks);
 }
 
 sub handle_quickie {
@@ -1583,6 +1638,10 @@ sub set_default_state {
 sub update_state {
   my $self   = shift;
 
+  warn "update_state()" if DEBUG;
+
+  return if param('gbgff'); # don't let gbgff requests update our coordinates!!!
+
   $self->update_state_from_cgi;
   my $state  = $self->state;
   if ($self->segment) {
@@ -1598,6 +1657,7 @@ sub update_state {
   }
 
   $self->session->unlock;
+  $self->session->flush();
 }
 
 sub default_state {
@@ -1609,7 +1669,7 @@ sub default_state {
   $state->{width}        = $self->setting('default width');
   $state->{source}       = $data_source->name;
   $state->{cache}        = defined $data_source->cache_time    ? $data_source->cache_time : 1;
-  $state->{region_size}  = $self->setting('region segment');
+  $state->{region_size}    = $self->setting('region segment');
   $state->{'max segment'}  = $self->setting('max segment');
   $state->{v}            = VERSION;
   $state->{stp}          = 1;
@@ -1720,7 +1780,7 @@ sub update_state_from_cgi {
   $self->update_section_visibility($state);
   $self->update_external_sources();
   $self->handle_external_data();
-
+  $self->update_galaxy_url($state);
 }
 
 # Handle returns from the track configuration form
@@ -1881,21 +1941,21 @@ sub update_coordinates {
   }
 
   if ($position_updated) { # clip and update param
-    if (defined $state->{seg_min} && $state->{start} < $state->{seg_min}) {
-      my $delta = $state->{seg_min} - $state->{start};
-      $state->{start} += $delta;
-      $state->{stop}  += $delta;
-    }
+      if (defined $state->{seg_min} && $state->{start} < $state->{seg_min}) {
+	  my $delta = $state->{seg_min} - $state->{start};
+	  $state->{start} += $delta;
+	  $state->{stop}  += $delta;
+      }
 
-    if (defined $state->{seg_max} && $state->{stop}  > $state->{seg_max}) {
-      my $delta = $state->{stop} - $state->{seg_max};
-      $state->{start} -= $delta;
-      $state->{stop}  -= $delta;
-    }
+      if (defined $state->{seg_max} && $state->{stop}  > $state->{seg_max}) {
+	  my $delta = $state->{stop} - $state->{seg_max};
+	  $state->{start} -= $delta;
+	  $state->{stop}  -= $delta;
+      }
 
-    # update our "name" state and the CGI parameter
-    $state->{name} = "$state->{ref}:$state->{start}..$state->{stop}";
-    param(name => $state->{name});
+      # update our "name" state and the CGI parameter
+      $state->{name} = "$state->{ref}:$state->{start}..$state->{stop}";
+      param(name => $state->{name});
   }
 
   elsif (param('name')) {
@@ -1982,7 +2042,8 @@ sub asynchronous_update_sections {
 
     # Init Plugins if need be
     if (   $handle_section_name{'plugin_configure_div'}
-        || $handle_section_name{'tracks_panel'} )
+        || $handle_section_name{'tracks_panel'}
+	|| $handle_section_name{'plugin_form'})
     {
         $self->init_plugins();
     }
@@ -2042,6 +2103,16 @@ sub asynchronous_update_sections {
             $return_object->{'plugin_configure_div'}
                 = "No plugin was specified.\n";
         }
+    }
+
+    # Galaxy form
+    if ( $handle_section_name{'galaxy_form'} ) {
+	$return_object->{'galaxy_form'} = $self->galaxy_form($self->segment);
+    }
+
+    # Galaxy form
+    if ( $handle_section_name{'plugin_form'} ) {
+	$return_object->{'plugin_form'} = $self->plugin_form();
     }
 
     # External File Stuff
@@ -2347,6 +2418,18 @@ sub update_external_sources {
   $self->remote_sources->set_sources([param('eurl')]) if param('eurl');
 }
 
+sub update_galaxy_url {
+    my $self  = shift;
+    my $state = shift;
+    if (my $url = param('GALAXY_URL')) {
+	warn "setting galaxy";
+	$state->{GALAXY_URL} = $url;
+    } elsif (param('clear_galaxy')) {
+	warn "clearing galaxy";
+	delete $state->{GALAXY_URL};
+    }
+}
+
 ##################################################################3
 #
 # SHARED RENDERING CODE HERE
@@ -2565,14 +2648,16 @@ sub overview_tracks {
   my $self = shift;
   my @tracks = grep {/:overview$/} $self->visible_tracks;
   my @files_in_overview  = $self->featurefiles_in_section('overview');
-  return (@tracks,@files_in_overview);
+  my %seen;
+  return grep {!$seen{$_}++} (@tracks,@files_in_overview);
 }
 
 sub regionview_tracks {
   my $self = shift;
   my @tracks = grep {/:region$/}   $self->visible_tracks;
   my @files_in_region  = $self->featurefiles_in_section('region');
-  return (@tracks,@files_in_region);
+  my %seen;
+  return grep {!$seen{$_}++}  (@tracks,@files_in_region);
   
 }
 
@@ -2610,22 +2695,33 @@ sub featurefiles_in_section {
 sub featurefile_sections {
     my $self  = shift;
     my $label = shift;
-
     my $ff    = $self->external_data->{$label} or return;
+    return $self->_featurefile_sections($ff);
+}
+
+sub _featurefile_sections {
+    my $self = shift;
+    my $ff   = shift;
 
     my %sections;
-    my @types  = $ff->types;
-    for my $t (@types) {
-	my $section;
-	if (my $label = eval {$ff->type2label($t)}) {
-	    $section   = $ff->setting($label => 'section');
-	    $section ||= $1 if $label =~ /:(overview|region|detail|details)$/i;
-	}
-	$section    ||= 'detail';
+
+    # we prefer to read the labels from the feature file,
+    # but some of the featurefile types don't support this.
+    my @labels     = eval {$ff->labels};
+    for my $label (@labels) {
+	my $section = $1 if $label =~ /:(overview|region|details?)$/i;
+	$section  ||= $ff->setting($label => 'section');
+	$section  ||= 'detail';
 	$section    =~ s/details/detail/; # foo!
 	$sections{lc $_}++ for $section   =~ /(\w+)/g;
     }
 
+    # probe for unconfigured types, which will go into detail section by default
+    my @unconfigured  = eval {grep{!$ff->type2label($_)} $ff->types};
+    $sections{detail}++ if @unconfigured;
+
+    # last chance!
+    $sections{detail}++ unless %sections;
     return keys %sections;
 }
 
@@ -2780,7 +2876,7 @@ sub render_deferred {
 
     warn '(render_deferred(',join(',',@$labels),') for section ',$section if DEBUG;
 
-    my $renderer = $self->get_panel_renderer($seg);
+    my $renderer   = $self->get_panel_renderer($seg);
 
     my $h_callback = $self->make_hilite_callback();
 
@@ -2837,10 +2933,11 @@ sub render_error_track {
     my $white            = $gd->colorAllocate(255,255,255);
     my $pink             = $gd->colorAllocate(255,181,197);
     $gd->filledRectangle(0,0,$image_width,$image_height,$pink);
-    my ($swidth,$sheight) = (GD->gdGiantFont->width * length($error_message),GD->gdGiantFont->height);
+    my $font             = GD->gdMediumBoldFont;
+    my ($swidth,$sheight) = ($font->width * length($error_message),$font->height);
     my $xoff              = ($image_width - $swidth)/2;
     my $yoff              = ($image_height - $sheight)/2;
-    $gd->string(GD->gdGiantFont,$xoff,$yoff,$error_message,$black);
+    $gd->string($font,$xoff,$yoff,$error_message,$black);
     my ($url,$path) = $self->data_source->generate_image($gd);
 
     return $self->get_panel_renderer->wrap_rendered_track(
@@ -2999,7 +3096,9 @@ sub external_data {
     # $f will hold a feature file hash in which keys are human-readable names of
     # feature files and values are FeatureFile objects.
     my $f           = {};
-    my $max_segment = $self->get_max_segment;
+    my $max_segment  = $self->get_max_segment;
+    my $search       = $self->get_search_object;
+    my $meta_segment = $search->segment($segment);
     if ($segment) {
 	my $rel2abs      = $self->coordinate_mapper($segment,1);
 	my $rel2abs_slow = $self->coordinate_mapper($segment,0);
@@ -3007,7 +3106,9 @@ sub external_data {
 	    warn "FEATURESET = $featureset, sources = ",join ' ',eval{$featureset->sources} 
 	        if DEBUG;
 	    next unless $featureset;
-	    $featureset->annotate($segment,$f,$rel2abs,$rel2abs_slow,$max_segment);
+	    $featureset->annotate($meta_segment,$f,
+				  $rel2abs,$rel2abs_slow,$max_segment,
+				  $self->whole_segment,$self->region_segment);
 	}
     }
 
@@ -3029,17 +3130,12 @@ sub coordinate_mapper {
     );
     my %segments;
 
-    my $search = Bio::Graphics::Browser::RegionSearch->new(
-	{ source => $self->data_source,
-	  state  => $self->state}
-	) or die;
-    $search->init_databases;
-
+    my $search = $self->get_search_object;
     my $closure = sub {
         my ( $refname, @ranges ) = @_;
 
         unless ( exists $segments{$refname} ) {
-            $segments{$refname} = $search->search_features($refname)->[0];
+            $segments{$refname} = $search->search_features({-search_term => $refname})->[0];
         }
         my $mapper  = $segments{$refname} || return;
         my $absref  = $mapper->abs_ref;
@@ -3144,23 +3240,22 @@ sub bookmark_link {
   return "?".$q->query_string();
 }
 
-# for the subset of plugins that are named in the 'quicklink plugins' option, create
-# quick links for them.
-sub plugin_links {
-  my $self    = shift;
-  my $plugins = shift;
+sub galaxy_link {
+    my $self = shift;
 
-  my $quicklink_setting = $self->setting('quicklink plugins') or return '';
-  my @plugins           = shellwords($quicklink_setting)      or return '';
-  my @result;
-  for my $p (@plugins) {
-    my $plugin = $plugins->plugin($p) or next;
-    my $name   = $plugin->name;
-    my $action = "?plugin=$p;plugin_do=".$self->tr('Go');
-    push @result,a({-href=>$action},"[$name]");
-  }
-  return join ' ',@result;
+    my $settings   = shift;
+    my $galaxy_url = $settings->{GALAXY_URL} 
+                     || $self->data_source->global_setting('galaxy outgoing');
+    return '' unless $galaxy_url;
+    my $clear_it  = $self->galaxy_clear;
+    my $submit_it = q(document.galaxyform.submit());
+    return "$clear_it;$submit_it";
 }
+
+sub galaxy_clear {
+    return q(new Ajax.Request(document.URL,{method:'post',postBody:'clear_galaxy=1'}));
+}
+
 
 sub image_link {
     my $self = shift;

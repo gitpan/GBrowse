@@ -1,21 +1,22 @@
-package Bio::Graphics::Browser::Plugin::GFFDumper;
-# $Id: GFFDumper.pm,v 1.26 2006/10/04 15:17:57 lstein Exp $
+package Bio::Graphics::Browser::Plugin::TrackDumper;
+# $Id: TrackDumper.pm,v 1.2 2009/01/06 07:38:24 lstein Exp $
 # test plugin
 use strict;
 use Bio::Graphics::Browser::Plugin;
-use Bio::Graphics::Browser::GFFhelper;
+use Bio::Graphics::Browser::GFFPrinter;
 use CGI qw(:standard *sup);
 
 use vars '$VERSION','@ISA';
-$VERSION = '0.80';
+$VERSION = '0.90';
 
 @ISA = qw/ Bio::Graphics::Browser::Plugin /;
 
-sub name { "GFF File" }
+sub name { "Track Data" }
 sub description {
-  p("The GFF dumper plugin dumps out the currently selected features in",
-    a({-href=>'http://www.sanger.ac.uk/Software/formats/GFF/'},'Gene Finding Format.')).
-  p("This plugin was written by Lincoln Stein &amp; Sheldon McKay.");
+  p("The Track dumper plugin dumps out the currently selected tracks and their configuration in",
+    a({-href=>'http://www.sequenceontology.org/gff3.shtml'},'GFF Version 3 format.'),
+    "The information can be edited and then uploaded to this, or another GBrowse instance to create new tracks.",
+    "This plugin was written by Lincoln Stein &amp; Sheldon McKay.");
 }
 
 sub config_defaults {
@@ -25,15 +26,17 @@ sub config_defaults {
 	  mode        => 'selected',
 	  disposition => 'view',
 	  coords      => 'absolute',
+	  embed       => 0,
+	  print_config=> 1,
 	 };
 }
 
 sub reconfigure {
   my $self = shift;
   my $current_config = $self->configuration;
-  delete $current_config->{embed};
-  foreach my $p ( $self->config_param() ) {
-    $current_config->{$p} = $self->config_param($p);
+  my @keys = keys %{$self->config_defaults};
+  foreach my $p ( @keys ) {
+      $current_config->{$p} = $self->config_param($p);
   }
 }
 
@@ -54,17 +57,6 @@ sub configure_form {
 				       3   => '3'},
 			  -default => $current_config->{version},
 			  -override => 1));
-  $html .= p(
-	     'Coordinates',
-	     radio_group(-name   => $self->config_name('coords'),
-			 -values => ['absolute','relative'],
-			 -labels => { absolute => 'relative to chromosome/contig/clone',
-				      relative => 'relative to dumped segment (start at 1)'
-				    },
-			 -default => $current_config->{coords},
-			 -override => 1
-			 )
-	    );
   autoEscape(0);
   $html .= p(
 	     radio_group(-name=>$self->config_name('disposition'),
@@ -76,8 +68,15 @@ sub configure_form {
 			));
   $html .= p(
 	     checkbox(-name=>$self->config_name('embed'),
-		      -checked=>0,
-		      -label=>'Embed DNA sequence in the GFF file')
+		      -checked=>$current_config->{embed},
+		      -override=>1,
+		      -label=>'Embed DNA sequence in the file')
+		      );      
+  $html .= p(
+	     checkbox(-name=>$self->config_name('print_config'),
+		      -checked=>$current_config->{print_config},
+		      -override=>1,
+		      -label=>'Include track configuration data')
 		      );      
   autoEscape(1);
 
@@ -110,52 +109,44 @@ sub mime_type {
         :'text/plain';
 }
 
-
 sub dump {
   my $self = shift;
   my ($segment, @more_feature_sets) = @_;
-  my $page_settings = $self->page_settings;
   my $conf          = $self->browser_config;
+  my $page_settings = $self->page_settings;
   my $config        = $self->configuration;
   my $version       = $config->{version} || 3;
   my $mode          = $config->{mode}    || 'selected';
   my $db            = $self->database;
-  my $whole_segment = $db->segment(Accession => $segment->ref) ||
-                      $db->segment($segment->ref);
+  my $whole_segment = $db->segment(Accession => $segment->seq_id) ||
+                      $db->segment($segment->seq_id);
   my $coords        = $config->{coords};
   my $embed         = $config->{embed};
 
-  $segment->refseq($segment) if $coords eq 'relative';
-
-  my $date = localtime;
-  print "##gff-version $version\n";
-  print "##date $date\n";
-  print "##sequence-region ",join(' ',$segment->ref,$segment->start,$segment->stop),"\n";
-  print "##source gbrowse GFFDumper plugin\n";
-  print $mode eq 'selected' ? "##NOTE: Selected features dumped.\n"
-                            : "##NOTE: All features dumped.\n";
-
-  my @args;
-  if ($mode eq 'selected') {
-    my @feature_types = $self->selected_features;
-    @args = (-types => \@feature_types);
-  }
-  
-  my @feats = ();
-
-  my $iterator = $segment->get_seq_stream(@args);
-  while ( my $f = $iterator->next_seq ) {
-    $self->print_feature($f,$version);
+  # safest thing to do is to use embedded logic
+  if ($version == 3 && $config->{print_config}) {
+      my $dumper = Bio::Graphics::Browser::GFFPrinter->new(
+	  -data_source => $conf,
+	  -seqid       => $segment->seq_id,
+	  -start       => $segment->start,
+	  -end         => $segment->end,
+	  -labels      => $mode eq 'selected' 
+	                  ? [$self->selected_tracks] 
+	                  : []
+	  ) or return;
+      $dumper->print_gff3();
   }
 
-  for my $set (@more_feature_sets) {
-    if ( $set->can('get_seq_stream') ) {
-      my @feats = ();
-      my $iterator = $set->get_seq_stream;
-      while ( my $f = $iterator->next_seq ) {
-	$self->print_feature($f);
-      }
-    }
+  elsif ($config->{print_config}) {
+      Bio::Graphics::Browser::GFFPrinter->print_configuration
+	  ($self->browser_config,
+	   $mode eq 'selected' ? [$self->selected_tracks] : ()
+	  );
+      $self->print_gff($segment,@more_feature_sets);
+  }
+
+  else {
+      $self->print_gff($segment,@more_feature_sets);
   }
 
   if ( $embed ) {
@@ -163,7 +154,45 @@ sub dump {
     $dna =~ s/(\S{60})/$1\n/g;
     print ">$segment\n$dna\n" if $dna;
   }
-  
+}
+
+sub print_gff {
+    my $self = shift;
+    my ($segment, @more_feature_sets) = @_;
+    my $config     = $self->configuration;
+    my $version    = $config->{version} || 3;
+    my $mode       = $config->{mode}    || 'selected';
+    
+    my $date = localtime;
+    print "##gff-version $version\n";
+    print "##date $date\n";
+    print "##sequence-region ",join(' ',$segment->ref,$segment->start,$segment->stop),"\n";
+    print "##source gbrowse GFFDumper plugin\n";
+    print $mode eq 'selected' ? "##NOTE: Selected features dumped.\n"
+	: "##NOTE: All features dumped.\n";
+
+    my @args;
+    if ($mode eq 'selected') {
+	my @feature_types = $self->selected_features;
+	@args = (-types => \@feature_types);
+    }
+      
+    my @feats = ();
+
+    my $iterator = $segment->get_seq_stream(@args);
+    while ( my $f = $iterator->next_seq ) {
+	$self->print_feature($f,$version);
+    }
+
+    for my $set (@more_feature_sets) {
+	if ( $set->can('get_seq_stream') ) {
+	    my @feats = ();
+	    my $iterator = $set->get_seq_stream;
+	    while ( my $f = $iterator->next_seq ) {
+		$self->print_feature($f);
+	    }
+	}
+    }
 }
 
 sub print_feature {

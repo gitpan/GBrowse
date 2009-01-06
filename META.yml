@@ -1,6 +1,6 @@
 ---
 name: GBrowse
-version: 1.982
+version: 1.983
 author:
   - 'Lincoln Stein <lincoln.stein@gmail.com>'
 abstract: The GMOD Generic Genome Browser
@@ -41,6 +41,10 @@ provides:
     file: lib/Bio/Graphics/Browser/I18n.pm
   Bio::Graphics::Browser::Markup:
     file: lib/Bio/Graphics/Browser/Markup.pm
+  Bio::Graphics::Browser::MetaSegment:
+    file: lib/Bio/Graphics/Browser/RegionSearch.pm
+  Bio::Graphics::Browser::MetaSegment::Iterator:
+    file: lib/Bio/Graphics/Browser/RegionSearch.pm
   Bio::Graphics::Browser::OptionPick:
     file: lib/Bio/Graphics/Browser/OptionPick.pm
   Bio::Graphics::Browser::PadAlignment:
