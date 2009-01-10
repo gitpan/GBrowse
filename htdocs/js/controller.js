@@ -2,7 +2,8 @@
  controller.js -- The GBrowse controller object
 
  Lincoln Stein <lincoln.stein@gmail.com>
- $Id: controller.js,v 1.73 2009/01/06 09:13:12 lstein Exp $
+ Ben Faga <ben.faga@gmail.com>
+ $Id: controller.js,v 1.80 2009/01/10 12:19:21 lstein Exp $
 
 Indentation courtesy of Emacs javascript-mode 
 (http://mihai.bazon.net/projects/emacs-javascript-mode/javascript.el)
@@ -247,7 +248,7 @@ var GBrowseController = Class.create({
           html    = section_html[section_name];
           $(section_name).innerHTML = html;
 	  if (scroll_there)
-	    $(section_name).scrollTo();
+	    new Effect.ScrollTo(section_name);
         }
       }
     });
@@ -333,8 +334,8 @@ var GBrowseController = Class.create({
     this.each_track(function(gbtrack) {
          if ($(gbtrack.track_image_id) != null)
 	    $(gbtrack.track_image_id).setOpacity(0.3);
-         else
-            alert('REPORT THIS BUG: element '+gbtrack.track_image_id+' should not be null');
+	 //  else
+	 //  alert('REPORT THIS BUG: element '+gbtrack.track_image_id+' should not be null');
     });
     
     new Ajax.Request(document.URL,{
@@ -476,7 +477,7 @@ var GBrowseController = Class.create({
              Controller.get_remaining_tracks(track_keys,1000,1.1,time_key);
            } 
    	   if (scroll_there) {
-	      $(gbtrack.track_div_id).scrollTo();
+	      new Effect.ScrollTo(gbtrack.track_div_id);
 	   }
          } // end onSuccess
        }); // end Ajax.Request
@@ -611,11 +612,13 @@ var GBrowseController = Class.create({
   function(div_id) {
     var plugin_base  = document.pluginform.plugin.value;
     this.update_sections(new Array(div_id), '&plugin_base='+plugin_base);
+    new Effect.ScrollTo(div_id);
   },
 
   reconfigure_plugin:
-  function(plugin_action,plugin_track_id,pc_div_id,plugin_type) {
-    var form_element = $("configure_plugin");
+  function(plugin_action,plugin_track_id,pc_div_id,plugin_type,form_element) {
+    if (form_element==null)
+       form_element = $("configure_plugin");
     new Ajax.Request(document.URL,{
       method:     'post',
       parameters: form_element.serialize() +"&"+ $H({
@@ -676,6 +679,7 @@ var GBrowseController = Class.create({
   function(edit_file) {
     var gbtrack  = this.gbtracks.get(decodeURIComponent(edit_file));
     var basename = gbtrack!=null ? gbtrack.track_name : edit_file;
+    visibility('upload_tracks_panel',1);
     Controller.update_sections(new Array(external_utility_div_id), 
    	    '&edit_file='+basename,true);
   },
@@ -800,6 +804,14 @@ function initialize_page() {
   });
   
   Controller.first_render();
+
+  // The next statement is to avoid the scalebars from being "out of sync"
+  // when manually advancing the browser with its forward/backward buttons.
+  // Unfortunately it causes an infinite loop when there are multiple regions!
+  if ($(detail_container_id) != null)
+      Controller.update_coordinates('left 0');
+
+  // These statements get the rubberbanding running.
   Overview.prototype.initialize();
   Region.prototype.initialize();
   Details.prototype.initialize();
@@ -807,8 +819,11 @@ function initialize_page() {
 
 // set the colors for the rubberband regions
 function set_dragcolors(color) {
+    if (overviewObject != null)
      overviewObject.background = color;
+    if (regionObject != null)
      regionObject.background   = color;
+    if (detailsObject != null)
      detailsObject.background  = color;
 }
 

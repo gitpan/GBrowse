@@ -125,7 +125,10 @@ sub run {
   my $fh   = shift || \*STDOUT;
   my $old_fh = select($fh);
 
-  warn "RUN(): URI = ",url(-path=>1,-query=>1) if DEBUG;
+  warn "RUN(): ",
+       request_method(),': ',
+       url(-path=>1),' ',
+       query_string() if DEBUG;
 
   $self->set_source();
 
@@ -138,7 +141,7 @@ sub run {
   if ($ENV{QUERY_STRING} && $ENV{QUERY_STRING} =~ /reset/) {
       print CGI::redirect(CGI::url(-absolute=>1,-path_info=>1));
   } else {
-      warn "render()";
+      warn "render()" if DEBUG;
       $self->render();
   }
 
@@ -227,8 +230,8 @@ sub asynchronous_event {
 
     if ( my $action = param('navigate') ) {
 
-        $self->init_database();
-        $self->asynchronous_update_coordinates($action);
+        my $updated = $self->asynchronous_update_coordinates($action);
+        $self->init_database() if $updated;
 
         my ( $track_keys, $display_details, $details_msg )
             = $self->background_track_render();
@@ -288,6 +291,12 @@ sub asynchronous_event {
         return ( 200, 'application/json', $return_object );
     }
 
+    if ( param('upload_table') ) {
+	$self->init_remote_sources();
+        my $html        = $self->render_external_table();
+        return ( 200, 'text/html', $html );
+    }
+
     if ( my $track_name = param('configure_track') ) {
         my $html = $self->track_config($track_name);
         return ( 200, 'text/html', $html );
@@ -310,7 +319,7 @@ sub asynchronous_event {
     }
 
     if ( param('retrieve_multiple') ) {
-        $self->init_database();
+        # $self->init_database();
         $self->init_plugins();
         $self->init_remote_sources();
 
@@ -503,7 +512,10 @@ sub asynchronous_event {
 
     # Change the order of tracks if any "label[]" parameters are present
     if ( my @labels = param('label[]') ) {
-        foreach (@labels) {s/%5F/_/g}
+        foreach (@labels) {
+	    s/%5F/_/g;
+	    s/:(overview|region|detail)$// if /^(plugin|file|http|ftp):/;
+	}
         my %seen;
         @{ $settings->{tracks} } = grep { length() > 0 && !$seen{$_}++ }
             ( @labels, @{ $settings->{tracks} } );
@@ -717,6 +729,7 @@ sub render_header {
   my $self    = shift;
   my $cookie = $self->create_cookie();
   my $header = CGI::header(
+      -cache_control =>'no-cache',
       -cookie  => $cookie,
       -charset => $self->tr('CHARSET'),
       );
@@ -755,25 +768,30 @@ sub render_body {
 
   my $title    = $self->generate_title($features);
 
-  print $self->render_top($title);
-  print $self->render_title($title,$self->state->{name} && @$features == 0);
-  print $self->render_instructions;
+  print $self->render_html_start($title);
+  print $self->render_top($title,$features);
 
   if ($region->feature_count > 1) {
       print $self->render_navbar();
       print $self->render_multiple_choices($features,$self->state->{name});
-      print $self->render_config();
+      print $self->render_toggle_track_table;
+      print $self->render_toggle_external_table;
+      print $self->render_global_config();
   }
 
   elsif (my $seg = $region->seg) {
       print $self->render_navbar($seg);
       print $self->render_panels($seg,{overview=>1,regionview=>1,detailview=>1});
-      print $self->render_config($seg);
+      print $self->render_toggle_track_table;
+      print $self->render_toggle_external_table;
+      print $self->render_global_config($seg);
       print $self->render_galaxy_form($seg);
   }
   else {
       print $self->render_navbar();
-      print $self->render_config();
+      print $self->render_toggle_track_table;
+      print $self->render_toggle_external_table;
+      print $self->render_global_config();
   }
 
   print $self->render_bottom($features);
@@ -792,11 +810,11 @@ sub generate_title {
     return !$features || !$state->{name}     ? $description
          : @$features == 0                   ? $self->tr('NOT_FOUND',$state->{name})
 	 : @$features == 1 ? "$description: ".
-	                      $self->tr('SHOWING_FROM_TO',
-					scalar $dsn->unit_label($features->[0]->length),
-					$features->[0]->seq_id,
-					$dsn->commas($features->[0]->start),
-					$dsn->commas($features->[0]->end))
+				   $self->tr('SHOWING_FROM_TO',
+					     scalar $dsn->unit_label($features->[0]->length),
+					     $features->[0]->seq_id,
+					     $dsn->commas($features->[0]->start),
+					     $dsn->commas($features->[0]->end))
 	 : "$description: ".$self->tr('HIT_COUNT',scalar @$features);
 }
 
@@ -978,14 +996,6 @@ sub scale_bar {
     return $html
 }
 
-sub render_config {
-  my $self = shift;
-  my $seg = shift;
-  warn "render_config()" if DEBUG;
-  return $self->render_toggle_track_table(). 
-      $self->render_global_config().
-      $self->render_toggle_external_table;
-}
 
 #never called, method in HTML.pm with same name is run instead
 sub render_toggle_track_table {
@@ -1031,6 +1041,7 @@ sub render_bottom {
 
 sub init_database {
   my $self = shift;
+  return $self->db() if $self->db();  # already done
 
   my $dsn = $self->data_source;
   my $db  = $dsn->open_database();
@@ -1048,10 +1059,12 @@ sub region {
 
     return $self->{region} if exists $self->{region};
 
+    my $db = $self->data_source->open_database();
+
     my $region   = Bio::Graphics::Browser::Region->new(
  	{ source => $self->data_source,
  	  state  => $self->state,
- 	  db     => $self->db }
+ 	  db     => $db }
  	) or die;
 
     # run any "find" plugins
@@ -1076,8 +1089,45 @@ sub region {
     return $self->{region} = $region;
 }
 
+sub thin_segment {
+    my $self  = shift;
+    my $state = $self->state;
+    if (exists $state->{ref}) {
+	return Bio::Graphics::Feature->new(-seq_id => $state->{ref},
+					   -start  => $state->{start},
+					   -end    => $state->{stop});
+    } else {
+	return $self->segment;
+    }
+}
+
+sub thin_whole_segment {
+    my $self  = shift;
+    my $state = $self->state;
+    if (exists $state->{ref} && exists $state->{seg_min}) {
+	return Bio::Graphics::Feature->new(-seq_id => $state->{ref},
+					   -start  => $state->{seg_min},
+					   -end    => $state->{seg_max});
+    } else {
+	return $self->whole_segment;
+    }
+}
+
+sub thin_region_segment {
+    my $self  = shift;
+    my $state = $self->state;
+    my $thin_segment       = $self->thin_segment;
+    my $thin_whole_segment = $self->thin_whole_segment;
+
+    return Bio::Graphics::Browser::Region->region_segment(
+	$thin_segment,
+	$state,
+	$thin_whole_segment);
+}
+
 sub segment {
     my $self   = shift;
+    my $state  = $self->state;
     my $region = $self->region or return;
     return $region->seg;
 }
@@ -1730,7 +1780,11 @@ sub add_track_to_state {
 
   return unless length $label; # refuse to add empty tracks!
 
-  my $state  = $self->state;
+  # don't add invalid track
+  my %potential_tracks = map {$_=>1} $self->potential_tracks;
+  return unless $potential_tracks{$label};
+
+  my $state   = $self->state;
   my %current = map {$_=> 1} @{$state->{tracks}};
   push @{$state->{tracks}},$label unless $current{$label};
 
@@ -1869,11 +1923,11 @@ sub update_tracks {
   $self->set_tracks($self->split_labels(param('label'))) if param('label');
   $self->set_tracks($self->split_labels(param('t')))     if param('t');
 
-  if (my @selected = split_labels(param('enable'))) {
+  if (my @selected = $self->split_labels(param('enable'))) {
     $state->{features}{$_}{visible} = 1 foreach @selected;
   }
 
-  if (my @selected = split_labels(param('disable'))) {
+  if (my @selected = $self->split_labels(param('disable'))) {
     $state->{features}{$_}{visible} = 0 foreach @selected;
   }
 
@@ -2034,7 +2088,9 @@ sub asynchronous_update_detail_scale_bar {
 sub asynchronous_update_sections {
     my $self          = shift;
     my $section_names = shift;
-    $self->init_database();
+
+    # avoid unecessary database inits
+    #    $self->init_database();
 
     my $source        = $self->data_source;
     my $return_object = {};
@@ -2059,29 +2115,23 @@ sub asynchronous_update_sections {
 
     # Page Title
     if ( $handle_section_name{'page_title'} ) {
-        my $segment     = $self->segment;
+	my $segment     = $self->thin_segment;  # avoids a db open
         my $dsn         = $self->data_source;
         my $description = $dsn->description;
-        $return_object->{'page_title'} = $description . '<br>'
-            . $self->tr(
-            'SHOWING_FROM_TO',
-            scalar $source->unit_label( $segment->length ),
-            $segment->seq_id,
-            $source->commas( $segment->start ),
-            $source->commas( $segment->end )
-            );
+        $return_object->{'page_title'} = $self->generate_title([$segment]);
     }
 
     # Span that shows the range
     if ( $handle_section_name{'span'} ) {
         my $container
-	    = $self->slidertable($self->segment);
+	    = $self->slidertable();
         $return_object->{'span'} = $container;
     }
 
     # Unused Search Field
     if ( $handle_section_name{'search_form_objects'} ) {
-        $return_object->{'search_form_objects'} = $self->render_search_form_objects();
+        $return_object->{'search_form_objects'} 
+	    = $self->render_search_form_objects();
     }
 
     # Plugin Configuration Form
@@ -2108,7 +2158,7 @@ sub asynchronous_update_sections {
 
     # Galaxy form
     if ( $handle_section_name{'galaxy_form'} ) {
-	$return_object->{'galaxy_form'} = $self->galaxy_form($self->segment);
+	$return_object->{'galaxy_form'} = $self->galaxy_form($self->thin_segment);
     }
 
     # Galaxy form
@@ -2592,7 +2642,7 @@ sub regionview_bounds {
 
 sub split_labels {
   my $self = shift;
-  my @results = map {/^(http|ftp|das)/ ? $_ : split /[ +-]/} @_;
+  my @results = map {/^(http|ftp|das)/ ? $_ : split /[+-]/} @_;
   foreach (@results) {
       tr/$;/-/;  # unescape hyphens
   }
@@ -2604,7 +2654,9 @@ sub set_tracks {
     my @labels = @_;
     my $state  = $self->state;
 
-    $state->{tracks} = \@labels;
+    my %potential = map {$_=>1} $self->potential_tracks;
+
+    $state->{tracks} = [grep {$potential{$_}} @labels];
     $self->load_plugin_annotators(\@labels);
     $state->{features}{$_}{visible} = 0 foreach $self->data_source->labels;
     $state->{features}{$_}{visible} = 1 foreach @labels;
@@ -2634,15 +2686,12 @@ sub load_plugin_annotators {
 }
 
 sub detail_tracks {
-  my $self   = shift;
+  my $self     = shift;
   my $external = $self->external_data;
-  my @tracks            = grep {!$external->{$_}}
-                          grep {!/:(overview|region)$/} $self->visible_tracks;
-  my @files_in_details  = $self->featurefiles_in_section('detail');
-  my %seen;
-
-  return grep {!$seen{$_}++} (@tracks,@files_in_details);
-
+  my %files_in_details = map {$_=>1} $self->featurefiles_in_section('detail','expand');
+  my @tracks           = grep {$files_in_details{$_}
+			       || !/:(overview|region)$/} $self->visible_tracks;
+  return @tracks;
 }
 
 sub overview_tracks {
@@ -2662,23 +2711,43 @@ sub regionview_tracks {
   
 }
 
+# all tracks currently in our state; this MAY go out of date if the
+# configuration file changes.
 sub all_tracks {
     my $self  = shift;
     my $state = $self->state;
     return @{$state->{tracks}};
 }
 
+# all potential tracks; this is guaranteed to be up to date with the
+# configuration file.
+sub potential_tracks {
+    my $self   = shift;
+    my $source = $self->data_source;
+    my $uploads = $self->uploaded_sources;
+    my $remotes = $self->remote_sources;
+    return grep {!/^_/} ($source->detail_tracks,
+			 $source->overview_tracks,
+			 $source->plugin_tracks,
+			 $source->regionview_tracks,
+			 $uploads ? $uploads->files   : (),
+			 $remotes ? $remotes->sources : ()
+                        );
+}
+
 sub visible_tracks {
     my $self  = shift;
     my $state = $self->state;
-    return grep {$state->{features}{$_}{visible} 
+    my @tracks = grep {$state->{features}{$_}{visible} 
 		 && !/^_/
-    } $self->all_tracks;
+           } $self->all_tracks;
+    return @tracks;
 }
 
 sub featurefiles_in_section {
     my $self             = shift;
     my $desired_section  = shift;
+    my $expand           = shift;
 
     my $external = $self->external_data;
     my $state    = $self->state;
@@ -2688,6 +2757,7 @@ sub featurefiles_in_section {
 	$state->{features}{$label}{visible}   or next;
 	my $file     = $external->{$label}    or next;
 	my %sections = map {$_=>1} $self->featurefile_sections($label);
+	$label .= ":".lc $desired_section if $expand;
 	$found{$label}++ if $sections{lc $desired_section};
     }
     return keys %found;
@@ -2774,12 +2844,16 @@ sub trackname_to_id {
 
 ################## get renderer for this segment #########
 sub get_panel_renderer {
-  my $self = shift;
-  my $seg  = shift || $self->segment;
-  return Bio::Graphics::Browser::RenderPanels->new(-segment  => $seg,
-						   -source   => $self->data_source,
-						   -settings => $self->state,
-						   -language => $self->language,
+  my $self   = shift;
+  my $seg    = shift || $self->segment;
+  my $whole  = shift || $self->whole_segment;
+  my $region = shift || $self->region_segment;
+  return Bio::Graphics::Browser::RenderPanels->new(-segment        => $seg,
+						   -whole_segment  => $whole,
+						   -region_segment => $region,
+						   -source         => $self->data_source,
+						   -settings       => $self->state,
+						   -language       => $self->language,
 						  );}
 
 ################## image rendering code #############
@@ -2822,9 +2896,9 @@ sub get_blank_panels {
     my $track_names = shift;
     my $section     = shift;
 
-    my $html  = '';
-    my $external = $self->external_data;
+    my $settings = $self->state;
 
+    my $html  = '';
     my $image_width = $self->get_image_width;
     foreach my $track_name ( @{ $track_names || [] } ) {
 
@@ -2870,14 +2944,17 @@ sub render_deferred {
     my %args = @_;
 
     my $labels      = $args{labels}          || [ $self->detail_tracks ];
-    my $seg         = $args{segment}         || $self->segment;
+    my $seg         = $args{segment}         || $self->thin_segment;
     my $section     = $args{section}         || 'detail';
     my $cache_extra = $args{cache_extra}     || $self->create_cache_extra();
     my $external    = $args{external_tracks} || $self->external_data;
 
     warn '(render_deferred(',join(',',@$labels),') for section ',$section if DEBUG;
 
-    my $renderer   = $self->get_panel_renderer($seg);
+    my $renderer   = $self->get_panel_renderer($seg,
+					       $self->thin_whole_segment,
+					       $self->thin_region_segment
+	);
 
     my $h_callback = $self->make_hilite_callback();
 
@@ -2885,7 +2962,7 @@ sub render_deferred {
         {   labels           => $labels,
             section          => $section,
             deferred         => 1,
-            whole_segment    => $self->whole_segment(),
+            whole_segment    => $self->thin_whole_segment(),
 	    external_features=> $external,
             hilite_callback  => $h_callback || undef,
             cache_extra      => $cache_extra,
@@ -2958,7 +3035,10 @@ sub render_deferred_track {
     my $cache_key        = $args{'cache_key'};
     my $track_id         = $args{'track_id'};
 
-    my $renderer = $self->get_panel_renderer;
+    my $renderer = $self->get_panel_renderer($self->thin_segment,
+					     $self->thin_whole_segment,
+					     $self->thin_region_segment
+	);
 
     my $base  = $renderer->get_cache_base();
     my $cache = Bio::Graphics::Browser::CachedTrack->new(
@@ -2972,12 +3052,12 @@ sub render_deferred_track {
 
     my $result_html = '';
     if ( $cache->status eq 'AVAILABLE' ) {
-        my $result = $renderer->render_tracks( { $track_id => $cache } );
+        my $result   = $renderer->render_tracks( { $track_id => $cache } );
         $result_html = $result->{$track_id};
     }
     elsif ($cache->status eq 'ERROR') {
         my $image_width = $self->get_image_width;
-        $result_html .= $self->render_error_track(
+        $result_html   .= $self->render_error_track(
 						  track_id       => $track_id,
 						  image_width      => $image_width,
 						  image_height     => EMPTY_IMAGE_HEIGHT,
@@ -2986,7 +3066,7 @@ sub render_deferred_track {
      } else {
         my $image_width = $self->get_image_width;
         $result_html .= $self->render_grey_track(
-						 track_id       => $track_id,
+						 track_id         => $track_id,
 						 image_width      => $image_width,
 						 image_height     => EMPTY_IMAGE_HEIGHT,
 						 image_element_id => $track_id . "_image",
@@ -3212,6 +3292,16 @@ sub general_help {
   return shift->globals->url_base."/general_help.html";
 }
 
+sub join_selected_tracks {
+    my $self = shift;
+
+    my @selected = $self->visible_tracks;
+    foreach (@selected) { # escape hyphens
+	tr/-/$;/;
+    }
+    return join '-',@selected;
+}
+
 sub bookmark_link {
   my $self     = shift;
   my $settings = shift;
@@ -3222,12 +3312,7 @@ sub bookmark_link {
     $q->param(-name=>$_,-value=>$settings->{$_});
   }
 
-  # handle selected features slightly differently
-  my @selected = grep {$settings->{features}{$_}{visible} && !/^(file|ftp|http):/} @{$settings->{tracks}};
-  foreach (@selected) { # escape hyphens
-      tr/-/$;/;
-  }
-  $q->param(-name=>'label',-value=>join('-',@selected));
+  $q->param(-name=>'label',-value=>$self->join_selected_tracks);
 
   # handle external urls
   my @url = grep {/^(ftp|http):/} @{$settings->{tracks}};
@@ -3263,7 +3348,7 @@ sub image_link {
     my $settings = shift;
     my $format   = shift;
 
-    $format      = 'GD' unless $format eq 'GD' || $format eq 'GD::SVG';
+    $format      = 'GD' unless $format && $format=~ /^(GD|GD::SVG|PDF)$/;
 
     my $source   = $self->data_source->name;
     my $id       = $self->session->id;
@@ -3275,18 +3360,14 @@ sub image_link {
     my $tracks   = $settings->{tracks};
     my $width    = $settings->{width};
     my $name     = "$settings->{ref}:$settings->{start}..$settings->{stop}";
-    my @selected = $self->visible_tracks;
-    foreach (@selected) { # escape hyphens
-	tr/-/$;/;
-    }
-    my $type     = join '+',map{CGI::escape($_)} map {/\s/?qq("$_"):$_} @selected;
+    my $selected = $self->join_selected_tracks;
     my $options  = join '+',map { join '+', CGI::escape($_),$settings->{features}{$_}{options}
                              } map {/\s/?"$_":$_}
     grep {
 	$settings->{features}{$_}{options}
     } @$tracks;
     $id        ||= ''; # to prevent uninit variable warnings
-    my $img_url  = "$url/?name=$name;label=$type;width=$width;id=$id";
+    my $img_url  = "$url/?name=$name;label=$selected;width=$width;id=$id";
     $img_url    .= ";flip=$flip"         if $flip;
     $img_url    .= ";options=$options"   if $options;
     $img_url    .= ";format=$format"     if $format;

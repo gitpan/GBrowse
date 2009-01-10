@@ -32,12 +32,16 @@ sub new {
   my $class       = shift;
   my %options     = @_;
   my $segment       = $options{-segment};
+  my $whole_segment = $options{-whole_segment};
+  my $region_segment= $options{-region_segment};
   my $data_source   = $options{-source};
   my $page_settings = $options{-settings};
   my $language      = $options{-language};
 
   my $self  = bless {},ref $class || $class;
   $self->segment($segment);
+  $self->whole_segment($whole_segment);
+  $self->region_segment($region_segment);
   $self->source($data_source);
   $self->settings($page_settings);
   $self->language($language);
@@ -49,6 +53,20 @@ sub segment {
   my $self = shift;
   my $d = $self->{segment};
   $self->{segment} = shift if @_;
+  return $d;
+}
+
+sub whole_segment {
+  my $self = shift;
+  my $d = $self->{whole_segment};
+  $self->{whole_segment} = shift if @_;
+  return $d;
+}
+
+sub region_segment {
+  my $self = shift;
+  my $d = $self->{region_segment};
+  $self->{region_segment} = shift if @_;
   return $d;
 }
 
@@ -240,9 +258,9 @@ sub make_requests {
 	    }
 
 	    next unless $label =~ /:$args->{section}$/;
-	    @extra_args = eval {
-		$feature_file->{$track}->types, $feature_file->{$track}->mtime;
-	    }
+	    @extra_args =  eval {
+		$feature_file->types, $feature_file->mtime;
+	    };
 	}
         my $cache_object = Bio::Graphics::Browser::CachedTrack->new(
             -cache_base => $base,
@@ -506,7 +524,7 @@ sub run_remote_requests {
   my %env        = map {$_=>$ENV{$_}}    grep /^GBROWSE/,keys %ENV;
   my %args       = map {$_=>$args->{$_}} grep /^-/,keys %$args;
 
-  $args{section} = $args->{section};
+  $args{$_}  = $args->{$_} foreach ('section','image_class','cache_extra');
 
   # serialize the data source and settings
   my $s_dsn	= Storable::nfreeze($source);
@@ -620,6 +638,8 @@ sub run_remote_requests {
 sub sort_local_remote {
     my $self     = shift;
     my $requests = shift;
+
+    warn "requests = ",join ' ',keys %$requests if DEBUG;
 
     my @uncached;
     if ($self->settings->{cache}){
@@ -801,15 +821,10 @@ sub render_image_pad {
     my $self    = shift;
     my ($section,$segment) = @_;
 
-    warn "render_image_pad($section)" if DEBUG;
-
-    my $r = 'Bio::Graphics::Browser::Region';
-
-    $segment ||= $section eq 'overview'   ? 
-	             $r->whole_segment($self->segment,$self->settings)
-                 :$section eq 'region'     ?
-	             $r->region_segment($self->segment,$self->settings)
+    $segment ||= $section  eq 'overview'  ? $self->whole_segment
+                 :$section eq 'region'    ? $self->region_segment
                  :$self->segment;
+
     my @panel_args  = $self->create_panel_args({
 	section => $section,
 	segment => $segment,
@@ -827,7 +842,8 @@ sub render_image_pad {
     unless ($cache->status eq 'AVAILABLE') {
 	my $panel = Bio::Graphics::Panel->new(@panel_args);
 	$cache->lock;
-	$cache->put_data($panel->gd->gd2,'');
+	my $gd = $panel->gd;
+	$cache->put_data($gd,'');
     }
 
     return $cache->gd;
@@ -1067,6 +1083,7 @@ sub run_local_requests {
 	               : ()
     } @labels_to_generate;
 
+
     for my $label (@labels_to_generate) {
 
         # this shouldn't happen, but let's be paranoid
@@ -1092,7 +1109,7 @@ sub run_local_requests {
 	(my $base = $label) =~ s/:(overview|region|details?)$//;
 	warn "label=$label, base=$base, file=$feature_files->{$base}" if DEBUG;
 
-        if ( my $file = $feature_files->{$base} ) {
+        if ( my $file = ($feature_files->{$base}) ) {
 
             # Add feature files, including remote annotations
             my $featurefile_select = $args->{featurefile_select}
@@ -1134,7 +1151,7 @@ sub run_local_requests {
         my $map = $self->make_map( scalar $panel->boxes,
             $panel, $label,
             \%trackmap, 0 );
-        $requests->{$label}->put_data( $gd->gd2, $map );
+        $requests->{$label}->put_data($gd, $map );
     }
 }
 
@@ -1341,7 +1358,7 @@ sub get_iterator {
   }
 
   my $db_segment;
-  if (eval{$segment->factory eq $db}) {
+  if (eval{$segment->factory||'' eq $db}) {
       $db_segment   = $segment;
   } else {
       ($db_segment) = $db->segment($segment->seq_id,$segment->start,$segment->end);
@@ -1372,8 +1389,6 @@ sub add_feature_file {
 
   my $name = $file->name || '';
   $options->{$name}      ||= 0;
-
-  warn "rendering file $name" if DEBUG;
 
   eval {
     $file->render(
@@ -1621,14 +1636,13 @@ sub feature_file_select {
   }
 
   return sub {
-
       my $file    = shift;
       my $type    = shift;
 
       my $section = $file->setting($type=>'section')
 	            || $file->setting(general=>'section');
-      my ($modifier) = $type =~ /:(.+)$/;
-      $section   ||= $modifier;
+      my ($modifier) = $type =~ /:(overview|region}detail)$/;
+      $section     ||= $modifier;
 
       return $undef_defaults_to_true
 	  if !defined $section;
@@ -1835,7 +1849,8 @@ sub make_link_target {
   $label    ||= $source->feature2label($feature) or return;
   my $link_target = $source->code_setting($label,'link_target')
     || $source->code_setting('LINK DEFAULTS' => 'link_target')
-    || $source->code_setting(general => 'link_target');
+    || $source->code_setting(general => 'link_target')
+    || '_new';
   $link_target = eval {$link_target->($feature,$panel,$track)} if ref($link_target) eq 'CODE';
   $source->_callback_complain($label=>'link_target') if $@;
   return $link_target;
