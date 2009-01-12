@@ -1,3 +1,10 @@
+CVS Commits:
+
+$Log: Changes,v $
+Revision 1.49  2009/01/10 12:34:27  lstein
+added an automatic $Log$ line to the Changes file
+
+
 1.67    * Templates now the norm, use gbrowse_not to get the "no templates" version.
 	* The das script now works (more or less) with Bio::DB::SeqFeature::Store adaptor. Not tested
 	with chado adaptor.
