@@ -9,11 +9,11 @@ use File::Copy;
 use GBrowseInstall;
 
 my $build = GBrowseInstall->new(
-    module_name  => 'GBrowse',
-    dist_version => '1.986',
-    dist_author  => 'Lincoln Stein <lincoln.stein@gmail.com>',
-    dist_abstract=> 'The GMOD Generic Genome Browser',
-    license      => 'perl',
+    module_name        => 'GBrowse',
+    dist_version_from  => 'lib/Bio/Graphics/Browser.pm',
+    dist_author        => 'Lincoln Stein <lincoln.stein@gmail.com>',
+    dist_abstract      => 'The GMOD Generic Genome Browser',
+    license            => 'perl',
 
     requires     => {
 	'perl'                => '5.008',
@@ -27,6 +27,7 @@ my $build = GBrowseInstall->new(
 	'Storable'            => 0,
 	'JSON'                => 0,
 	'LWP'                 => 0,
+        'ExtUtils::CBuilder'  => 0,
     },
     recommends  => { 
 	'DB_File::Lock'            => 0,
@@ -36,6 +37,7 @@ my $build = GBrowseInstall->new(
 	'GD::SVG'                  => 0,
 	'Statistics::Descriptive'  => 0,
 	'Safe::World'              => 0,
+	'FCGI'                     => 0,
     },
     script_files => [
 	'bin/gbrowse_slave',

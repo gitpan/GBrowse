@@ -100,7 +100,7 @@ sub clear_cached_dbids {
 
   $setting = $source->global_setting('option')
 
-Like setting() except that it is only for 'general' options. If the
+Like code_setting() except that it is only for 'general' options. If the
 option is not found in the datasource config file, then looks in the
 global file.
 
@@ -109,9 +109,9 @@ global file.
 sub global_setting {
   my $self   = shift;
   my $option = shift;
-  my $value  = $self->setting(general=>$option);
+  my $value  = $self->code_setting(general=>$option);
   return $value if defined $value;
-  return $self->globals->setting(general=>$option);
+  return $self->globals->code_setting(general=>$option);
 }
 
 # format for time can be in any of the forms...
@@ -527,7 +527,8 @@ sub invert_types {
 
 sub default_labels {
   my $self = shift;
-  my $defaults = $self->setting('general'=>'default features');
+  my $defaults  = $self->setting('general'=>'default tracks');
+  $defaults   ||= $self->setting('general'=>'default features'); # backward compatibility
   return $self->scale_tracks,shellwords($defaults||'');
 }
 
@@ -865,9 +866,9 @@ sub clear_cache {
 
 Given a GD::Image object, this method calls its png() or gif() methods
 (depending on GD version), stores the output into the temporary
-directory given by the "tmpimages" option in the configuration file,
-and returns a two element list consisting of the URL to the image and
-the physical path of the image.
+"images" subdirectory of the directory given by the "tmp_base" option
+in the configuration file. It returns a two element list consisting of
+the URL to the image and the physical path of the image.
 
 =cut
 

@@ -448,6 +448,9 @@ lib/Bio/DB/GFF/Aggregator/waba_alignment.pm
 lib/Bio/DB/GFF/Aggregator/wormbase_gene.pm
 lib/Bio/DB/GFF/SyntenyBlock.pm
 lib/Bio/DB/GFF/SyntenyIO.pm
+lib/Bio/DB/Tagger.pm
+lib/Bio/DB/Tagger/mysql.pm
+lib/Bio/DB/Tagger/Tag.pm
 lib/Bio/Graphics/Browser.pm
 lib/Bio/Graphics/Browser/CachedTrack.pm
 lib/Bio/Graphics/Browser/DataBase.pm
@@ -465,6 +468,7 @@ lib/Bio/Graphics/Browser/Region.pm
 lib/Bio/Graphics/Browser/RegionSearch.pm
 lib/Bio/Graphics/Browser/RemoteSet.pm
 lib/Bio/Graphics/Browser/Render.pm
+lib/Bio/Graphics/Browser/Render.pm.orig
 lib/Bio/Graphics/Browser/Render/HTML.pm
 lib/Bio/Graphics/Browser/Render/Slave.pm
 lib/Bio/Graphics/Browser/Render/Slave/Status.pm
@@ -500,7 +504,7 @@ t/03.render.t
 t/04.remoteserver.t
 t/05.deferredrendering.t
 t/06.featuresearch.t
-t/07.karotype.t
+t/07.karyotype.t
 t/08.calign.t
 t/Test.pm
 t/testdata/conf/enzymes.txt

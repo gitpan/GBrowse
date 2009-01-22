@@ -1,5 +1,5 @@
 package Bio::Graphics::Browser;
-# $Id: Browser.pm,v 1.223 2009/01/06 09:13:12 lstein Exp $
+# $Id: Browser.pm,v 1.225 2009/01/22 19:44:48 lstein Exp $
 # Globals and utilities for GBrowse and friends
 
 use strict;
@@ -18,6 +18,7 @@ use Carp 'croak','carp';
 use CGI 'redirect','url';
 
 my %CONFIG_CACHE;
+our $VERSION = 1.987;
 
 sub new {
   my $class            = shift;
@@ -31,7 +32,8 @@ sub new {
     return $CONFIG_CACHE{$config_file_path}{object};
   }
 
-  my $self = $class->SUPER::new(-file=>$config_file_path);
+  my $self = $class->SUPER::new(-file=>$config_file_path,
+                                -safe=>1);
 
   # a little trick here -- force the setting of "config_base" from the config file
   # base if not explicitly overridden

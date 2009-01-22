@@ -773,7 +773,7 @@ sub render_body {
 
   print $self->render_html_start($title);
   print $self->render_top($title,$features);
-  print $self->render_navbar($region->seg);
+  print $self->render_navbar();
 
   if ($region->feature_count > 1) {
       print $self->render_multiple_choices($features,$self->state->{name});
@@ -933,10 +933,7 @@ sub render_panels {
             $self->toggle({tight=>1},
                 'Details',
                 div({ -id => 'detail_panels', -class => 'track'},
-                    $details_msg,
-		    $scale_bar_html, 
-		    $panels_html,
-		    div({-align=>'left'},$self->html_frag('html4',$self->state))
+                    $details_msg,$scale_bar_html, $panels_html,
                 )
             )
         ) . $drag_script;
@@ -1042,6 +1039,7 @@ sub render_bottom {
 
 sub html_frag {
   my $self = shift;
+  my $features = shift;
   croak "html_frag() should not be called in parent class";
 }
 
