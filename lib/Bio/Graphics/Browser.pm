@@ -1,10 +1,10 @@
 package Bio::Graphics::Browser;
-# $Id: Browser.pm,v 1.225 2009/01/22 19:44:48 lstein Exp $
+# $Id: Browser.pm,v 1.228 2009/01/29 23:58:27 lstein Exp $
 # Globals and utilities for GBrowse and friends
 
 use strict;
 use warnings;
-use base 'Bio::Graphics::FeatureFile';
+use base 'Bio::Graphics::Browser::AuthorizedFeatureFile';
 
 use File::Spec;
 use File::Path 'mkpath';
@@ -18,7 +18,7 @@ use Carp 'croak','carp';
 use CGI 'redirect','url';
 
 my %CONFIG_CACHE;
-our $VERSION = 1.987;
+our $VERSION = 1.988;
 
 sub new {
   my $class            = shift;
@@ -45,23 +45,6 @@ sub new {
   $CONFIG_CACHE{$config_file_path}{object} = $self;
   $CONFIG_CACHE{$config_file_path}{mtime}  = $mtime;
   return $self;
-}
-
-## override setting to default to the [general] section
-sub setting {
-  my $self = shift;
-  my @args = @_;
-  if (@args == 1) {
-    unshift @args,'general';
-  }
-  elsif (!defined $args[0]) {
-    $args[0] = 'general';
-  }
-  else {
-    $args[0] = 'general'
-      if $args[0] ne 'general' && lc($args[0]) eq 'general';  # buglet
-  }
-  $self->SUPER::setting(@args);
 }
 
 ## methods for dealing with paths
@@ -212,7 +195,14 @@ sub data_sources {
 sub data_source_description {
   my $self = shift;
   my $dsn  = shift;
-  $self->setting($dsn=>'description');
+  return $self->setting($dsn=>'description');
+}
+
+sub data_source_show {
+    my $self = shift;
+    my $dsn  = shift;
+    return if $self->setting($dsn=>'hide');
+    return $self->authorized($dsn);
 }
 
 sub data_source_path {

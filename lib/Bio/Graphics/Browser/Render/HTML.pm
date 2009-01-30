@@ -499,6 +499,7 @@ sub galaxy_form {
     $html .= hidden(-name=>'t',-value=>$labels);
     $html .= hidden(-name=>'s',-value=>'off');
     $html .= hidden(-name=>'d',-value=>'edit');
+    $html .= hidden(-name=>'m',-value=>'application/x-gff3');
     $html .= endform();
 
 # Copied from gbrowse 1.69 -- not sure if still appropriate
@@ -1462,7 +1463,9 @@ sub source_menu {
   my @sources      = $globals->data_sources;
   my $show_sources = $self->setting('show sources');
   $show_sources    = 1 unless defined $show_sources;   # default to true
+  @sources         = grep {$globals->data_source_show($_)} @sources;
   my $sources = $show_sources && @sources > 1;
+
   return b($self->tr('DATA_SOURCE')).br.
     ( $sources ?
       popup_menu(-name   => 'source',

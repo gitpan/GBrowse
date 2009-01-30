@@ -1,9 +1,13 @@
-CVS Commits:
+1.988	* Fix handling of DBI databases so that various intermittent SQL errors ("server went away")
+	  no longer occur.
+	* Fixed Galaxy support to return correct MIME type. This
+          should correct problems people have had with track data not
+          loading into Galaxy.
+        * fixed bug that was causing remote tracks that didn't happen
+          to contain any features in current view to remain greyed out
 
-$Log: Changes,v $
-Revision 1.49  2009/01/10 12:34:27  lstein
-added an automatic $Log$ line to the Changes file
-
+1.90    * server farm rearchitecture introduced
+	* big cleanup of defunct files; migrating to Module::Build
 
 1.67    * Templates now the norm, use gbrowse_not to get the "no templates" version.
 	* The das script now works (more or less) with Bio::DB::SeqFeature::Store adaptor. Not tested
