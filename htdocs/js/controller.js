@@ -3,7 +3,7 @@
 
  Lincoln Stein <lincoln.stein@gmail.com>
  Ben Faga <ben.faga@gmail.com>
- $Id: controller.js,v 1.82 2009/01/27 00:37:23 lstein Exp $
+ $Id: controller.js,v 1.87 2009/03/10 18:19:21 lstein Exp $
 
 Indentation courtesy of Emacs javascript-mode 
 (http://mihai.bazon.net/projects/emacs-javascript-mode/javascript.el)
@@ -376,6 +376,12 @@ var GBrowseController = Class.create({
     }); // end Ajax.Request
 
   }, // end update_coordinates
+
+  scroll:
+  function (direction,length_units) {
+     var length = this.segment_info.detail_stop - this.segment_info.detail_start + 1;
+     this.update_coordinates(direction + ' ' + Math.round(length_units*length));
+  }, // end scroll
 
   add_track:
   function(track_name, onSuccessFunc, force) {
@@ -805,7 +811,53 @@ var GBrowseController = Class.create({
           });
         }
     });
-  }
+  },
+
+  // Utility methods *********************************
+  show_error:
+  function (message,details) {
+      var outerdiv    = $('errordiv');
+      var innerdiv    = $('errormsg');
+      var detailsdiv  = $('errordetails');
+      if (innerdiv != null) {
+          var caption = detailsdiv.visible() ? 'Hide details' : 'Show details';
+	  innerdiv.innerHTML = message +
+                               ' <a id="detailscaption" href="javascript:void(0)" onClick="Controller.show_hide_errordetails()">'
+			       +caption
+			       +'</a>';
+      }			     
+      if (detailsdiv != null) {
+          detailsdiv.innerHTML  = details;
+      }
+      if (outerdiv != null) {
+         scroll(0,0);
+	 new Effect.BlindDown(outerdiv);
+      }
+  },
+
+  hide_error:
+  function () {
+      var outerdiv   = $('errordiv');
+      var detailsdiv = $('errordetails');
+      if (outerdiv != null)
+	  new Effect.BlindUp(outerdiv);
+      return false;
+  },
+
+ show_hide_errordetails:
+ function () {
+    var detailsdiv = $('errordetails');
+    var caption    = $('detailscaption');
+    if (detailsdiv == null) return;
+    if (caption    == null) return;
+    if (detailsdiv.visible()) {
+       caption.innerHTML="Show details";
+       detailsdiv.hide();
+    } else {
+       caption.innerHTML="Hide details";
+       detailsdiv.show();
+    }
+ }
 
 });
 

@@ -7,7 +7,7 @@ use Bio::Graphics::Browser::Markup;
 use Bio::Graphics::Browser::Realign 'align';
 use Bio::Graphics::Glyph::generic;
 
-our $VERSION = '$Id: gbrowse_details,v 1.8 2009/01/06 07:38:24 lstein Exp $';
+our $VERSION = '$Id: gbrowse_details,v 1.10 2009/03/05 23:03:00 lstein Exp $';
 our ($INDEX,%COLORS,%URLS,%formatterCache);
 
 
@@ -122,6 +122,15 @@ sub run {
     } else {
 	$search_term = $name;
     }
+    unless (defined $search_term) {
+	print header,
+	start_html('gbrowse_details error'),
+	p({-class=>'error'},
+	  'This script must be called with one or more of the parameters name, feature_id or db_id.');
+	end_html;
+	exit 0;
+    }
+
     my $features = $search->search_features({-search_term=>$search_term});
 
     warn "features = @$features" if DEBUG;
@@ -450,9 +459,12 @@ sub print_multiple {
 	    $LINK = "$obj : (<a href='$LINK'>Aligned Sequence</a>)";
     }
 
-	# wrap way long lines. Note : ading '" prevent this regexp from wrapping html tags
-	$obj =~ s/([^<>\s\'\"\/;&]{60})/$1 /g;  
-
+	# Wrap way long lines, but not those involving HTML tags
+	$obj = join "", 
+	map{ s/([^\s\'\"\/;&]{60})/$1 /g 
+		 unless /\</; $_ 
+	} split /(<[^>]*>)/,$obj;
+    
 	if ($isFirst) {
 	    $isFirst =0 ;
 	    $string .= join '',TR({-valign=>'top',-class=>'databody'},

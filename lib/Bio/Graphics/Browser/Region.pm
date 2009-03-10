@@ -27,7 +27,7 @@ sub new {
 sub source     { shift->{source} }
 sub state      { shift->{state}  }
 sub db         { shift->{db}     }
-sub searchopts { shift->{searchopts}     }
+sub searchopts { shift->{searchopts}  }
 
 sub feature_count { 
     my $self = shift;
@@ -171,6 +171,8 @@ sub lookup_features {
   my ($name,$start,$stop,$class,$literal_name,$id) = @_;
   my $source = $self->source;
 
+  warn "lookup_features($name)" if DEBUG;
+
   my $refclass = $source->global_setting('reference class') || 'Sequence';
 
   my $db      = $self->db;
@@ -182,11 +184,12 @@ sub lookup_features {
   my @classes = $class ? ($class) 
                        : (split /\s+/,$source->global_setting('automatic classes')||'');
 
-  my $features = [];
-
   if (defined $id && $db->can('get_feature_by_id')) { # this overrides everything else
-      return [$db->get_feature_by_id($id)];
+      my $f = $db->get_feature_by_id($id);
+      return $f ? [$f] : [];
   }
+
+  my $features = [];
 
  SEARCHING:
   {
@@ -230,7 +233,7 @@ sub lookup_features {
 	      if length $name_to_try > 3 and $name_to_try !~ /\*$/;
 
 	  for my $n (@sloppy_names) {
-	      for my $c (@classes) {
+	      for my $c ('',@classes) {
 		  $features = $self->_feature_get($db,$n,$c,$start_to_try,$stop_to_try);
 		  last SEARCHING if @$features;
 	      }
@@ -253,7 +256,6 @@ sub _feature_get {
   my ($db,$name,$class,$start,$stop) = @_;
 
   my $refclass = $self->source->global_setting('reference class') || 'Sequence';
-  $class     ||= '';
 
   my @argv = (-name  => $name);
   push @argv,(-class => $class) if defined $class;
@@ -264,11 +266,14 @@ sub _feature_get {
   @features  = grep {$_->length} $db->get_feature_by_name(@argv)   
       if !defined($start) && !defined($stop);
 
+
   @features  = grep {$_->length} $db->get_features_by_alias(@argv) 
       if !@features
       && !defined($start) 
       && !defined($stop) 
       && $db->can('get_features_by_alias');
+
+#  warn "get_feature_by_alias(@argv) => @features";
 
   @features  = grep {$_->length} $db->segment(@argv)               
       if !@features && $name !~ /[*?]/;
@@ -277,6 +282,7 @@ sub _feature_get {
 
   # Deal with multiple hits.  Winnow down to just those that
   # were mentioned in the config file.
+  $class     ||= '';  # to get rid of uninit variable warnings
   my $types = $self->source->_all_types($db);
   my @filtered = grep {
     my $type    = $_->type;

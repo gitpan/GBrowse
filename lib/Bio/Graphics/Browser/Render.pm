@@ -131,6 +131,7 @@ sub run {
        query_string() if DEBUG;
 
   $self->set_source();
+  my $state = $self->state;
 
   if ($self->run_asynchronous_event) {
       warn "[$$] asynchronous exit" if DEBUG;
@@ -155,7 +156,6 @@ sub run {
   warn "[$$] session flush" if DEBUG;
 
   $self->session->flush;
-
   warn "[$$] synchronous exit" if DEBUG;
 }
 
@@ -430,7 +430,8 @@ sub asynchronous_event {
         my $visible    = param('visible');
         my $track_name = param('track_name');
 
-	warn "set_track_visibility: ",param('track_name'),'=>',param('visible') if DEBUG;
+	warn "set_track_visibility: ",
+	param('track_name'),'=>',param('visible') if DEBUG;
 
         if ($visible) {
             $self->add_track_to_state($track_name);
@@ -907,7 +908,7 @@ sub render_panels {
         $html .= div(
             $self->toggle({tight=>1},
                 'Overview',
-                div({ -id => 'overview_panels', -class => 'track', -style=>'padding:3px' },
+                div({ -id => 'overview_panels', -class => 'track', -style=>'padding-bottom:3px' },
                     $scale_bar_html, $panels_html,
                 )
             )
@@ -936,7 +937,7 @@ sub render_panels {
         my $panels_html   .= $self->get_blank_panels( [$self->detail_tracks],
 						      'detail');
         my $drag_script    = $self->drag_script( 'detail_panels', 'track' );
-        my $details_msg    = div({ -id => 'details_msg', },'');
+        my $details_msg    = span({ -id => 'details_msg', },'');
         $html .= div(
             $self->toggle({tight=>1},
                 'Details',
@@ -1106,7 +1107,7 @@ sub region {
 sub thin_segment {
     my $self  = shift;
     my $state = $self->state;
-    if (exists $state->{ref}) {
+    if (defined $state->{ref}) {
 	return Bio::Graphics::Feature->new(-seq_id => $state->{ref},
 					   -start  => $state->{start},
 					   -end    => $state->{stop});
@@ -1118,7 +1119,7 @@ sub thin_segment {
 sub thin_whole_segment {
     my $self  = shift;
     my $state = $self->state;
-    if (exists $state->{ref} && exists $state->{seg_min}) {
+    if (defined $state->{ref} && defined $state->{seg_min}) {
 	return Bio::Graphics::Feature->new(-seq_id => $state->{ref},
 					   -start  => $state->{seg_min},
 					   -end    => $state->{seg_max});
@@ -1177,7 +1178,8 @@ sub get_search_object {
 	  state  => $self->state,
 	});
     $search->init_databases(
-	param('dbid') ? [param('dbid')]
+#	param('dbid') ? [param('dbid')]
+	$self->state->{dbid} ? [$self->state->{dbid}]
 	:()
 	);
     return $self->{searchobj} = $search;
@@ -1195,7 +1197,10 @@ sub init_plugins {
 					       $self->language,
 					       @plugin_path);
   $self->fatal_error("Could not initialize plugins") unless $plugins;
-  $plugins->configure($self->db,$self->state,$self->language,$self->session);
+  $plugins->configure($self->db,
+		      $self->state,
+		      $self->language,
+		      $self->session);
   $self->plugins($plugins);
 
   $self->load_plugin_annotators();
@@ -1249,24 +1254,27 @@ sub plugin_find {
 sub handle_gff_dump {
     my $self = shift;
 
-    return unless ( param('gbgff') );
+    my $gff_action = param('gbgff') or return;
+    my $segment    = param('q') || param('segment') || undef,
 
     my $dumper = Bio::Graphics::Browser::GFFPrinter->new(
         -data_source => $self->data_source(),
-        -segment    => param('q')          || param('segment'),
-        -seqid      => param('ref')        || param('seqid'),
-        -start      => param('start')      || 1,
-        -end        => param('stop')       || param('end'),
-        -stylesheet => param('stylesheet') || param('s'),
-        -id         => scalar param('id'),
-        '-dump'     => param('d')          || '',
-        -labels     => [ param('type'), param('t') ],
-        -mimetype   => scalar param('m'),
+        -stylesheet  => param('stylesheet') || param('s')       || undef,
+        -id          => param('id')         || undef,         
+        '-dump'      => param('d')          || undef,
+        -labels      => [ param('type'), param('t') ],
+        -mimetype    => param('m')          || undef,
     ) or return 1;
 
-    $dumper->get_segment() or return 1;
-    print header( $dumper->get_mime_type );
-    $dumper->print_gff3();
+    if ($gff_action eq 'scan') {
+	print header('text/plain');
+	$dumper->print_scan();
+    }
+    else {
+	$dumper->get_segment($segment) or return 1;
+	print header( $dumper->get_mime_type );
+	$dumper->print_gff3();
+    }
 
     return 1;
 }
@@ -1712,19 +1720,24 @@ sub update_state {
   my $state  = $self->state;
 
   warn "[$$] CGI updated" if DEBUG;
-  if ($self->segment) {
+  if (my $seg = $self->segment) {
       # A reset won't have a segment, so we need to test for that before we use
       # one in whole_segment().
       my $whole_segment = $self->whole_segment;
       $state->{seg_min} = $whole_segment->start;
       $state->{seg_max} = $whole_segment->stop;
 
+      $state->{ref}     ||= $seg->seq_id;
+      $state->{start}   ||= $seg->start;
+      $state->{stop}    ||= $seg->end;
+
       # Automatically open the tracks with found features in them
       $self->auto_open();
   }
 
-  $self->session->unlock;
   $self->session->flush();
+  $self->session->unlock;
+
   warn "[$$] update_state() done" if DEBUG;
 }
 
@@ -1747,6 +1760,7 @@ sub default_state {
   $state->{ks}           = 'between';
   $state->{grid}         = 1;
   $state->{sk}           = $self->setting("default varying") ? "unsorted" : "sorted";
+  $state->{uploadid}     = Bio::Graphics::Browser::Util->generate_id;
 
   # if no name is specified but there is a "initial landmark" defined in the
   # config file, then we default to that.
@@ -1805,17 +1819,17 @@ sub add_track_to_state {
   my %current = map {$_=> 1} @{$state->{tracks}};
   push @{$state->{tracks}},$label unless $current{$label};
 
-  warn "ADD TRACK TO STATE WAS: ",
+  warn "[$$]ADD TRACK TO STATE WAS: ",
     join ' ',grep {$state->{features}{$_}{visible}} sort keys %{$state->{features}},"\n" if DEBUG;
 
   if($state->{features}{$label}){
     $state->{features}{$label}{visible}=1;
   }
   else{
-    $state->{features}{$label} = {visible=>1,options=>0,limit=>0};
+    $state->{features}{$label}{visible} = {visible=>1,options=>0,limit=>0};
   }
 
-  warn "ADD TRACK TO STATE NOW: ",
+  warn "[$$] ADD TRACK TO STATE NOW: ",
     join ' ',grep {$state->{features}{$_}{visible}} sort keys %{$state->{features}},"\n" if DEBUG;
 }
 
@@ -1823,8 +1837,6 @@ sub remove_track_from_state {
   my $self  = shift;
   my $label = shift;
   my $state  = $self->state;
-
-#  $state->{features}{$label} = {visible=>0,options=>0,limit=>0};
   delete $state->{features}{$label};
   $self->session->flush;
 }
@@ -1841,10 +1853,11 @@ sub update_state_from_cgi {
 
   $self->update_options($state);
   if (param('revert')) {
-    $self->default_tracks($state);
+      $self->default_tracks($state);
   }
   else {
-    $self->update_tracks($state);
+      $self->remove_invalid_tracks($state);
+      $self->update_tracks($state);
   }
 
   $self->update_coordinates($state);
@@ -2034,6 +2047,8 @@ sub update_coordinates {
 
   elsif (param('name')) {
       undef $state->{ref};  # no longer valid
+      undef $state->{start};
+      undef $state->{stop};
       $state->{name} = param('name');
       $state->{dbid} = param('dbid') if param('dbid'); # get rid of this
   }
@@ -2059,6 +2074,15 @@ sub asynchronous_update_overview_scale_bar {
         width    => $width,
         image_id => $image_id,
     };
+}
+
+sub debug_visible {
+    my $self  = shift;
+    my $state = shift;
+    warn "[$$] ",join ' ',map {
+	$_ . '=>' . $state->{features}{$_}{visible}
+    }
+    @{$state->{tracks}};
 }
 
 sub asynchronous_update_region_scale_bar {
@@ -2347,6 +2371,16 @@ sub asynchronous_update_coordinates {
 	    my $delta = $state->{stop} - $whole_segment_stop;
 	    $state->{start} -= $delta;
 	    $state->{stop}  -= $delta;
+	}
+	
+
+	unless (defined $state->{ref}) {
+	    warn "BUG: working around no ref defined bug; tell Lincoln bug is not fixed";
+	    if (my $seg = $self->segment) {
+		$state->{ref}   = $seg->seq_id;
+		$state->{start} = $seg->start;
+		$state->{stop}   = $seg->stop;
+	    }
 	}
 
 	# update our "name" state and the CGI parameter
@@ -2668,6 +2702,17 @@ sub split_labels {
   @results;
 }
 
+# remove any tracks that the client still thinks are valid
+# but which have been removed from the config file
+sub remove_invalid_tracks {
+    my $self = shift;
+    my $state = shift;
+    my %potential = map {$_=>1} $self->potential_tracks;
+    my @defunct   = grep {!$potential{$_}} keys %{$state->{features}};
+    delete $state->{features}{$_} foreach @defunct;
+    $state->{tracks} = [grep {$potential{$_}} @{$state->{tracks}}];
+}
+
 sub set_tracks {
     my $self   = shift;
     my @labels = @_;
@@ -2746,7 +2791,9 @@ sub potential_tracks {
     my $source = $self->data_source;
     my $uploads = $self->uploaded_sources;
     my $remotes = $self->remote_sources;
-    return grep {!/^_/} ($source->detail_tracks,
+    my %seenit;
+    return grep {!$seenit{$_}++
+	      && !/^_/} ($source->detail_tracks,
 			 $source->overview_tracks,
 			 $source->plugin_tracks,
 			 $source->regionview_tracks,
@@ -2823,10 +2870,11 @@ sub expand_track_names {
     my @tracks   = @_;
 
     my $external = $self->external_data;
+    my $source   = $self->data_source;
     my @results;
 
     for my $t (@tracks) {
-	if ($external->{$t}) {
+	if ($external->{$t} || $source->code_setting($t=>'remote feature')) {
 	    my @sections = $self->featurefile_sections($t);
 	    @sections    = ('detail') unless @sections;
 	    push @results,"$t:$_" foreach @sections;
@@ -3175,6 +3223,7 @@ sub categorize_track {
   my $category;
   for my $l ($self->language->language) {
     $category      ||= $self->setting($label=>"category:$l");
+
   }
   $category        ||= $self->setting($label => 'category');
   $category        ||= '';  # prevent uninit variable warnings
@@ -3201,11 +3250,11 @@ sub external_data {
     my $search       = $self->get_search_object;
     my $meta_segment = $search->segment($segment);
     if ($segment) {
-	my $rel2abs      = $self->coordinate_mapper($segment,1);
-	my $rel2abs_slow = $self->coordinate_mapper($segment,0);
+	my $search       = $self->get_search_object;
+	my $rel2abs      = $search->coordinate_mapper($segment,1);
+	my $rel2abs_slow = $search->coordinate_mapper($segment,0);
 	for my $featureset ($self->plugins,$self->uploaded_sources,$self->remote_sources) {
-	    warn "FEATURESET = $featureset, sources = ",join ' ',eval{$featureset->sources} 
-	        if DEBUG;
+	    warn "FEATURESET = $featureset, sources = ",join ' ',eval{$featureset->sources} if DEBUG;
 	    next unless $featureset;
 	    $featureset->annotate($meta_segment,$f,
 				  $rel2abs,$rel2abs_slow,$max_segment,
@@ -3216,69 +3265,6 @@ sub external_data {
     warn "FEATURE files = ",join ' ',%$f if DEBUG;
     return $self->{feature_files} = $f;
 }
-
-sub coordinate_mapper {
-    my $self            = shift;
-    my $current_segment = shift;
-    my $optimize        = shift;
-
-    my $db = $current_segment->factory;
-
-    my ( $ref, $start, $stop ) = (
-        $current_segment->seq_id, 
-	$current_segment->start,
-        $current_segment->end
-    );
-    my %segments;
-
-    my $search = $self->get_search_object;
-    my $closure = sub {
-        my ( $refname, @ranges ) = @_;
-
-        unless ( exists $segments{$refname} ) {
-            $segments{$refname} = $search->search_features({-search_term => $refname})->[0];
-        }
-        my $mapper  = $segments{$refname} || return;
-        my $absref  = $mapper->abs_ref;
-        my $cur_ref = eval { $current_segment->abs_ref }
-            || eval { $current_segment->ref }; # account for api changes in Bio::SeqI
-        return unless $absref eq $cur_ref;
-
-        my @abs_segs;
-        if ( $absref eq $refname) {           # doesn't need remapping
-            @abs_segs = @ranges;
-        }
-        elsif ($mapper->can('rel2abs')) {
-            @abs_segs
-                = map { [ $mapper->rel2abs( $_->[0], $_->[1] ) ] } @ranges;
-        } else {
-	    my $map_start  = $mapper->start;
-	    my $map_strand = $mapper->strand;
-	    if ($map_strand >= 0) {
-		@abs_segs = map {[$_->[0]+$map_start-1,$_->[1]+$map_start-1]} @ranges;
-	    } else {
-		@abs_segs = map {[$map_start-$_->[0]+1,$map_start-$_->[1]+1]} @ranges;
-		$absref   = $mapper->seq_id;
-	    }
-	}
-
-        # this inhibits mapping outside the displayed region
-        if ($optimize) {
-            my $in_window;
-            foreach (@abs_segs) {
-                next unless defined $_->[0] && defined $_->[1];
-		my ($left,$right) = sort {$a<=>$b} @$_;
-                $in_window ||= $_->[0] <= $right && $_->[1] >= $left;
-            }
-            return $in_window ? ( $absref, @abs_segs ) : ();
-        }
-        else {
-            return ( $absref, @abs_segs );
-        }
-    };
-    return $closure;
-}
-
 
 # Delete the segments so that they can be recreated with new parameters
 sub delete_stored_segments {
@@ -3327,21 +3313,21 @@ sub bookmark_link {
   my $settings = shift;
 
   my $q = new CGI('');
-  my @keys = qw(start stop ref width version flip);
+  my @keys = qw(start stop ref width version flip grid);
   foreach (@keys) {
-    $q->param(-name=>$_,-value=>$settings->{$_});
+    $q->param(-name=>$_,   -value=>$settings->{$_});
   }
-
+  $q->param(-name=>'id',   -value=>$settings->{userid});  # slight inconsistency here
   $q->param(-name=>'label',-value=>$self->join_selected_tracks);
 
   # handle external urls
   my @url = grep {/^(ftp|http):/} @{$settings->{tracks}};
-  $q->param(-name=>'eurl',-value=>\@url);
+  $q->param(-name=>'eurl',    -value=>\@url);
   $q->param(-name=>'h_region',-value=>$settings->{h_region}) if $settings->{h_region};
   my @h_feat= map {"$_\@$settings->{h_feat}{$_}"} keys %{$settings->{h_feat}};
-  $q->param(-name=>'h_feat',-value=>\@h_feat) if @h_feat;
-  $q->param(-name=>'id',-value=>$settings->{id});
-  $q->param(-name=>'grid',-value=>$settings->{grid});
+  $q->param(-name=>'h_feat',  -value=>\@h_feat) if @h_feat;
+
+  warn 'query string = ',$q->query_string();
 
   return "?".$q->query_string();
 }
@@ -3430,6 +3416,33 @@ sub fcgi_request {
     my $request   = eval "require FCGI; FCGI::Request()";
     $FCGI_REQUEST = $request && $request->IsFastCGI ? $request : 0;
 }
+
+sub fork {
+    my $self = shift;
+
+    $self->prepare_modperl_for_fork();
+    $self->prepare_fcgi_for_fork('starting');
+
+    my $child = CORE::fork();
+    print STDERR "forked $child" if DEBUG;
+    die "Couldn't fork: $!" unless defined $child;
+
+    if ($child) { # parent process
+	$self->prepare_fcgi_for_fork('parent');
+    }
+
+    else {
+	Bio::Graphics::Browser::DataBase->clone_databases();
+	Bio::Graphics::Browser::Render->prepare_fcgi_for_fork('child');
+
+        # prevent CGI::Session from autoflushing in children, which
+	# causes annoying race conditions
+	undef *CGI::Session::DESTROY;
+    }
+
+    return $child;
+}
+
 
 sub prepare_modperl_for_fork {
     my $self = shift;

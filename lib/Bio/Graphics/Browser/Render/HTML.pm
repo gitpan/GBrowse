@@ -33,12 +33,36 @@ sub render_html_start {
 sub render_top {
     my $self = shift;
     my ($title,$features) = @_;
-    my $html =  $self->render_user_header;
+    my $err  =  $self->render_error_div;
+    my $html = '';
+    $html   .=  $self->render_user_header;
     $html   .=  $self->render_title($title,$self->state->{name} && @$features == 0);
     $html   .=  $self->html_frag('html1',$self->state);
     $html   .=  $self->render_instructions;
-    return  $self->toggle({nodiv=>1},'banner','',$html)
+    return  $err
+	  . $self->toggle({nodiv=>1},'banner','',$html)
 	  . $self->render_links;
+}
+
+sub render_error_div {
+    my $self   = shift;
+    my $button = button({-onClick=>'Controller.hide_error()',
+			 -name=>'Ok'});
+    return div({-class=>'errorpanel',
+		-style=>'display:none',
+		-id=>'errordiv'},
+	       table(
+		   TR(
+		       td(span({-id=>'errormsg'},'no error')),
+		       td({-align=>'right'},$button)
+		   ),
+	       ),
+	       div({-class=>'errorpanel',
+		    -style=>'display:none;margin: 6px 6px 6px 6px',
+		    -id   =>'errordetails'},
+		   'no details'
+	       )
+	);
 }
 
 sub render_user_header {
@@ -162,11 +186,16 @@ sub render_search_form_objects {
     my $self     = shift;
     my $settings = $self->state;
 
+    # avoid exposing the internal database ids to the public
+    my $search_value = $settings->{name} =~ /^id:/ && $self->region->features 
+	                ? eval{$self->region->features->[0]->display_name}
+			: $settings->{name};
     return textfield(
         -name    => 'name',
         -id      => 'landmark_search_field',
         -size    => 25,
-        -default => $settings->{name}
+        -default => $search_value,
+	-override=>1,
     ) . submit( -name => $self->tr('Search') );
 }
 
@@ -273,23 +302,27 @@ sub render_balloon_settings {
 var GBubble = new Balloon;
 BalloonConfig(GBubble,'GBubble');
 GBubble.images = "$balloon_images/GBubble";
+GBubble.allowEventHandlers = true;
 
 // A simpler popup balloon style
 var GPlain = new Balloon;
 BalloonConfig(GPlain,'GPlain');
 GPlain.images = "$balloon_images/GPlain";
+GPlain.allowEventHandlers = true;
 
 // Like GBubble but fades in
 var GFade = new Balloon;
 BalloonConfig(GFade,'GFade');
 GFade.images = "$balloon_images/GBubble";
-GFade.opacity = 100;
+GFade.opacity = 1;
+GFade.allowEventHandlers = true;
 
 // A formatted box
 // Note: Box is a subclass of Balloon
 var GBox = new Box;
 BalloonConfig(GBox,'GBox');
-GBox.images = "$balloon_images/GBox";
+GBox.images = "$balloon_images/GBubble";
+GBox.allowEventHandlers = true;
 END
 ;
     							   
@@ -418,10 +451,15 @@ sub render_links {
   my $image_link   = a({-href=>'?make_image=GD',-target=>'_blank'},   '['.$self->tr('IMAGE_LINK').']');
   my $rand         = substr(md5_hex(rand),0,5);
 
+  my $debug_link   = a({-href    => 'javascript:void(0)',
+			-onClick => 'Controller.show_error("This is a test of an error message.","A stitch in time saves nine.")'},
+		       'Make an Error');
+
 
   my @standard_links        = (
       $help_link,
-      $reset_link
+      $reset_link,
+      $debug_link,
       );
 
   my @segment_showing_links =(
@@ -478,7 +516,11 @@ sub galaxy_form {
     return '' unless $galaxy_url;
 
     my $URL  = $source->global_setting('galaxy incoming');
-    $URL    ||= url(-full=>1,-path_info=>1);
+    if (!$URL) {
+	$URL = url(-full=>1,-path_info=>1);
+    } else {
+      $URL .= "/".$source->name;
+    }
 
     my $action = $galaxy_url =~ /\?/ ? "$galaxy_url&URL=$URL" : "$galaxy_url?URL=$URL";
     
@@ -495,6 +537,7 @@ sub galaxy_form {
 		      
     $html .= hidden(-name=>'dbkey',-value=>$dbkey);
     $html .= hidden(-name=>'gbgff',-value=>1);
+    $html .= hidden(-name=>'id',   -value=>$settings->{userid});
     $html .= hidden(-name=>'q',-value=>$seg);
     $html .= hidden(-name=>'t',-value=>$labels);
     $html .= hidden(-name=>'s',-value=>'off');
@@ -529,6 +572,8 @@ sub render_track_table {
   # tracks beginning with "_" are special, and should not appear in the
   # track table.
   my @labels     = $self->potential_tracks;
+
+  warn "potential tracks = @labels" if DEBUG;
   my %labels     = map {$_ => $self->label2key($_)}              @labels;
   my @defaults   = grep {$settings->{features}{$_}{visible}  }   @labels;
 
@@ -570,7 +615,8 @@ sub render_track_table {
     next if $seenit{$category}++;
     my $table;
     my $id = "${category}_section";
-    my $category_title   = (split m/:/,$category)[-1];
+    my $category_title   = (split m/(?<!\\):/,$category)[-1];
+    $category_title      =~ s/\\//g;
 
     if ($category eq $self->tr('REGION') 
 	&& !$self->setting('region segment')) {
@@ -633,10 +679,14 @@ sub indent_categories {
     my ($contents,$categories) = @_;
 
     my $category_hash = {};
+    my %sort_order;
+    my $sort_index = 0;
 
     for my $category (@$categories) {
 	my $cont   = $contents->{$category} || '';
-	my @parts  = split m/:/,$category;
+
+	my @parts  = map {s/\\//g; $_} split m/(?<!\\):/,$category;
+	$sort_order{$_} = $sort_index++ foreach @parts;
 
 	my $i      = $category_hash;
 
@@ -651,7 +701,6 @@ sub indent_categories {
 	}
     }
     my $i               = 1;
-    my %sort_order      = map {$_=>$i++} map {split m/:/} @$categories;
     my $nested_sections =  $self->nest_toggles($category_hash,\%sort_order);
 }
 
@@ -1034,9 +1083,14 @@ sub das_table {
       }
   }
 
+  my $url_help = $self->tr('Remote_url_help');
   push @rows,
-    th({-align=>'right',-width=>'20%'},
-		$self->tr('Remote_url')).
+    th({-align=>'right',
+	-width      =>'20%',
+	-onMouseOver=>"GBubble.showTooltip(event,'$url_help')",
+	-style      => 'cursor:pointer',
+       },
+       $self->tr('Remote_url')).
     td(textfield(-name=>'eurl',-id=>'eurl',-size=>80,-value=>'',-override=>1),
        $presets,
        button(
@@ -1390,7 +1444,8 @@ sub slidertable {
   my $fine_zoom  = $self->get_zoomincrement();
 
   my @lines =
-    (image_button(-src     => "$buttonsDir/green_l2.gif",-name=>"left $full",
+    (image_button(-src     => "$buttonsDir/green_l2.gif",
+		  -name=>"left $full",
 		  -title   => "left $full_title",
 		  -onClick => "Controller.update_coordinates(this.name)"
      ),
@@ -1636,7 +1691,7 @@ END
                     -style   => 'background:pink',
                     -name    => $self->tr('Revert'),
                     -onClick => $reset_js
-	      ),
+	      ), br, 
 	      button(
 		  -name    => $self->tr('Cancel'),
 		  -onClick => 'Balloon.prototype.hideTooltip(1)'
@@ -1687,13 +1742,14 @@ sub share_track {
     my $segment = $label =~  /:region$/   ? '$region'
                  :$label =~  /:overview$/ ? '$overview'
                  :'$segment';
+    my $upload_id = $state->{uploadid} || $state->{userid};
     if ( $label =~ /^(http|ftp):/ ) {    # reexporting and imported track!
         $gbgff = $label;
     }
     else {
         $gbgff = url( -full => 1, -path_info => 1 );
         $gbgff .= "?gbgff=1;q=$segment;t=$labels";
-        $gbgff .= ";id=" . $state->{id} if $labels =~ /file:/;
+        $gbgff .= ";id=$upload_id" if $labels =~ /file(:|%3A)/;
     }
 
     my $das_types = join( ';',
@@ -1807,6 +1863,11 @@ sub toggle_section {
 
   my $visible = $config{on};
 
+  # IE hack
+  my $agent      = CGI->user_agent || '';
+  my $ie         = $agent =~ /MSIE/;
+  $config{tight} = undef if $ie;
+
   my $buttons = $self->globals->button_url;
   my $plus  = "$buttons/plus.png";
   my $minus = "$buttons/minus.png";
@@ -1830,8 +1891,10 @@ sub toggle_section {
 		      -style=>$visible ? 'display:inline' : 'display:none',
 		      -class => 'el_visible'},
 		     @section_body);
-  my @result =  $config{nodiv} ? (div({-style=>'float:left'},$show_ctl.$hide_ctl),$content)
-                :$config{tight}? (div({-style=>'float:left'},$show_ctl.$hide_ctl).$break,$content)
+  my @result =  $config{nodiv} ? (div({-style=>'float:left'},
+				      $show_ctl.$hide_ctl),$content)
+                :$config{tight}? (div({-style=>'float:left;position:absolute;z-index:10'},
+				      $show_ctl.$hide_ctl).$break,$content)
                 : div($show_ctl.$hide_ctl,$content);
   return wantarray ? @result : "@result";
 }

@@ -86,6 +86,8 @@ sub init_databases {
     my $track_labels = shift;
     my $local_only   = shift;
 
+    my $state        = $self->state;
+
     $self->{local_dbs}  = {};
     $self->{remote_dbs} = {};
 
@@ -111,6 +113,7 @@ sub init_databases {
 	    $remote = $slave_status->select(@remotes);
 	}
 	my ($dbid)         = $source->db_settings($l);
+	next if $state->{dbid} && $state->{dbid} ne $dbid;
 	my $search_options = $source->setting($dbid => 'search options') || '';
 
 	next if $search_options eq 'none';  # ignore this in the search
@@ -118,10 +121,14 @@ sub init_databases {
 	$dbs{$dbid}{remotes}{$remote}++ if $remote;
     }
 
+    my $default_dbid = $self->source->global_setting('database');
+    $default_dbid  ||= '';
+    $default_dbid   .= ":database" unless $default_dbid =~ /:database$/;
+
     # try to spread the work out as much as possible among the remote renderers
     my %remotes;
     for my $dbid (keys %dbs) {
-	if (my @remote = keys %{$dbs{$dbid}{remotes}}) {
+	if ((my @remote = keys %{$dbs{$dbid}{remotes}}) && ($dbid ne $default_dbid)) {
 	    my ($least_used) = sort {($remotes{$a}||0) <=> ($remotes{$b}||0)} @remote;
 	    $self->{remote_dbs}{$least_used}{$dbid}++;
 	    $remotes{$least_used}++;
@@ -133,7 +140,7 @@ sub init_databases {
 		    { source     => $source,
 		      state      => $self->state,
 		      db         => $db,
-		      searchopts => $dbs{$dbid}{options},
+		      searchopts => $dbs{$dbid}{options}
 		    }
 		);
 	}
@@ -240,12 +247,15 @@ sub search_features {
 	$args->{-search_term} = $state->{name}
     }
 
-    my $local  = $self->search_features_locally($args);
-    my $remote = $self->search_features_remotely($args);
+    warn "search_features (",join ' ',%$args,')' if DEBUG;
+
+    local $self->{shortcircuit} = 0;
+    my $local   = $self->search_features_locally($args);  # if default db has a hit, then we short circuit
+    my $remote  = $self->search_features_remotely($args) unless $self->{shortcircuit};
 
     my @found;
-    push @found,@$local  if $local  && @$local;
-    push @found,@$remote if $remote && @$remote;
+    push @found,@$local    if $local    && @$local;
+    push @found,@$remote   if $remote   && @$remote;
 
     # uniqueify features of the same type and name
     my %seenit;
@@ -283,8 +293,21 @@ sub search_features_locally {
 
     my @dbs = keys %{$local_dbs};
 
+    # the default database is treated slightly differently - it is searched
+    # first, and finding a hit in it short-circuits other hits
+    my $default_dbid = $self->source->global_setting('database');
+    $default_dbid  ||= '';
+    $default_dbid   .= ":database" unless $default_dbid =~ /:database$/;
+
+    warn "default_dbid = $default_dbid" if DEBUG;
+
+    my %is_default = map {
+	$_=>($self->source->db2id($_) eq $default_dbid)
+    } @dbs;
+    @dbs           = sort {$is_default{$b} cmp $is_default{$a}} @dbs;
+
     for my $db (@dbs) {
-	warn "searching in $db: ",$self->source->db2id($db) if DEBUG;
+	warn "searching in ",$self->source->db2id($db) if DEBUG;
 	# allow explicit db_id to override cached list of local dbs
 	my $region   = $local_dbs->{$db} || 
 	    Bio::Graphics::Browser::Region->new(
@@ -293,10 +316,16 @@ sub search_features_locally {
 						  db      => $db,
 						  }
 						); 
-	my $features = $region->search_features($args);
+ 	my $features = $region->search_features($args);
 	next unless $features && @$features;
 	$self->add_dbid_to_features($db,$features);
-	push @found,@$features if $features;
+	push @found,@$features;
+
+	if ($is_default{$db}) {
+	    warn "hit @found in the default database, so short-circuiting" if DEBUG;
+	    $self->{shortcircuit}++;
+	    last;
+	}
     }
 
     return \@found;
@@ -307,7 +336,6 @@ sub search_features_locally {
 Search only the remote databases for the term.
 
 =cut
-
 
 sub search_features_remotely {
     my $self        = shift;
@@ -333,21 +361,20 @@ sub search_features_remotely {
     for my $url (keys %$remote_dbs) {
 
 	my $pipe  = IO::Pipe->new();
-	Bio::Graphics::Browser::Render->prepare_modperl_for_fork();
-	Bio::Graphics::Browser::Render->prepare_fcgi_for_fork('starting');
-	my $child = CORE::fork();
-	print STDERR "forked $child" if DEBUG;
-	die "Couldn't fork: $!" unless defined $child;
+	my $child = Bio::Graphics::Browser::Render->fork();
 	if ($child) { # parent
-	    Bio::Graphics::Browser::Render->prepare_fcgi_for_fork('parent');
 	    $pipe->reader();
 	    $select->add($pipe);
 	}
 	else { # child
-	    Bio::Graphics::Browser::DataBase->clone_databases();
-	    Bio::Graphics::Browser::Render->prepare_fcgi_for_fork('child');
 	    $pipe->writer();
 	    $self->fetch_remote_features($args,$url,$pipe);
+	    {
+		no warnings;
+		# bug workaround: prevent Session destroy method from
+		# flushing incomplete state!
+		*CGI::Session::DESTROY = sub { }; 
+             }
 	    CORE::exit 0;  # CORE::exit prevents modperl from running cleanup, etc
 	}
     }
@@ -448,6 +475,75 @@ sub add_dbid_to_features {
     my $source = $self->source;
     my $dbid   = $source->db2id($db);
     $source->add_dbid_to_feature($_,$dbid) foreach @$features;
+}
+
+=head2 $mapper = $search->coordinate_mapper($segment,$optimize)
+
+Create a Bio::Graphics coordinator mapper on the current segment. If
+optimize set to true, then features that map outside the current
+segment's seqid and region are nulled.
+
+=cut
+
+sub coordinate_mapper {
+    my $self            = shift;
+    my $current_segment = shift;
+    my $optimize        = shift;
+
+    my $db = $current_segment->factory;
+
+    my ( $ref, $start, $stop ) = (
+        $current_segment->seq_id, 
+	$current_segment->start,
+        $current_segment->end
+    );
+    my %segments;
+
+    my $closure = sub {
+        my ( $refname, @ranges ) = @_;
+
+        unless ( exists $segments{$refname} ) {
+            $segments{$refname} = $self->search_features({-search_term => $refname})->[0];
+        }
+        my $mapper  = $segments{$refname} || return;
+        my $absref  = $mapper->abs_ref;
+        my $cur_ref = eval { $current_segment->abs_ref }
+            || eval { $current_segment->ref }; # account for api changes in Bio::SeqI
+        return unless $absref eq $cur_ref;
+
+        my @abs_segs;
+        if ( $absref eq $refname) {           # doesn't need remapping
+            @abs_segs = @ranges;
+        }
+        elsif ($mapper->can('rel2abs')) {
+            @abs_segs
+                = map { [ $mapper->rel2abs( $_->[0], $_->[1] ) ] } @ranges;
+        } else {
+	    my $map_start  = $mapper->start;
+	    my $map_strand = $mapper->strand;
+	    if ($map_strand >= 0) {
+		@abs_segs = map {[$_->[0]+$map_start-1,$_->[1]+$map_start-1]} @ranges;
+	    } else {
+		@abs_segs = map {[$map_start-$_->[0]+1,$map_start-$_->[1]+1]} @ranges;
+		$absref   = $mapper->seq_id;
+	    }
+	}
+
+        # this inhibits mapping outside the displayed region
+        if ($optimize) {
+            my $in_window;
+            foreach (@abs_segs) {
+                next unless defined $_->[0] && defined $_->[1];
+		my ($left,$right) = sort {$a<=>$b} @$_;
+                $in_window ||= $_->[0] <= $right && $_->[1] >= $left;
+            }
+            return $in_window ? ( $absref, @abs_segs ) : ();
+        }
+        else {
+            return ( $absref, @abs_segs );
+        }
+    };
+    return $closure;
 }
 
 ##################################################################33

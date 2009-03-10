@@ -22,21 +22,20 @@ A.bred            { color: #FFFFFF;
                     font-size : small;
                     text-align: center;
                   }
-BODY              { background: url(../images/backgrounds/lrock005.jpg);
+BODY              { background-color: #F7FBFF;
                     font-family: sans-serif;
 	            font-size: small;
                   }
-DIV               { margin: 0 }
-H1                { color: navy;
+H1                { color: #3366FF; 
                     font-family: sans-serif; 
                   }
-H2                { color: navy;
+H2                { color: #3366FF; 
                     font-family: sans-serif; 
                   }
-H3                { color: navy;
+H3                { color: #3366FF; 
                     font-family: sans-serif; 
                   }
-H4                { color: navy;
+H4                { color: #3366FF; 
                     font-family: sans-serif; 
                   }
 INPUT             { background-color: white; }
@@ -61,61 +60,42 @@ TH.linkmenu       {
 .reset_button     {background-color: red;
 	            color: yellow;           
                   }
-.datatitle        { background-color: rgba(224,224,224,0.4);
-		   }
-.databody         { background-color: rgba(240,240,240,0.4);
-		  }
+.datatitle        { background-color: khaki; }
+.databody         { background-color: lightgoldenrodyellow; }
 .multiplechoicetitle  { background-color: lightblue;
 		        font-size: small;
 }
-.searchtitle      { background-color: rgb(240,240,240);
-		    background:       url(/gbrowse2/images/buttons/grey_0.4_pixel.png);
-		    background-color: rgba(240,240,240,0.4);
+.searchtitle      { background-color: beige;
 	            font-size: small;
-		    margin-left:   1em;
-		    margin-right:  1em;
+		    margin-left: 1em;
 }
-.searchbody       { background-color: rgb(224,224,224);
-		    background:       url(/gbrowse2/images/buttons/dark_0.4_pixel.png);
-		    background-color: rgba(224,224,224,0.4);
-		    margin-left:   1em;
-		    margin-right:  1em;
+.searchbody       { background-color: khaki;
+	            font-size: small;
+		    margin-left: 1em;
 		    margin-bottom: 3px;
-	            font-size: small;
 }
-.settingstitle    { background-color: rgb(224,224,224);
-		    background:       url(/gbrowse2/images/buttons/dark_0.4_pixel.png);
-		    background-color: rgba(224,224,224,0.4);
-		    margin-left:   1em;
-		    margin-right:  1em;
+.settingstitle    { background-color: #E6EBF0;
 	            font-size: small;
+		    margin-left: 1em;
 }
-.settingsbody     { background-color: rgb(240,240,240);
-		    background:       url(/gbrowse2/images/buttons/grey_0.4_pixel.png);
-		    background-color: rgba(240,240,240,0.4);
-		    margin-left:  1em;
-		    margin-right: 1em;
+.settingsbody     { background-color: #F2F6FA;
 	            font-size: small;
+		    margin-left: 1em;
 }
-.uploadtitle      { background-color: rgb(224,224,224);
-		    background:       url(/gbrowse2/images/buttons/dark_0.4_pixel.png);
-		    background-color: rgba(224,224,224,0.4);
-		    margin-left:  1em;
-		    margin-right: 1em;
+.uploadtitle      { background-color: #E6EBF0;
 	            font-size: small;
+		    margin-left: 1em;
 }
-.uploadbody       { background-color: rgb(240,240,240);
-		    background:       url(/gbrowse2/images/buttons/grey_0.4_pixel.png);
-		    background-color: rgba(240,240,240,0.4);
-		    margin-left:   1em;
-		    margin-right:  1em;
+.uploadbody       { background-color: #F2F6FA;
 	            font-size: small;
+		    margin-left: 1em;
 }
 .technicalinfo    { background-color: #FFFFFF; }
-.toggle           { color: #E0E0E0; }
+.toggle           { color: #3366FF; }
 .error            { color: red; }
 .errorpanel       { background-color: lightyellow;    
-		    margin:   -8px 8px  8px  -8px;
+		    margin:  -8px -8px  0px -8px;
+		    padding:  8px  8px  0px  8px;
 		  }
 .note             { color: red; }
 .pre              { font-family: monospace; }
@@ -123,9 +103,6 @@ TH.linkmenu       {
                     CURSOR: help;
                     TEXT-DECORATION: none
                   }
-.ctl_visible,
-.ctl_hidden       { z-index:10; }
-
 #autoComplete1 {  position:relative;text-align:left;z-index:9050; }
 #autoCompleteSearch1 { position:relative; }
 #autoCompleteInput1     { position:relative;width:20em;height:1.7em}

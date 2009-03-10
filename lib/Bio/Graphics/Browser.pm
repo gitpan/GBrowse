@@ -18,7 +18,7 @@ use Carp 'croak','carp';
 use CGI 'redirect','url';
 
 my %CONFIG_CACHE;
-our $VERSION = 1.988;
+our $VERSION = 1.989;
 
 sub new {
   my $class            = shift;

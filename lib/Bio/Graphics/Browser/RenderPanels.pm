@@ -138,33 +138,23 @@ sub request_panels {
   if ($args->{deferred}) {
       $SIG{CHLD} = 'IGNORE';
 
-      # need to prepare modperl for the fork
-      Bio::Graphics::Browser::Render->prepare_modperl_for_fork();
-      Bio::Graphics::Browser::Render->prepare_fcgi_for_fork('starting');
-
-      my $child = fork();
-      die "Couldn't fork: $!" unless defined $child;
+      my $child = Bio::Graphics::Browser::Render->fork();
 
       if ($child) {
-	  Bio::Graphics::Browser::Render->prepare_fcgi_for_fork('parent');
 	  return $data_destinations;
       }
-
-      Bio::Graphics::Browser::Render->prepare_fcgi_for_fork('child');
-      Bio::Graphics::Browser::DataBase->clone_databases();
 
       open STDIN, "</dev/null" or die "Couldn't reopen stdin";
       open STDOUT,">/dev/null" or die "Couldn't reopen stdout";
       POSIX::setsid()          or die "Couldn't start new session";
 
       if ( $do_local && $do_remote ) {
-          if ( fork() ) {
+          if ( Bio::Graphics::Browser::Render->fork() ) {
               $self->run_local_requests( $data_destinations, 
 					 $args,
 					 $local_labels );
           }
           else {
-	      Bio::Graphics::Browser::DataBase->clone_databases(); # yes, again!
               $self->run_remote_requests( $data_destinations, 
 					  $args,
 					  $remote_labels );
@@ -363,18 +353,23 @@ sub wrap_rendered_track {
 
     my $collapsed = $settings->{track_collapsed}{$label};
     my $img_style = $collapsed ? "display:none" : "display:inline";
-#    $img_style .= ";filter:alpha(opacity=100);moz-opacity:1";
 
     # commented out alt because it interferes with balloon tooltips is IE
+    my $map_id = "${label}_map";
+
+    # Work around bug in google chrome which is manifested by the <area> link information
+    # on all EVEN reloads of the element by ajax calls. Weird.
+    my $agent  = CGI->user_agent || '';
+    $map_id   .= "_".int(rand(1000)) if $agent =~ /chrome/i;  
+
     my $img = img(
         {   -src    => $url,
-            -usemap => "#${label}_map",
+            -usemap => "#${map_id}",
             -width  => $width,
             -id     => "${label}_image",
             -height => $height,
             -border => 0,
             -name   => $label,
-            #-alt    => $label,
             -style  => $img_style
         }
     );
@@ -463,9 +458,11 @@ sub wrap_rendered_track {
 
     my $show_titlebar
         = ( ( $source->setting( $label => 'key' ) || '' ) ne 'none' );
-    $show_titlebar &&= $label !~ /scale/i;
+    my $is_scalebar = $label =~ /scale/i;
+    my $is_detail   = $label !~ /overview|region/i;
+    $show_titlebar &&= !$is_scalebar;
 
-    my $map_html = $self->map_html($map);
+    my $map_html = $self->map_html($map,$map_id);
 
     # the padding is a little bit of empty track that is displayed only
     # when the track is collapsed. Otherwise the track labels get moved
@@ -485,8 +482,42 @@ sub wrap_rendered_track {
     );
 
 
-    return div({-class=>'centered_block',-style=>"width:${width}px"},
-        ( $show_titlebar ? $titlebar : '' ) . $img . $pad_img )
+    # Add arrows for pannning to details scalebar panel
+    if ($is_scalebar && $is_detail) {
+	my $style    = 'opacity:0.35;position:absolute;border:none;cursor:pointer';
+	$style      .= ';filter:alpha(opacity=35);moz-opacity:0.35';
+        my $pan_left   =  img({
+	    -style   => $style . ';left:10px',
+	    -class   => 'panleft',
+	    -src     => "$buttons/panleft.png",
+	    -onClick => "Controller.scroll('left',0.5)"
+			      },
+	    );
+	my $pan_left2  =  img({
+            -style   => $style . ';left:-3px',
+            -class   => 'panleft',
+            -src     => "$buttons/panleft2.png",
+            -onClick => "Controller.scroll('left',1)",
+                              },
+            );
+	my $pan_right  = img({ -style   => $style . ';right:10px',
+			       -class   => 'panright',
+			       -src     => "$buttons/panright.png",
+			       -onClick => "Controller.scroll('right',0.5)",
+			     }
+	    );
+        my $pan_right2  = img({ -style   => $style . ';right:-3px',
+                               -class   => 'panright',
+                               -src     => "$buttons/panright2.png",
+                               -onClick => "Controller.scroll('right',1)",
+                             }
+            );
+
+	$img = $pan_left2 . $pan_left . $img . $pan_right . $pan_right2;
+    }
+    return div({-class=>'centered_block',
+		-style=>"width:${width}px;position:relative"},
+	       ( $show_titlebar ? $titlebar : '' ) . $img . $pad_img )
         . ( $map_html || '' );
 
 }
@@ -525,7 +556,7 @@ sub run_remote_requests {
   my $source     = $self->source;
   my $settings   = $self->settings;
   my $lang       = $self->language;
-  my %env        = map {$_=>$ENV{$_}}    grep /^GBROWSE/,keys %ENV;
+  my %env        = map {$_=>$ENV{$_}}    grep /^(GBROWSE|HTTP)/,keys %ENV;
   my %args       = map {$_=>$args->{$_}} grep /^-/,keys %$args;
 
   $args{$_}  = $args->{$_} foreach ('section','image_class','cache_extra');
@@ -566,20 +597,10 @@ sub run_remote_requests {
 
   for my $url (keys %renderers) {
 
-      Bio::Graphics::Browser::Render->prepare_modperl_for_fork();
-      Bio::Graphics::Browser::Render->prepare_fcgi_for_fork('starting');
-
-      my $child   = fork();
-
-      die "Couldn't fork: $!" unless defined $child;
-      if ($child) {
-	  Bio::Graphics::Browser::Render->prepare_fcgi_for_fork('parent');
-	  next;
-      }
+      my $child   = Bio::Graphics::Browser::Render->fork();
+      next if $child;
 
       # THIS PART IS IN THE CHILD
-      Bio::Graphics::Browser::Render->prepare_fcgi_for_fork('child');
-      Bio::Graphics::Browser::DataBase->clone_databases();
       my @labels   = keys %{$renderers{$url}};
       my $s_track  = Storable::nfreeze(\@labels);
 
@@ -918,8 +939,14 @@ sub make_map {
 	$mousedown = $balloonclick =~ /^(http|ftp):/
 	    ? "$balloon_ct.showTooltip(event,'<iframe width='+$balloon_ct.maxWidth+' height=$height " .
 	      "frameborder=0 src=$balloonclick></iframe>',$stick,$balloon_ct.maxWidth)"
-	    : "$balloon_ct.showTooltip(event,'$balloonclick',$stick)";
-	undef $href;
+	      : "$balloon_ct.showTooltip(event,'$balloonclick',$stick)";
+	undef $target;
+	# workarounds to accomodate observation that some browsers don't respect cursor:pointer styles in
+	# <area> tags unless there is an href defined
+	my $agent =  CGI->user_agent || '';
+	$href     =  $agent =~ /msie/i    ? undef
+                     : $agent =~ /firefox/i ? undef
+                     : 'javascript:void(0)';
       }
     }
     my %attributes = (
@@ -928,7 +955,7 @@ sub make_map {
 		      target      => $target,
 		      onmouseover => $mouseover,
 		      onmousedown => $mousedown,
-		      style       => $style
+		      style       => $style,
 		      );
 
     my $ftype = $box->[0]->primary_tag || 'feature';
@@ -1080,12 +1107,16 @@ sub run_local_requests {
         # this shouldn't happen, but let's be paranoid
         next if $seenit{$label}++;
 
-	my $multiple_tracks = $label =~ /^(http|ftp|file|das|plugin):/ ;
+	(my $base = $label) =~ s/:(overview|region|details?)$//;
+	warn "label=$label, base=$base, file=$feature_files->{$base}" if DEBUG;
+
+	my $multiple_tracks = $base =~ /^(http|ftp|file|das|plugin):/ 
+	    || $source->code_setting($base=>'remote feature');
 
         my @keystyle = ( -key_style => 'between' )
             if $multiple_tracks;
 
-	my $key = $source->setting( $label => 'key' ) || '' ;
+	my $key = $source->setting( $base => 'key' ) || '' ;
 	my @nopad = (($key eq '') || ($key eq 'none')) 
 	    && !$multiple_tracks
              ? (-pad_top => 0)
@@ -1096,9 +1127,6 @@ sub run_local_requests {
             = Bio::Graphics::Panel->new( @$panel_args, @keystyle, @nopad );
 
         my %trackmap;
-
-	(my $base = $label) =~ s/:(overview|region|details?)$//;
-	warn "label=$label, base=$base, file=$feature_files->{$base}" if DEBUG;
 
         if ( my $file = ($feature_files->{$base}) ) {
 
@@ -1219,12 +1247,17 @@ sub add_features_to_track {
 	}
 
 	# Handle generic grouping (needed for GFF3 database)
- 	$group_field{$l} = $source->code_setting($l => 'group_on') unless exists $group_field{$l};
+ 	$group_field{$l} = $source->code_setting($l => 'group_on') 
+	    unless exists $group_field{$l};
 	
 	if (my $pattern = $group_pattern{$l}) {
 	  my $name = $feature->name or next;
 	  (my $base = $name) =~ s/$pattern//i;
-	  $groups{$l}{$base} ||= Bio::Graphics::Feature->new(-type   => 'group');
+	  $groups{$l}{$base} 
+	    ||= Bio::Graphics::Feature->new(-type   => 'group',
+					    -name   => $feature->display_name,
+					    -strand => $feature->strand,
+	      );
 	  $groups{$l}{$base}->add_segment($feature);
 	  next;
 	}
@@ -1232,7 +1265,8 @@ sub add_features_to_track {
 	if (my $field = $group_field{$l}) {
 	  my $base = eval{$feature->$field};
 	  if (defined $base) {
-	    $groups{$l}{$base} ||= Bio::Graphics::Feature->new(-start  => $feature->start,
+	    $groups{$l}{$base} ||= Bio::Graphics::Feature->new(-name   => $feature->display_name,
+							       -start  => $feature->start,
 							       -end    => $feature->end,
 							       -strand => $feature->strand,
 							       -type   => $feature->primary_tag);
@@ -1597,12 +1631,14 @@ sub get_cache_base {
 sub map_html {
   my $self = shift;
   my $map  = shift;
+  my $id   = shift;
 
   my @data = @$map;
 
   my $name = shift @data or return '';
+  $id    ||= "${name}_map";
 
-  my $html  = qq(\n<map name="${name}_map" id="${name}_map">\n);
+  my $html  = qq(\n<map name="$id" id="$id">\n);
   for (@data) {
     my (undef,$x1,$y1,$x2,$y2,%atts) = split "\t";
     $x1 or next;

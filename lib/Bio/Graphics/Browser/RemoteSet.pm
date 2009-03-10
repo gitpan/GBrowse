@@ -41,6 +41,7 @@ sub add_files_from_state {
 	    $self->add_source($track,$track);
 	    next;
 	}
+
 	my $remote_url = $config->setting($track=>'remote feature') or next;
 	warn "adding remote_url = $remote_url" if DEBUG;
 	$self->add_source($track,$remote_url);
@@ -185,6 +186,23 @@ sub get_remote_upload {
   return $feature_file;
 }
 
+# We override name_file() so as to place all remote data
+# into one "remote" directory. This avoids replicating data.
+sub name_file {
+  my $self      = shift;
+  my $filename  = shift;
+  my $strip     = shift;
+
+  my $state     = $self->state;
+  my $config    = $self->config;
+  my $hex       = md5_hex($filename);
+  my ($a,$b)    = $hex =~ /^(.{2})(.{2})/;
+  my $id        = File::Spec->catfile('shared_remote_tracks',$a,$b);
+
+  my ($url,$path) = $self->file2path($config,$id,$filename,$strip);
+  warn "name_file() returns => ($url,$path)" if DEBUG;
+  return ($url,$path);
+}
 
 sub get_das_segment {
   my $self = shift;

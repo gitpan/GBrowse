@@ -1,5 +1,5 @@
 package Bio::DB::Tagger;
-# $Id: Tagger.pm,v 1.3 2009/01/26 14:46:28 lstein Exp $
+# $Id: Tagger.pm,v 1.5 2009/02/28 00:05:44 lstein Exp $
 
 use strict;
 use warnings;
@@ -170,6 +170,43 @@ END
     return $count;
 }
 
+=item @tags = $tagger->get_tag($object,$tag)
+
+Returns all the tags of type $tag.
+
+=cut
+
+sub get_tag {
+    my $self         = shift;
+    my ($object,$tag,$value) = @_;
+    my $query = <<END;
+SELECT distinct tname,tvalue,aname,tmodified
+  FROM tag
+   NATURAL JOIN tagname
+   NATURAL JOIN author
+   NATURAL JOIN object
+  WHERE oname=?
+  AND   tname=?
+END
+;
+    my $name = ref($tag) ? $tag->name : $tag;
+    my @bind = ($object,$name);
+
+    my $sth = $self->dbh->prepare($query)
+	or croak $self->dbh->errstr;
+    $sth->execute(@bind)
+	or croak $self->dbh->errstr;
+    my @result;
+    while (my ($tag,$value,$author,$modified) = $sth->fetchrow_array) {
+	push @result,
+	Bio::DB::Tagger::Tag->new(-name=>$tag,
+				  -value=>$value,
+				  -author=>$author,
+				  -modified=>$modified);
+    }
+    return @result;
+}
+
 =item $tags = $tagger->tags()
 
 =item @tags = $tagger->tags()
@@ -200,6 +237,29 @@ SELECT tname
   FROM tagname 
  WHERE tname LIKE ?
  ORDER BY tname
+END
+;
+    $prefix =~ s/%/\\%/g;
+    $prefix =~ s/_/\\_/g;
+    $sth->execute($prefix.'%') or croak $sth->errstr;
+    return Bio::DB::Tagger::Iterator->new($sth);
+}
+
+=item $iterator = $tagger->tag_match('prefix')
+
+Returns an iterator that matches all tags beginning with 'prefix'
+(case insensitive). Call $iterator->next_tag() to get the next match.
+
+=cut
+
+sub author_match {
+    my $self   = shift;
+    my $prefix = shift;
+    my $sth   = $self->dbh->prepare(<<END) or croak $self->dbh->errstr;
+SELECT aname
+  FROM author
+ WHERE aname LIKE ?
+ ORDER BY aname
 END
 ;
     $prefix =~ s/%/\\%/g;
@@ -395,8 +455,7 @@ SELECT count(*)
     AND tagname.tname=?
 END
 ;
-	warn "will nuke tag $tagname" if $count == 0;
-	$self->nuke_tag($tagname) if $count == 0;
+	$self->nuke_tag($tagname)     if $count == 0;
 	$dbh->commit;
     };
     if ($@) {
@@ -495,13 +554,13 @@ sub _set_tags {
 	local $dbh->{RaiseError}=1;
 	# create/get object id
 	my $oid = $self->object_to_id($objectname,1);
-	$dbh->do("DELETE FROM tag WERE oid=$oid")
+	$dbh->do("DELETE FROM tag WHERE oid=$oid")
 	    if $replace;
 	for my $tag (@$tags) {
 	    my $tid = $self->tag_to_id($tag->name,1);
 	    my $aid = $self->author_to_id($tag->author,1);
 	    my $value = $tag->value;
-	    
+
 	    my $sth = $dbh->prepare(
 		"INSERT INTO tag (oid,tid,aid,tvalue) VALUES (?,?,?,?)"
 		);

@@ -11,6 +11,7 @@ bin/process_sgd.pl
 bin/process_wormbase.pl
 bin/register_moby_services.pl
 bin/report_missing_language_tags.pl
+bin/scan_gbrowse.pl
 bin/ucsc_genes2gff.pl
 bin/windows_install.pl
 Build.PL
@@ -159,13 +160,11 @@ etc/init.d/gbrowse-slave
 htdocs/annotation_help.html
 htdocs/css/gbrowse.css
 htdocs/css/gbrowse_transparent.css
+htdocs/css/gbrowse_warm.css
 htdocs/css/karyotype.css
 htdocs/css/titlebar-default.css
 htdocs/css/titlebar-safari.css
 htdocs/css/tracks.css
-htdocs/databases/ideograms/human_cytobands.gff
-htdocs/databases/ideograms/mouse_cytobands.gff
-htdocs/databases/ideograms/rat_cytobands.gff
 htdocs/gbrowse_karyotype_help.html
 htdocs/general_help.html
 htdocs/general_help.html.zh
@@ -173,8 +172,6 @@ htdocs/gmod_cog.jpeg
 htdocs/images/backgrounds/cloud.jpg
 htdocs/images/backgrounds/lrock005.jpg
 htdocs/images/backgrounds/steel.jpg
-htdocs/images/balloons/GBox/balloon.png
-htdocs/images/balloons/GBox/close.png
 htdocs/images/balloons/GBubble/balloon.png
 htdocs/images/balloons/GBubble/balloon_ie.png
 htdocs/images/balloons/GBubble/close.png
@@ -211,6 +208,10 @@ htdocs/images/buttons/minus12.png
 htdocs/images/buttons/mminus.png
 htdocs/images/buttons/mplus.gif
 htdocs/images/buttons/mplus.png
+htdocs/images/buttons/panleft.png
+htdocs/images/buttons/panleft2.png
+htdocs/images/buttons/panright.png
+htdocs/images/buttons/panright2.png
 htdocs/images/buttons/plus.gif
 htdocs/images/buttons/plus.png
 htdocs/images/buttons/query.png
@@ -239,6 +240,7 @@ htdocs/images/help/upload.gif
 htdocs/images/help/worm_exons_spec.png
 htdocs/images/help/worm_telomeric_spec.png
 htdocs/images/help/yeast_I_genes_spec.png
+htdocs/images/spinner.gif
 htdocs/index.html
 htdocs/js/animation.js
 htdocs/js/autocomplete.js
@@ -498,6 +500,9 @@ sample_data/yeast_chr1+2/yeast_chr1+2.gff3
 sample_data/yeast_scaffolds/chr1.fa
 sample_data/yeast_scaffolds/chr2.fa
 sample_data/yeast_scaffolds/chromosomes.gff3
+sample_data/ideograms/human_cytobands.gff
+sample_data/ideograms/mouse_cytobands.gff
+sample_data/ideograms/rat_cytobands.gff
 t/01yeast.t
 t/02.rearchitecture.t
 t/03.render.t
