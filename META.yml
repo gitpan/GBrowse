@@ -1,6 +1,6 @@
 ---
 name: GBrowse
-version: 1.989
+version: 1.99
 author:
   - 'Lincoln Stein <lincoln.stein@gmail.com>'
 abstract: The GMOD Generic Genome Browser
@@ -18,6 +18,7 @@ requires:
   IO::String: 0
   JSON: 0
   LWP: 0
+  Statistics::Descriptive: 0
   Storable: 0
   perl: 5.008
 recommends:
@@ -28,7 +29,6 @@ recommends:
   FCGI: 0
   GD::SVG: 0
   Safe::World: 0
-  Statistics::Descriptive: 0
 provides:
   Bio::DB::Das::BioSQL:
     file: lib/Bio/DB/Das/BioSQL.pm
@@ -82,7 +82,7 @@ provides:
     file: lib/Bio/DB/Tagger/mysql.pm
   Bio::Graphics::Browser:
     file: lib/Bio/Graphics/Browser.pm
-    version: 1.989
+    version: 1.99
   Bio::Graphics::Browser::AuthorizedFeatureFile:
     file: lib/Bio/Graphics/Browser/AuthorizedFeatureFile.pm
   Bio::Graphics::Browser::CachedTrack:

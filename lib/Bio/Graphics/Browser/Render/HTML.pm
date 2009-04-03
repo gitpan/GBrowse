@@ -190,13 +190,23 @@ sub render_search_form_objects {
     my $search_value = $settings->{name} =~ /^id:/ && $self->region->features 
 	                ? eval{$self->region->features->[0]->display_name}
 			: $settings->{name};
-    return textfield(
+    my $html = textfield(
         -name    => 'name',
         -id      => 'landmark_search_field',
         -size    => 25,
         -default => $search_value,
 	-override=>1,
-    ) . submit( -name => $self->tr('Search') );
+    );
+    if ($self->setting('autocomplete')) {
+	$html .= <<END
+<span id="indicator1" style="display: none">
+  <img src="/gbrowse2/images/spinner.gif" alt="Working..." />
+</span>
+<div id="autocomplete_choices" class="autocomplete"></div>
+END
+    }
+    $html .= submit( -name => $self->tr('Search') );
+    return $html;
 }
 
 sub render_html_head {
@@ -219,7 +229,7 @@ sub render_html_head {
 
  if ($self->setting('autocomplete')) {
     push @scripts,{src=>"$js/$_"}
-      foreach qw(connection.js autocomplete.js);
+      foreach qw(controls.js autocomplete.js);
   }
 
   # our own javascript
@@ -240,15 +250,15 @@ sub render_html_head {
     );
 
   # pick stylesheets;
-  my @css_links;
+  my @extra_headers;
   my @style = shellwords($self->setting('stylesheet') || '/gbrowse/gbrowse.css');
   for my $s (@style) {
       my ($url,$media) = $s =~ /^([^(]+)(?:\((.+)\))?/;
       $media ||= 'all';
-      push @css_links,CGI::Link({-rel=>'stylesheet',
-				 -type=>'text/css',
-				 -href=>$self->globals->resolve_path($url,'url'),
-				 -media=>$media});
+      push @extra_headers,CGI::Link({-rel=>'stylesheet',
+				     -type=>'text/css',
+				     -href=>$self->globals->resolve_path($url,'url'),
+				     -media=>$media});
   }
 
 
@@ -268,16 +278,18 @@ sub render_html_head {
       $set_dragcolors = "set_dragcolors('$fill');";
   }
 
+  push @extra_headers,$self->setting('head')  if $self->setting('head');
+
   # put them all together
   my @args = (-title    => $title,
               -style    => \@stylesheets,
               -encoding => $self->tr('CHARSET'),
 	      -script   => \@scripts,
-	      -head     => \@css_links,
+	      -head     => \@extra_headers,
 	     );
-  push @args,(-head=>$self->setting('head'))    if $self->setting('head');
   push @args,(-lang=>($self->language_code)[0]) if $self->language_code;
-  push @args,(-onLoad=>"initialize_page();$set_dragcolors");
+  my $autocomplete = ''; # $self->setting('autocomplete') ? 'initAutocomplete()' : '';
+  push @args,(-onLoad=>"initialize_page();$set_dragcolors;$autocomplete");
 
   return start_html(@args);
 }
@@ -713,7 +725,7 @@ sub nest_toggles {
 
     my $result = '';
     for my $key (sort { 
-	           $sort->{$a}<=>$sort->{$b} || $a cmp $b
+	           ($sort->{$a}||0)<=>($sort->{$b}||0) || $a cmp $b
 		      }  keys %$hash) {
 	if ($key eq '__contents__') {
 	    $result .= $hash->{$key}."\n";
@@ -1083,7 +1095,7 @@ sub das_table {
       }
   }
 
-  my $url_help = $self->tr('Remote_url_help');
+  my $url_help = $self->tr('Remote_url_help')||'';
   push @rows,
     th({-align=>'right',
 	-width      =>'20%',
@@ -1928,6 +1940,24 @@ sub can_generate_pdf {
 	    );
 	return $CAN_PDF=0;
     }
+}
+
+sub format_autocomplete {
+    my $self     = shift;
+    my $features = shift;
+    my $partial  = shift;
+    my %names;
+    for my $f (@$features) {
+	my $name = $f->display_name or next;
+	$names{$name}++;
+    }
+    my $html = "<ul>\n";
+    for my $n (sort keys %names) {
+	$n =~ s/($partial)/<b>$1<\/b>/i;
+	$html .= "<li>$n</li>\n";
+    }
+    $html .= "</ul>\n";
+    return $html;
 }
 
 1;
