@@ -36,7 +36,8 @@ sub render_top {
     my $err  =  $self->render_error_div;
     my $html = '';
     $html   .=  $self->render_user_header;
-    $html   .=  $self->render_title($title,$self->state->{name} && @$features == 0);
+    $html   .=  $self->render_title($title,$self->state->{name} 
+				    && @$features == 0);
     $html   .=  $self->html_frag('html1',$self->state);
     $html   .=  $self->render_instructions;
     return  $err
@@ -785,7 +786,7 @@ sub render_global_config {
     my $content
         = start_form( -name => 'display_settings', -id => 'display_settings' )
         . div( {-class=>'searchbody'},
-	       table ({-border => 0, -cellspacing=>0},
+	       table ({-border => 0, -cellspacing=>0, -width=>'100%'},
 		      TR( { -class => 'searchtitle' },
 			  td( b(  checkbox(
 				      -name     => 'grid',
@@ -818,7 +819,7 @@ sub render_global_config {
 				      -override => 1,
 				      -onChange => 'Controller.set_display_option(this.name,this.value)', 
 				  ),
-				  a({-href=>'#',
+				  a({-href=>'javascript:void(0)',
 				     -onClick=>'Controller.set_display_option("h_feat","_clear_");$("h_feat").value=""'},
 				    $self->tr('CLEAR_HIGHLIGHTING'))
 			      ),
@@ -852,7 +853,7 @@ sub render_global_config {
 				      -override => 1,
 				      -onChange    => 'Controller.set_display_option(this.name,this.value)', 
 				  ),
-				  a({-href=>'#',
+				  a({-href=>'javascript:void(0)',
 				     -onClick=>'Controller.set_display_option("h_region","_clear_");$("h_region").value=""'
 				    },
 				    $self->tr('CLEAR_HIGHLIGHTING'))
@@ -1178,7 +1179,7 @@ sub edit_uploaded_file {
             td( $self->tr('Edit_instructions') ),
         ),
         TR( { -class => 'searchbody' },
-            td( a(  { -href => "?help=annotation#format", -target => 'help' },
+            td( a(  { -href => $self->annotation_help().'#format', -target => 'help' },
                     b( '[' . $self->tr('Help_format') . ']' )
                 )
             ),

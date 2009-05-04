@@ -1,5 +1,5 @@
 package Bio::Graphics::Browser;
-# $Id: Browser.pm,v 1.229 2009/03/10 19:22:33 lstein Exp $
+# $Id: Browser.pm,v 1.233 2009/05/04 05:05:07 lstein Exp $
 # Globals and utilities for GBrowse and friends
 
 use strict;
@@ -18,7 +18,7 @@ use Carp 'croak','carp';
 use CGI 'redirect','url';
 
 my %CONFIG_CACHE;
-our $VERSION = 1.990;
+our $VERSION = 1.991;
 
 sub new {
   my $class            = shift;
@@ -121,6 +121,13 @@ sub tmpdir {
     $self->make_path($path) unless -d $path;
     return $path;
 }
+
+sub user_dir {
+    my $self       = shift;
+    my @components = @_;
+    return $self->tmpdir('userdata',@components);
+}
+
 sub tmpimage_dir {
     my $self  = shift;
     return $self->tmpdir('images',@_);
@@ -144,6 +151,15 @@ sub session_locks {
     my $path  = File::Spec->catfile($self->tmp_base,'locks',@_);
     $self->make_path($path) unless -d $path;
     return $path;
+}
+
+# return one of
+# 'flock'  -- standard flock locking
+# 'nfs'    -- use File::NFSLock
+# 'mysql'  -- use mysql advisory locks
+sub session_locktype {
+    my $self = shift;
+    return $self->setting(general=>'session lock type') || 'default';
 }
 
 sub session_dir {
@@ -179,7 +195,8 @@ sub cache_time             { shift->setting(general=>'cache time')             }
 sub url_fetch_timeout      { shift->setting(general=>'url_fetch_timeout')      }
 sub url_fetch_max_size     { shift->setting(general=>'url_fetch_max_size')     }
 
-sub session_driver         { shift->setting(general=>'session driver') || 'driver:file;serializer:default' }
+sub session_driver         { shift->setting(general=>'session driver') 
+				 || 'driver:file;serializer:default' }
 sub session_args    {
   my $self = shift;
   my %args = shellwords($self->setting(general=>'session args')||'');
@@ -268,15 +285,37 @@ sub update_data_source {
   return $source;
 }
 
+sub time2sec {
+    my $self = shift;
+    my $time  = shift;
+    $time =~ s/\s*#.*$//; # strip comments
+
+    my(%mult) = ('s'=>1,
+                 'm'=>60,
+                 'h'=>60*60,
+                 'd'=>60*60*24,
+                 'w'=>60*60*24*7,
+                 'M'=>60*60*24*30,
+                 'y'=>60*60*24*365);
+    my $offset = $time;
+    if (!$time || (lc($time) eq 'now')) {
+	$offset = 0;
+    } elsif ($time=~/^([+-]?(?:\d+|\d*\.\d*))([smhdwMy])/) {
+	$offset = ($mult{$2} || 1)*$1;
+    }
+    return $offset;
+}
+
 ## methods for dealing with the session
 sub session {
   my $self = shift;
   my $id   = shift;
-  return Bio::Graphics::Browser::Session->new(driver  => $self->session_driver,
-					      id      => $id||undef,
-					      args    => $self->session_args,
-					      source  => $self->default_source,
-					      lockdir => $self->session_locks,
+  return Bio::Graphics::Browser::Session->new(driver   => $self->session_driver,
+					      id       => $id||undef,
+					      args     => $self->session_args,
+					      source   => $self->default_source,
+					      lockdir  => $self->session_locks,
+					      locktype => $self->session_locktype,
 					     );
 }
 

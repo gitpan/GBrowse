@@ -1,6 +1,6 @@
 package Bio::Graphics::Browser::CachedTrack;
 
-# $Id: CachedTrack.pm,v 1.7 2009/01/08 18:47:38 lstein Exp $
+# $Id: CachedTrack.pm,v 1.9 2009/05/01 12:12:57 lstein Exp $
 # This package defines a Bio::Graphics::Browser::Track option that manages
 # the caching of track images and imagemaps.
 
@@ -169,11 +169,12 @@ sub gd {
     my $data = $self->get_data or return;
 
     # The ? statement here accomodates the storage of GD::SVG objects,
-    # which do not support the call to newFromGd2Data.
-    return (ref($data->{gd}) 
+    # which do not support the call to newFromPngData.
+    my $gd = (ref($data->{gd}) 
 	    && ref($data->{gd})=~/^GD/)
 	? $data->{gd}
         : GD::Image->newFromGd2Data($data->{gd});
+    return $gd;
 }
 
 sub map {
@@ -214,7 +215,8 @@ sub status {
     # waiting forever.
     if (-e $dotfile) {
 	-s _ or return 'PENDING';  # size zero means that dotfile has been created but not locked
-	my $f = IO::File->new($dotfile) or die "Couldn't open $dotfile: $!";
+	my $f = IO::File->new($dotfile) 
+	    or return 'AVAILABLE'; # dotfile disappeared, so data has just become available
 	flock $f,LOCK_SH;
 	my $timestamp = $f->getline();
 	die "BAD TIMESTAMP" unless $timestamp;

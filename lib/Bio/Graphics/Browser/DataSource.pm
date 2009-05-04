@@ -95,6 +95,22 @@ sub clear_cached_dbids {
     delete $self->{feature2dbid};
 }
 
+=head2 userdata()
+
+  $path = $source->userdata(@path_components)
+
+  Returns a path to somewhere in the tmp file system for the 
+  indicated userdata.
+
+=cut
+
+sub userdata {
+    my $self = shift;
+    my @path = @_;
+    my $globals = $self->globals;
+    return $globals->user_dir($self->name,@path);
+}
+
 =head2 global_setting()
 
   $setting = $source->global_setting('option')
@@ -131,22 +147,7 @@ sub global_time {
 
     my $time = $self->global_setting($option);
     return unless defined($time);
-
-    $time =~ s/\s*#.*$//; # strip comments
-
-    my(%mult) = ('s'=>1,
-                 'm'=>60,
-                 'h'=>60*60,
-                 'd'=>60*60*24,
-                 'M'=>60*60*24*30,
-                 'y'=>60*60*24*365);
-    my $offset = $time;
-    if (!$time || (lc($time) eq 'now')) {
-	$offset = 0;
-    } elsif ($time=~/^([+-]?(?:\d+|\d*\.\d*))([smhdMy])/) {
-	$offset = ($mult{$2} || 1)*$1;
-    }
-    return $offset;
+    return $self->globals->time2sec($time);
 }
 
 sub cache_time {
@@ -726,6 +727,12 @@ the URL to the image and the physical path of the image.
 sub generate_image {
   my $self   = shift;
   my $image  = shift;
+
+  if ($self->global_setting('truecolor') 
+      && $image->can('saveAlpha')) {
+      $image->trueColor(1);
+      $image->saveAlpha(1);
+  }
 
   my $extension = $image->can('png') ? 'png' : 'gif';
   my $data      = $image->can('png') ? $image->png : $image->gif;
