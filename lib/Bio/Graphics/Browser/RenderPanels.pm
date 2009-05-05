@@ -264,8 +264,10 @@ sub make_requests {
             -panel_args => \@panel_args,
             -track_args => \@track_args,
             -extra_args => [ @cache_extra, @extra_args, $label ],
+	    -cache_time => $self->settings->{cache} 
+			    ? $source->cache_time 
+			    : 0
         );
-        $cache_object->cache_time( $source->cache_time * 60 );
         $d{$label} = $cache_object;
     }
     return \%d;
