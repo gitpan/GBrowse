@@ -220,6 +220,7 @@ sub make_requests {
     my $self   = shift;
     my $args   = shift;
     my $source = $self->source;
+    my $settings=$self->settings;
 
     my $feature_files  = $args->{external_features};
     my $labels         = $args->{labels};
@@ -232,8 +233,10 @@ sub make_requests {
     my %d;
     foreach my $label ( @{ $labels || [] } ) {
         my @track_args = $self->create_track_args( $label, $args );
+	my (@filter_args,@featurefile_args);
 
-	my @extra_args = ();
+	my $filter     = $settings->{features}{$label}{filter};
+	@filter_args   = %{$filter->{values}} if $filter->{values};
 	my $ff_error;
 
         # get config data from the feature files
@@ -247,6 +250,7 @@ sub make_requests {
 		    -cache_base => $base,
 		    -panel_args => \@panel_args,
 		    -track_args => \@track_args,
+		    -extra_args => [ @cache_extra, @filter_args, @featurefile_args, $label ],
 		    );
 		$cache_object->flag_error("Could not fetch data for $track");
 		$d{$track} = $cache_object;
@@ -254,17 +258,18 @@ sub make_requests {
 	    }
 
 	    next unless $label =~ /:$args->{section}$/;
-	    @extra_args =  eval {
+	    @featurefile_args =  eval {
 		$feature_file->types, $feature_file->mtime;
 	    };
 	}
+
 	warn "[$$] creating CachedTrack for $label" if DEBUG;
         my $cache_object = Bio::Graphics::Browser::CachedTrack->new(
             -cache_base => $base,
             -panel_args => \@panel_args,
             -track_args => \@track_args,
-            -extra_args => [ @cache_extra, @extra_args, $label ],
-	    -cache_time => $self->settings->{cache} 
+            -extra_args => [ @cache_extra, @filter_args, @featurefile_args, $label ],
+	    -cache_time => $settings->{cache} 
 			    ? $source->cache_time 
 			    : 0
         );
@@ -350,6 +355,7 @@ sub wrap_rendered_track {
     my $buttons = $self->source->globals->button_url;
     my $plus    = "$buttons/plus.png";
     my $minus   = "$buttons/minus.png";
+    my $kill    = "$buttons/ex.png";
     my $share   = "$buttons/share.png";
     my $help    = "$buttons/query.png";
 
@@ -382,6 +388,8 @@ sub wrap_rendered_track {
     my $icon = $collapsed ? $plus : $minus;
     my $show_or_hide = $self->language->tr('SHOW_OR_HIDE_TRACK')
         || "Show or Hide";
+    my $kill_this_track = $self->language->tr('KILL_THIS_TRACK')
+	|| "Turn off this track.";
     my $share_this_track = $self->language->tr('SHARE_THIS_TRACK')
         || "Share This Track";
     my $citation = $self->plain_citation( $label, 512 );
@@ -430,34 +438,48 @@ sub wrap_rendered_track {
     $title =~ s/:(overview|region|detail)$//;
 
     my $balloon_style = $source->global_setting('balloon style') || 'GBubble'; 
-    my $titlebar = span(
-        {   -class => $collapsed ? 'titlebar_inactive' : 'titlebar',
-            -id => "${label}_title"
-        },
-        img({   -src         => $icon,
+    my @images = (
+	img({   -src         => $icon,
                 -id          => "${label}_icon",
                 -onClick     => "collapse('$label')",
                 -style       => 'cursor:pointer',
                 -onMouseOver => "$balloon_style.showTooltip(event,'$show_or_hide')",
             }
         ),
+	img({   -src         => $kill,
+                -id          => "${label}_kill",
+		-onClick     => "ShowHideTrack('$label',false)",
+                -style       => 'cursor:pointer',
+                -onMouseOver => "$balloon_style.showTooltip(event,'$kill_this_track')",
+            }
+        ),
         img({   -src   => $share,
                 -style => 'cursor:pointer',
                 -onMouseOver =>
                     "$balloon_style.showTooltip(event,'$share_this_track')",
-                -onMousedown =>
+		    -onMousedown =>
                     "GBox.showTooltip(event,'url:?share_track=$escaped_label',1,500,500)",
             }
         ),
 
         img({   -src         => $help,
                 -style       => 'cursor:pointer',
-                -onmousedown => "$config_click",
+                -onmousedown => $config_click,
                 -onMouseOver =>
-                    "$balloon_style.showTooltip(event,'$configure_this_track')",
+	    "$balloon_style.showTooltip(event,'$configure_this_track')",
 		    
             }
-        ),
+        )
+	);
+
+    # modify the title if it is a track with subtracks
+    $self->select_features_menu($label,\$title);
+
+    my $titlebar = span(
+        {   -class => $collapsed ? 'titlebar_inactive' : 'titlebar',
+            -id => "${label}_title"
+        },
+	@images,
 	$title
     );
 
@@ -490,7 +512,7 @@ sub wrap_rendered_track {
     # Add arrows for pannning to details scalebar panel
     if ($is_scalebar && $is_detail) {
 	my $style    = 'opacity:0.35;position:absolute;border:none;cursor:pointer';
-	$style      .= ';filter:alpha(opacity=35);moz-opacity:0.35';
+	$style      .= ';filter:alpha(opacity=70);moz-opacity:0.35';
         my $pan_left   =  img({
 	    -style   => $style . ';left:10px',
 	    -class   => 'panleft',
@@ -1101,14 +1123,10 @@ sub run_local_requests {
     my @ordinary_tracks    = grep {!$feature_files->{$_}} @labels_to_generate;
     my @feature_tracks     = grep {$feature_files->{$_} } @labels_to_generate;
 
+    # create all the feature filters for each track
+    my $filters = $self->generate_filters($settings,$source,\@labels_to_generate);
+
     # == create whichever panels are not already cached ==
-    my %filters = map {
-	my %conf =  $source->style($_);
-	$conf{'-filter'} ? ($_ => $conf{'-filter'})
-	               : ()
-    } @labels_to_generate;
-
-
     for my $label (@labels_to_generate) {
 
         # this shouldn't happen, but let's be paranoid
@@ -1160,7 +1178,7 @@ sub run_local_requests {
 	    $self->add_features_to_track(
 		-labels    => [ $label, ],
 		-tracks    => { $label => $track },
-		-filters   => \%filters,
+		-filters   => $filters,
 		-segment   => $segment,
 		-fsettings => $settings->{features},
 		);
@@ -1179,6 +1197,110 @@ sub run_local_requests {
             \%trackmap, 0 );
         $requests->{$label}->put_data($gd, $map );
     }
+}
+
+# this method is a little unconventional; it modifies the title in-place
+sub select_features_menu {
+    my $self     = shift;
+    my $label    = shift;
+    my $titleref = shift;
+
+    my $source = $self->source;
+    my $settings=$self->settings;
+
+    my ($method,@values) = shellwords $source->setting($label=>'select');
+    return unless @values;
+
+    my $buttons = $self->source->globals->button_url;
+    my $escaped_label = CGI::escape($label);
+
+    my $filter = $settings->{features}{$label}{filter};
+
+    $filter->{values} ||= {map {$_=>1} @values};
+    $filter->{method} ||= $method;
+
+
+    my @showing = grep {
+ 	$filter->{values}{$_}
+    } @values;
+
+    my @hidden = grep {
+	!$filter->{values}{$_}
+    } @values;
+
+    my $showing = @showing;
+    my $total   = @showing+@hidden;
+
+    my $select_features = $self->language->tr('SUBTRACKS_SHOWN');
+    $select_features   .= ul({-style=>'list-style: none;margin:0,0,0,0'},
+			      map {$filter->{values}{$_} ? li($_)
+				                         : li({-style=>'color: gray'},$_)
+			      } @values);
+				 
+
+    $select_features   .= $self->language->tr('SELECT_SUBTRACKS');
+
+    my $balloon_style = $source->global_setting('balloon style') || 'GBubble'; 
+
+    my $select_features_click
+	= "GBox.showTooltip(event,'url:?select_subtracks=$escaped_label',1,500,500)";
+    my $select_features_over = "$balloon_style.showTooltip(event,'$select_features')";
+
+    # modify the title to show that some subtracks are hidden
+    $$titleref .= " ".a({-href       => 'javascript:void(0)',
+			 -onClick    => $select_features_click,
+			 -onMouseOver=> $select_features_over
+			},
+			$self->language->tr('SHOWING_SUBTRACKS',$showing,$total)
+    );
+}
+
+sub generate_filters {
+    my $self     = shift;
+    my ($settings,$source,$label_list) = @_;
+    my %filters;
+    for my $l (@$label_list) {
+	my %conf =  $source->style($l);
+
+	if (my $filter = $conf{'-filter'}) {
+	    $filters{$l} = $filter;
+	}
+
+	else {
+	    $filters{$l} = $self->subtrack_select_filter($settings,$l);
+	}
+    }
+    return \%filters;
+}
+
+sub subtrack_select_filter {
+    my $self     = shift;
+    my ($settings,$label) = @_;
+
+    my $filter   = $settings->{features}{$label}{filter} or return;
+    my $method   = $filter->{method};
+    return unless $method;
+
+    my $code;
+    my @values = grep {$filter->{values}{$_}} keys %{$filter->{values}};
+    if (@values) {
+	my $regex  = join '|',@values;
+	$code .= "return 1 if \$f->$method =~ /($regex)/i;\n";
+    } else {
+	$code .= "return;\n";
+    }
+    return unless $code;
+    my $sub = <<END;
+sub {
+    my \$f = shift;
+    $code;
+    return;
+}
+END
+
+    my $cref = eval $sub;
+    warn "failed compiling $sub: ",$@ if $@;
+    return $cref;
 }
 
 sub add_features_to_track {
@@ -1240,6 +1362,8 @@ sub add_features_to_track {
       my @labels = $source->feature2label($feature,$length);
 
       for my $l (@labels) {
+
+	$l =~ s/:\d+//;  # get rid of semantic zooming tag
 
 	my $track = $tracks->{$l}  or next;
 
@@ -1424,6 +1548,8 @@ sub add_feature_file {
   my $name = $file->name || '';
   $options->{$name}      ||= 0;
 
+  warn "render $file" if DEBUG;
+  
   eval {
     $file->render(
 		  $args{panel},
@@ -1822,7 +1948,7 @@ sub make_title {
   my ($title,$key) = ('','');
 
  TRY: {
-    if ($label && $label->isa('Bio::Graphics::FeatureFile')) {
+    if ($label && eval { $label->isa('Bio::Graphics::FeatureFile') }) {
       $key = $label->name;
       $title = $label->make_title($feature) or last TRY;
       return $title;
@@ -1948,8 +2074,7 @@ sub make_postgrid_callback {
 
 sub plain_citation {
     my ( $self, $label, $truncate ) = @_;
-    my $text = citation( $self->source(), $label, $self->language )
-        || $self->language->tr('NO_CITATION');
+    my $text = citation( $self->source(), $label, $self->language ) || '';
     $text =~ s/\<a/<span/gi;
     $text =~ s/\<\/a/\<\/span/gi;
     if ($truncate) {

@@ -1,5 +1,5 @@
 package Bio::Graphics::Browser;
-# $Id: Browser.pm,v 1.236 2009/05/07 14:07:41 lstein Exp $
+# $Id: Browser.pm,v 1.238 2009/05/30 22:04:35 lstein Exp $
 # Globals and utilities for GBrowse and friends
 
 use strict;
@@ -17,8 +17,18 @@ use GBrowse::ConfigData;
 use Carp 'croak','carp';
 use CGI 'redirect','url';
 
+use constant DEFAULT_MASTER => 'GBrowse.conf';
+
 my %CONFIG_CACHE;
-our $VERSION = 1.993;
+our $VERSION = 1.994;
+
+sub open_globals {
+    my $self = shift;
+    my $conf_dir  = $self->config_base;
+    my $conf_file = $ENV{GBROWSE_MASTER} || DEFAULT_MASTER;
+    my $path      = File::Spec->catfile($conf_dir,$conf_file);
+    return $self->new($path);
+}
 
 sub new {
   my $class            = shift;

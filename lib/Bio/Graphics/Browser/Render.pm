@@ -320,6 +320,16 @@ sub asynchronous_event {
         return ( 200, 'text/html', $html );
     }
 
+    if ( my $track_name = param('select_subtracks') ) {
+        my $html = $self->select_subtracks($track_name);
+        return ( 200, 'text/html', $html );
+    }
+
+    if ( my $track_name = param('filter_subtrack') ) {
+        my $html = $self->filter_subtrack($track_name);
+        return ( 200, 'application/json', {} );
+    }
+
     if ( my $track_name = param('reconfigure_track') ) {
         $self->reconfigure_track($track_name);
         return ( 200, 'application/json', {} );
@@ -439,6 +449,8 @@ sub asynchronous_event {
 	param('track_name'),'=>',param('visible') if DEBUG;
 
         if ($visible) {
+	    $self->init_plugins();
+	    $self->init_remote_sources();
             $self->add_track_to_state($track_name);
         }
         else {
@@ -581,6 +593,12 @@ sub asynchronous_event {
 	return (200,'text/html',$autocomplete);
     }
 
+    # clear a cached data source
+    if (param('clear_dsn')) {
+	$self->data_source->clear_cached_config();
+	return (204,'text/plain',undef);
+    }
+
     return unless $events;
     warn "processing asynchronous event(s)" if DEBUG;
     return (204,'text/plain',undef);
@@ -677,6 +695,7 @@ sub create_cache_extra {
                       if $settings->{h_region};
 
     push @cache_extra, map { $_->config_hash() } $self->plugins->plugins;
+
     return \@cache_extra;
 }
 
@@ -751,9 +770,10 @@ sub render {
 
   # NOTE: these handle_* methods will return true
   # if they want us to exit before printing the header
-  $self->handle_gff_dump()  && return;
-  $self->handle_plugins()   && return;
-  $self->handle_downloads() && return;
+  $self->handle_track_dump() && return;
+  $self->handle_gff_dump()   && return;
+  $self->handle_plugins()    && return;
+  $self->handle_downloads()  && return;
 
   $self->render_header();
   $self->render_body();
@@ -775,11 +795,12 @@ sub create_cookie {
   my $session = $self->session;
   my $path   = url(-absolute => 1);
   $path      =~ s!gbrowse/?$!!;
+  my $globals = $self->globals;
   my $cookie = CGI::Cookie->new(
     -name    => $CGI::Session::NAME,
     -value   => $session->id,
     -path    => $path,
-    -expires => $self->globals->remember_settings_time
+    -expires => '+'.$globals->time2sec($globals->remember_settings_time).'s',
   );
   return $cookie;
 }
@@ -1212,6 +1233,7 @@ sub get_search_object {
 # ========================= plugins =======================
 sub init_plugins {
   my $self        = shift;
+
   my $source      = $self->data_source->name;
   my @plugin_path = shellwords($self->data_source->globals->plugin_path);
 
@@ -1226,8 +1248,8 @@ sub init_plugins {
 		      $self->language,
 		      $self->session);
   $self->plugins($plugins);
-
   $self->load_plugin_annotators();
+
   $plugins;
 }
 
@@ -1283,7 +1305,7 @@ sub handle_gff_dump {
 
     my $dumper = Bio::Graphics::Browser::GFFPrinter->new(
         -data_source => $self->data_source(),
-        -stylesheet  => param('stylesheet') || param('s')       || undef,
+        -stylesheet  => param('stylesheet') || param('s')  ||  'no',
         -id          => param('id')         || undef,         
         '-dump'      => param('d')          || undef,
         -labels      => [ param('type'), param('t') ],
@@ -1300,6 +1322,49 @@ sub handle_gff_dump {
 	$dumper->print_gff3();
     }
 
+    return 1;
+}
+
+sub track_filter_plugin {
+    my $self = shift;
+    my $plugins  = $self->plugins;
+    my ($filter) = grep {$_->type eq 'trackfilter'} $plugins->plugins;
+    return $filter;
+}
+
+# track dumper
+sub handle_track_dump {
+    my $self   = shift;
+    my $source = $self->data_source;
+
+    param('show_tracks') or return;
+    print header('text/plain');
+    
+    my (%ts,%ds,@labels_to_dump);
+    if (my @labels = $source->track_source_to_label(shellwords param('ts'))) {
+	%ts     = map {$_=>1} @labels;
+    }
+    if (my @labels = $source->data_source_to_label(shellwords param('ds'))) {
+	%ds     = map {$_=>1} @labels;
+    }
+    if (param('ts') && param('ds')) { # intersect
+	@labels_to_dump = grep {$ts{$_}} keys %ds;
+    } elsif (param('ts') or param('ds')) { #union
+	@labels_to_dump = (keys %ts,keys %ds);
+    } else {
+	@labels_to_dump = $source->labels;
+    }
+
+    print '#',join("\t",qw(TrackLabel DataSource TrackSource Description)),"\n";
+    for my $l (@labels_to_dump) {
+	next if $l =~ /_scale/;
+	next if $l =~ /(plugin|file):/;
+	print join("\t",
+		   $l,
+		   $source->setting($l=>'data source'),
+		   $source->setting($l=>'track source'),
+		   $source->setting($l=>'key')),"\n";
+    }
     return 1;
 }
 
@@ -1831,6 +1896,8 @@ sub add_track_to_state {
   my $label = shift;
   my $state = $self->state;
 
+  warn "add_track_to_state($label)" if DEBUG;
+
   return unless length $label; # refuse to add empty tracks!
 
   # don't add invalid track
@@ -1887,6 +1954,17 @@ sub update_state_from_cgi {
   $self->update_galaxy_url($state);
 }
 
+sub filter_subtrack {
+    my $self        = shift;
+    my $label       = shift;
+
+    my %filters     = map {$_=>1} param('select');
+    my $state       = $self->state;
+    my ($method,@values) = shellwords $self->data_source->setting($label=>'select');
+    $state->{features}{$label}{filter}{values} = {map {$_=>$filters{$_}} @values};
+    $state->{features}{$label}{filter}{method} = $method;
+}
+
 # Handle returns from the track configuration form
 sub reconfigure_track {
     my $self  = shift;
@@ -1909,6 +1987,12 @@ sub track_config {
   my $self     = shift;
   my $track_name    = shift;
   croak "track_config() should not be called in parent class";
+}
+
+sub select_subtracks {
+  my $self       = shift;
+  my $track_name = shift;
+  croak "select_subtracks() should not be called in parent class";
 }
 
 sub share_track {
@@ -1970,8 +2054,19 @@ sub update_tracks {
   my $self  = shift;
   my $state = shift;
 
-  $self->set_tracks($self->split_labels(param('label'))) if param('label');
-  $self->set_tracks($self->split_labels(param('t')))     if param('t');
+  # selected tracks can be set by the 'label' parameter
+  if (my @l = param('label')) {
+      $self->set_tracks($self->split_labels(@l));
+  } #... the 't' parameter
+  elsif (my @t = param('t')) {
+      $self->set_tracks($self->split_labels(@t));
+  } #... the 'ds' (data source) parameter
+  elsif (my @ds = shellwords param('ds')) {
+      $self->set_tracks($self->data_source->data_source_to_label(@ds));
+  } #... or the 'ts' (track source) parameter
+  elsif (my @ts = shellwords param('ts')) {
+      $self->set_tracks($self->data_source->track_source_to_label(@ts));
+  }
 
   if (my @selected = $self->split_labels(param('enable'))) {
     $state->{features}{$_}{visible} = 1 foreach @selected;
@@ -2726,6 +2821,7 @@ sub split_labels {
 sub remove_invalid_tracks {
     my $self = shift;
     my $state = shift;
+
     my %potential = map {$_=>1} $self->potential_tracks;
     my @defunct   = grep {!$potential{$_}} keys %{$state->{features}};
     delete $state->{features}{$_} foreach @defunct;
@@ -3280,7 +3376,9 @@ sub external_data {
 	my $search       = $self->get_search_object;
 	my $rel2abs      = $search->coordinate_mapper($segment,1);
 	my $rel2abs_slow = $search->coordinate_mapper($segment,0);
-	for my $featureset ($self->plugins,$self->uploaded_sources,$self->remote_sources) {
+	for my $featureset ($self->plugins,
+			    $self->uploaded_sources,
+			    $self->remote_sources) {
 	    warn "FEATURESET = $featureset, sources = ",join ' ',eval{$featureset->sources} if DEBUG;
 	    next unless $featureset;
 

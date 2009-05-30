@@ -69,13 +69,18 @@ sub render_error_div {
 sub render_user_header {
     my $self = shift;
     my $settings = $self->state;
-    return $settings->{head} ? $self->data_source->global_setting('header') : '';
+    return '' unless $settings->{head};
+    my $a = $self->data_source->global_setting('header');
+    return $a->(@_) if ref $a eq 'CODE';
+    return $a || '';
 }
 
 sub render_bottom {
   my $self = shift;
   my $features = shift; # not used
-  return $self->data_source->global_setting('footer').end_html();
+  my $a   = $self->data_source->global_setting('footer');
+  my $val = (ref $a eq 'CODE' ? $a->(@_) : $a) || '';
+  return $a.end_html();
 }
 
 sub render_navbar {
@@ -316,12 +321,16 @@ var GBubble = new Balloon;
 BalloonConfig(GBubble,'GBubble');
 GBubble.images = "$balloon_images/GBubble";
 GBubble.allowEventHandlers = true;
+GBubble.opacity = 1;
+GBubble.fontFamily = 'sans-serif';
 
 // A simpler popup balloon style
 var GPlain = new Balloon;
 BalloonConfig(GPlain,'GPlain');
 GPlain.images = "$balloon_images/GPlain";
 GPlain.allowEventHandlers = true;
+GPlain.opacity = 1;
+GPlain.fontFamily = 'sans-serif';
 
 // Like GBubble but fades in
 var GFade = new Balloon;
@@ -329,6 +338,7 @@ BalloonConfig(GFade,'GFade');
 GFade.images = "$balloon_images/GBubble";
 GFade.opacity = 1;
 GFade.allowEventHandlers = true;
+GFade.fontFamily = 'sans-serif';
 
 // A formatted box
 // Note: Box is a subclass of Balloon
@@ -336,6 +346,8 @@ var GBox = new Box;
 BalloonConfig(GBox,'GBox');
 GBox.images = "$balloon_images/GBubble";
 GBox.allowEventHandlers = true;
+GBox.opacity = 1;
+GBox.fontFamily = 'sans-serif';
 END
 ;
     							   
@@ -558,20 +570,47 @@ sub galaxy_form {
     $html .= hidden(-name=>'m',-value=>'application/x-gff3');
     $html .= endform();
 
-# Copied from gbrowse 1.69 -- not sure if still appropriate
-#   my $plugin_action = param('plugin_action');
-#   if ($plugin_action eq $CONFIG->tr('Go') && param('plugin') eq 'invoke_galaxy') {
-#     $html .= script('document.galaxyform.submit()');
-#   }
-
   return $html;
 }
 
+sub render_track_filter {
+    my $self   = shift;
+    my $plugin = shift;
+
+    my $form         = $plugin->configure_form();
+    my $plugin_type  = $plugin->type;
+    my $action       = $self->tr('Configure_plugin');
+    my $name         = 'plugin:'.$plugin->name;
+
+    return
+ 	p({-id=>'track select'},
+	  start_form({-id      => 'track_filterform',
+		      -name    => 'configure_plugin',
+		      -onSubmit=> 'return false'}),
+	  $form,
+	  button(
+	      -name    => 'plugin_button',
+	      -value   => $self->tr('Configure_plugin'),
+	      -onClick => 'doPluginUpdate()',
+	  ),
+	  end_form(),
+	  script({-type=>'text/javascript'},
+		 "function doPluginUpdate() { Controller.reconfigure_plugin('$action',null,null,'$plugin_type',\$('track_filterform')) }")
+	);
+}
 
 # This surrounds the track table with a toggle
 sub render_toggle_track_table {
   my $self     = shift;
-  return $self->toggle('Tracks', $self->render_track_table());
+  my $html;
+
+  if (my $filter = $self->track_filter_plugin) {
+      $html .= $self->toggle({tight=>1},'track_select',div({class=>'searchtitle',
+							    style=>"text-indent:2em"},$self->render_track_filter($filter)));
+  }
+  $html .= $self->toggle('Tracks',$self->render_track_table);
+
+  return $html;
 }
 
 # this draws the various config options
@@ -589,6 +628,11 @@ sub render_track_table {
   warn "potential tracks = @labels" if DEBUG;
   my %labels     = map {$_ => $self->label2key($_)}              @labels;
   my @defaults   = grep {$settings->{features}{$_}{visible}  }   @labels;
+
+  if (my $filter = $self->track_filter_plugin) {
+      eval {@labels    = $filter->filter_tracks(\@labels,$source)};
+      warn $@ if $@;
+  }
 
   # Sort the tracks into categories:
   # Overview tracks
@@ -644,11 +688,14 @@ sub render_track_table {
       @track_labels = sort {lc ($labels{$a}) cmp lc ($labels{$b})} @track_labels
         if ($settings->{sk} eq "sorted");
 
+      my %ids        = map {$_=>{id=>"${_}_check"}} @track_labels;
+
       my @checkboxes = checkbox_group(-name       => 'label',
 				      -values     => \@track_labels,
 				      -labels     => \%labels,
 				      -defaults   => \@defaults,
 				      -onClick    => "gbTurnOff('$id');gbToggleTrack(this)",
+				      -attributes => \%ids,
 				      -override   => 1,
 				     );
       $table = $self->tableize(\@checkboxes);
@@ -1223,9 +1270,10 @@ sub plugin_menu {
   my $settings = $self->state;
   my $plugins  = $self->plugins;
 
-  my $labels = $plugins->menu_labels;
+  my $labels   = $plugins->menu_labels;
 
-  my @plugins = sort {$labels->{$a} cmp $labels->{$b}} keys %$labels;
+  my @plugins  = grep {$plugins->plugin($_)->type ne 'trackfilter'}  # track filter gets its own special position
+                 sort {$labels->{$a} cmp $labels->{$b}} keys %$labels;
 
   # Add plugin types as attribute so the javascript controller knows what to do
   # with each plug-in
@@ -1725,6 +1773,46 @@ END
 
     $return_html
         .= table( TR( td( { -valign => 'top' }, [ $citation, $form ] ) ) );
+    $return_html .= end_html();
+    return $return_html;
+}
+
+# this is the content of the popup balloon that allows the user to select
+# individual features by source or name
+sub select_subtracks {
+    my $self  = shift;
+    my $label = shift;
+
+    my $state       = $self->state();
+    my $data_source = $self->data_source();
+
+    my $select_options = $data_source->setting($label=>'select');
+    my ($method,@values) = shellwords($select_options);
+
+    my $filter = $state->{features}{$label}{filter};
+
+    unless (exists $filter->{method} && $filter->{method} eq $method) {
+	$filter->{method} = $method;
+	$filter->{values} = { map {$_=>1} @values }; # all on
+    }
+
+    my @turned_on = grep {$filter->{values}{$_}} @values;
+
+    my $return_html = start_html();
+    $return_html   .= start_form(-name => 'subtrack_select_form',
+				 -id   => 'subtrack_select_form');
+    $return_html   .= p($self->language->tr('SHOW_SUBTRACKS')
+			||'Show subtracks');
+    $return_html   .= checkbox_group(-name      => "select",
+				     -values    => \@values,
+				     -linebreak => 1,
+				     -defaults  => \@turned_on);
+    $return_html .= button(-name    => 
+			      $self->tr('Change'),
+			   -onClick => 
+			      "Controller.filter_subtrack('$label',\$('subtrack_select_form'))"
+	);
+    $return_html .= end_form();
     $return_html .= end_html();
     return $return_html;
 }

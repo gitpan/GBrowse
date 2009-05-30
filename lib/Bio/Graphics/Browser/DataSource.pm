@@ -52,11 +52,13 @@ sub new {
     return $CONFIG_CACHE{$config_file_path}{object};
   }
 
-  my $self = $class->SUPER::new(-file=>$config_file_path,-safe=>1);
+  my $self = $class->SUPER::new(-file=>$config_file_path,
+				-safe=>1);
   $self->name($name);
   $self->description($description);
   $self->globals($globals);
   $self->dir(dirname($config_file_path));
+  $self->config_file($config_file_path);
   $self->add_scale_tracks();
   $CONFIG_CACHE{$config_file_path}{object} = $self;
   $CONFIG_CACHE{$config_file_path}{mtime}  = $mtime;
@@ -69,6 +71,7 @@ sub name {
   $self->{name} = shift if @_;
   $d;
 }
+
 sub description {
   my $self = shift;
   my $d    = $self->{description};
@@ -83,6 +86,13 @@ sub dir {
   $d;
 }
 
+sub config_file {
+  my $self = shift;
+  my $d    = $self->{config_file};
+  $self->{config_file} = shift if @_;
+  $d;
+}
+
 sub globals {
   my $self = shift;
   my $d    = $self->{globals};
@@ -93,6 +103,11 @@ sub globals {
 sub clear_cached_dbids {
     my $self = shift;
     delete $self->{feature2dbid};
+}
+
+sub clear_cached_config {
+    my $self             = shift;
+    delete $CONFIG_CACHE{$self->config_file};
 }
 
 =head2 userdata()
@@ -342,7 +357,8 @@ sub plugin_setting {
   my $caller_package = caller();
   my ($last_name)    = $caller_package =~ /(\w+)$/;
   my $option_name    = "${last_name}:plugin";
-  $self->setting($option_name => @_);
+  return $self->label_options($option_name) unless @_;
+  return $self->setting($option_name => @_);
 }
 
 sub karyotype_setting {
@@ -586,6 +602,8 @@ sub db_settings {
 
   if ($track =~ /:database$/) {
       $section = $symbolic_db_name = $track;
+  } elsif ($self->setting($track=>'db_adaptor')) {
+      $section = $track;
   } else {
       $symbolic_db_name   = $self->setting($track => 'database');
       $symbolic_db_name ||= $self->fallback_setting('TRACK DEFAULTS' => 'database');
@@ -791,6 +809,63 @@ sub add_dbid_to_feature {
     }
 }
 
+
+=head2 @labels = $source->data_source_to_label(@data_sources)
+
+Search through all stanzas for those with a matching "data source"
+option. Data sources look like this:
+
+ [stanzaLabel1]
+ data source = FlyBase
+
+ [stanzaLabel2]
+ data source = FlyBase
+
+Now searching for $source->data_source_to_label('FlyBase') will return
+"stanzaLabel1" and "stanzaLabel2" along with others that match. A
+track may have several data sources, separated by spaces.
+
+=cut
+
+
+sub data_source_to_label {
+    my $self = shift;
+    return $self->_secondary_key_to_label('data source',@_);
+}
+
+=head2 @labels = $source->track_source_to_label(@track_sources)
+
+Search through all stanzas for those with a matching "track source"
+option. Track sources look like this:
+
+ [stanzaLabel]
+ track source = UCSC EBI NCBI
+
+Now searching for $source->track_source_to_label('UCSC','EBI') will
+return "stanzaLabel" along with others that match. A track may have
+several space-delimited track sources.
+
+=cut
+sub track_source_to_label {
+    my $self = shift;
+    return $self->_secondary_key_to_label('track source',@_);
+}
+
+sub _secondary_key_to_label {
+    my $self   = shift;
+    my $field  = shift;
+    my $index  = $self->{'.secondary_key'};
+    if (!exists $index->{$field}) {
+	for my $label ($self->labels) {
+	    my @sources = shellwords $self->setting($label=>$field) or next;
+	    push @{$index->{$field}{lc $_}},$label foreach @sources;
+	}
+    }
+
+    my %seenit;
+    return grep {!$seenit{$_}++} 
+           map  {exists $index->{$field}{lc $_} ? @{$index->{$field}{lc $_}} : () } @_;
+}
 
 1;
 

@@ -3,7 +3,7 @@
 
  Lincoln Stein <lincoln.stein@gmail.com>
  Ben Faga <ben.faga@gmail.com>
- $Id: controller.js,v 1.90 2009/04/21 05:38:46 lstein Exp $
+ $Id: controller.js,v 1.95 2009/05/22 21:37:09 lstein Exp $
 
 Indentation courtesy of Emacs javascript-mode 
 (http://mihai.bazon.net/projects/emacs-javascript-mode/javascript.el)
@@ -236,6 +236,7 @@ var GBrowseController = Class.create({
 
     var request_str = "update_sections=1" + param_str;
     for (var i = 0; i < section_names.length; i++) {
+      $(section_names[i]).innerHTML="<img src='/gbrowse2/images/spinner.gif' alt='loading...' />";
       request_str += "&section_names="+section_names[i];
     }
 
@@ -627,6 +628,20 @@ var GBrowseController = Class.create({
 
   },
 
+  filter_subtrack:
+  function(track_id, form_element) {
+
+    new Ajax.Request(document.URL,{
+      method:     'post',
+      parameters: form_element.serialize() +"&"+ $H({
+            filter_subtrack:  track_id,
+          }).toQueryString(),
+      onSuccess: function(transport) {
+        Balloon.prototype.hideTooltip(1);
+        Controller.rerender_track(track_id,true);
+      } // end onSuccess
+    });
+  },
 
   // Plugin Methods *************************************************
 
@@ -652,16 +667,23 @@ var GBrowseController = Class.create({
           }).toQueryString(),
 
       onSuccess: function(transport) {
-        Controller.wipe_div(pc_div_id); 
+        if (pc_div_id != null) Controller.wipe_div(pc_div_id); 
 
         if (plugin_type == 'annotator'){
 	  Controller.each_track(plugin_track_id,function(gbtrack) {
               Controller.rerender_track(gbtrack.track_id,true);
             });
         }
-        else if (plugin_type == 'filter'){
+        else if (plugin_type == 'filter') {
+          Controller.update_coordinates("reload segment");
+	  Controller.update_sections(new Array(track_listing_id),'',1);
+	}
+        else if (plugin_type == 'highlighter') {
           Controller.update_coordinates("reload segment");
         }
+	else if (plugin_type == 'trackfilter') {
+	  Controller.update_sections(new Array(track_listing_id),'',1);
+	}
       } // end onSuccess
     });
   },

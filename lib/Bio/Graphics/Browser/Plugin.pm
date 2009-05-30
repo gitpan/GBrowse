@@ -1,5 +1,5 @@
 package Bio::Graphics::Browser::Plugin;
-# $Id: Plugin.pm,v 1.19 2009/01/30 22:06:19 lstein Exp $
+# $Id: Plugin.pm,v 1.22 2009/05/22 21:37:09 lstein Exp $
 # base class for plugins for the Generic Genome Browser
 
 =head1 NAME
@@ -87,7 +87,7 @@ setting:
 
   plugin_path = /usr/local/gbrowse_plugins
 
-GBrowse currently recognizes three distinct types of plugins:
+GBrowse currently recognizes five distinct types of plugins:
 
 =over 4
 
@@ -109,6 +109,28 @@ These plugins receive the genomic segment object and either 1) return
 a list of features which are overlayed on top of the detailed view 
 (Example: restriction site annotator) or 2) update the database with 
 new or modified features and return nothing (Example: basic editor)
+
+=item 4) trackfilters
+
+These plugins can be used to reduce the complexity of sites that have
+many tracks, by providing search and filtering functions for the track
+table. When a trackfilter is active, its form-based user interface is
+positioned directly above the tracks table, and changes to the for
+cause the list of tracks to be updated dynamically.
+
+=item 5) highlighters
+
+These plugins will color-highlight features based on user-defined
+attributes. For example, you could highlight all features that are in
+the positive strand.
+
+=item 6) filters
+
+These plugins will filter features based on user-defined
+attributes. Only features that match the attributes will be
+displayed. For example, you could filter out RNA transcript features
+based on their size, so that only features that are less than 50 bp in
+length (e.g. short RNAs) are shown.
 
 =back
 	
@@ -154,6 +176,24 @@ restriction site selected.
 An example annotator that generates random gene-like structures in the
 currently displayed region of the genome.  It's intended as a template
 for front-ends to gene prediction programs.
+
+=item AttributeHiliter.pm
+
+An example feature hiliter that works with Bio::DB::GFF and
+Bio::SeqFeature::Store databases.
+
+=item FilterTest.pm
+
+An example feature filter that filters based on strand of the feature.
+
+=item SimpleTrackFinder.pm
+
+An example track filter that filters tracks based on their name.
+
+=item SourceTrackFinder.pm
+
+Another example track filter that filters tracks based on the contents
+of their "track source" and "data source" options.
 
 =back
 
@@ -269,9 +309,10 @@ values.
 
 =item $browser_config = $self->browser_config
 
-This method returns a copy of the Bio::Graphics::Browser object that
-drives gbrowse.  This object allows you to interrogate (and change!)
-the values set in the current gbrowse configuration file.
+This method returns a copy of the Bio::Graphics::Browser::DataSource
+object that drives gbrowse.  This object allows you to interrogate
+(and change!)  the values set in the current gbrowse configuration
+file.
 
 The recommended use for this object is to recover plugin-specific
 settings from the gbrowse configuration file.  These can be defined by
@@ -290,8 +331,8 @@ You can now access these settings from within the plugin by using the
 following idiom:
 
    my $browser_config = $self->browser_config; 
-   my $traverse_isa = $browser_config->plugin_setting('traverse_isa');
-   my $server       = $browser_config->plugin_setting('use_server');
+   my $traverse_isa   = $browser_config->plugin_setting('traverse_isa');
+   my $server         = $browser_config->plugin_setting('use_server');
 
 This facility is intended to be used for any settings that should not
 be changed by the end user.  Persistent user preferences should be
@@ -515,6 +556,65 @@ there are no plugins that make use of this facility.
 
 See L<Bio::Graphics::FeatureFile> for details, and the
 RestrictionAnnotator.pm plugin for an example.
+
+=back
+
+=head2 METHODS TO BE IMPLEMENTED IN TRACKFILTERS
+
+=over
+
+=item @track_names = $plugin->filter_tracks($tracks,$source)
+
+Given a list of track names and a Bio::Graphics::Browser::DataSource
+object, identify the track names to display and return them as a
+list. The tracks are passed as a reference to a list of all possible
+track names.
+
+To make the form interactive, you may wish to pepper the plugin's
+configuration form methods with calls to the javascript routine
+doPluginUpdate(). This causes GBrowse to update the plugin's
+configuration and refresh the tracks table as a side effect.
+
+=back
+
+=head2 METHODS TO BE IMPLEMENTED IN FEATURE HILITERS
+
+=over 4
+
+=item $color = $self->highlight($feature)
+
+This method is passed a feature. It returns a color name (or any
+Bio::Graphics color string) to highlight the feature with that color,
+or undef if the feature should not be highlighted at all.
+
+=back
+
+=head2 METHODS TO BE IMPLEMENTED IN FEATURE FILTERS
+
+=over 4
+
+=item ($filter,$newkey) = $self->filter($track_label,$key)
+
+This method is passed a track label and the original key of the
+label. It is expected to return a two-element list consisting of a
+coderef and a new key for the track. The coderef should be a
+subroutine that takes a feature as its single argument and returns
+true to include the feature in the track and false to exclude the
+feature from the track.
+
+  sub {
+      my $feature = shift;
+      return do_something() ? 1 : 0;
+  }
+
+The filter() method should return an updated string for the track key
+to indicate that the track is being filtered. This is to inform the
+user that the track is not showing all possible features.
+
+The filter() method should return an empty list if it does not wish to
+install or filter, or to remove a filter that was previously
+installed.
+
 
 =back
 
@@ -766,6 +866,12 @@ sub annotate {
   my $coordinate_mapper = shift;
   # do nothing
   return;
+}
+
+sub filter_tracks {
+    my $self = shift;
+    my ($tracks,$source) = @_;
+    return @$tracks;  # pass 'em all through
 }
 
 sub pkg {

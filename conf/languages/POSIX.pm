@@ -141,6 +141,10 @@ END
 
    TRACKS   => 'Tracks',
 
+   TRACK_SELECT   => 'Search for Specific Tracks',
+
+   TRACK_NAME     => 'Track name',
+
    EXTERNAL_TRACKS => '<i>External tracks italicized</i>',
 
    OVERVIEW_TRACKS => '<sup>*</sup>Overview track',
@@ -164,6 +168,8 @@ END
    CONFIGURE   => 'Configure...',
 
    CONFIGURE_TRACKS   => 'Configure tracks...',
+
+   SELECT_SUBTRACKS   => 'Click to select subtracks...',
 
    EDIT       => 'Edit File...',
 
@@ -192,6 +198,8 @@ END
    SET_OPTIONS => 'Configure tracks...',
 
    CLEAR_HIGHLIGHTING => 'Clear highlighting',
+
+   CLEAR       => 'Clear',
 
    UPDATE      => 'Update',
 
@@ -364,8 +372,6 @@ END
 
    NO_EXTERNAL        => 'No external features loaded.',
 
-   NO_CITATION        => 'No additional information available.',
-
    #--------------
    # PLUGIN PAGES
    #--------------
@@ -442,7 +448,15 @@ END
 
  SHOW_OR_HIDE_TRACK => '<b>Show or hide this track</b>',
 
- CONFIGURE_THIS_TRACK   => '<b>Click to change track settings.</b>',
+ KILL_THIS_TRACK    => '<b>Turn off this track.</b>',
+
+ CONFIGURE_THIS_TRACK   => '<b class="error">Configure this track.</b>',
+
+ SUBTRACKS_SHOWN    => 'This track contains selectable subtracks:',
+
+ SHOW_SUBTRACKS     => '<b>Select subtracks</b>',
+
+ SHOWING_SUBTRACKS  => '(<i>Showing %d of %d subtracks</i>)',
 
  SHARE_THIS_TRACK   => '<b>Share this track</b>',
 

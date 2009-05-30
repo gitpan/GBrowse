@@ -38,7 +38,11 @@ function gbCheck (button,state) {
 function gbToggleTrack (button) {
   var track_name = button.value;
   var visible    = button.checked;
+  ShowHideTrack(track_name,visible);
+}
 
+function ShowHideTrack(track_name,visible) {
+  
   if (visible && !Controller.track_exists(track_name)) {
       Controller.add_track(track_name);
       return false;
@@ -61,6 +65,10 @@ function gbToggleTrack (button) {
           }
        }
      });
+
+     if ($(track_name+'_check') == null)
+         track_name = track_name.sub(/:(overview|region|detail)$/,'');
+     $(track_name + '_check').checked = visible ? true : false;
 }
 
 function update_segment (formdata) {
