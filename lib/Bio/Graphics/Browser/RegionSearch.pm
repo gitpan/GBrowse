@@ -116,7 +116,9 @@ sub init_databases {
 	next if $state->{dbid} && $state->{dbid} ne $dbid;
 	my $search_options = $source->setting($dbid => 'search options') || '';
 
-	next if $search_options eq 'none';  # ignore this in the search
+	# this can't be right - we need to do id searches
+	# next if $search_options eq 'none';  
+
 	$dbs{$dbid}{options} ||= $search_options;
 	$dbs{$dbid}{remotes}{$remote}++ if $remote;
     }
@@ -128,12 +130,17 @@ sub init_databases {
     # try to spread the work out as much as possible among the remote renderers
     my %remotes;
     for my $dbid (keys %dbs) {
-	if ((my @remote = keys %{$dbs{$dbid}{remotes}}) && ($dbid ne $default_dbid)) {
+
+	my $can_remote  = keys %{$dbs{$dbid}{remotes}} && ($dbid ne $default_dbid);
+
+	if ($can_remote) {
+	    my @remote = keys %{$dbs{$dbid}{remotes}};
 	    my ($least_used) = sort {($remotes{$a}||0) <=> ($remotes{$b}||0)} @remote;
 	    $self->{remote_dbs}{$least_used}{$dbid}++;
 	    $remotes{$least_used}++;
 	}
-	else {
+	
+	if (!$can_remote || $dbs{$dbid}{options} =~ /(?<!-)autocomplete/) {
 	    my $db = $source->open_database($dbid);
 	    $self->{local_dbs}{$db} ||= 
 		Bio::Graphics::Browser::Region->new(

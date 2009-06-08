@@ -259,7 +259,8 @@ sub make_requests {
 
 	    next unless $label =~ /:$args->{section}$/;
 	    @featurefile_args =  eval {
-		$feature_file->types, $feature_file->mtime;
+		$feature_file->isa('Bio::Das::Segment')||$feature_file->types, 
+		$feature_file->mtime;
 	    };
 	}
 
@@ -1554,7 +1555,7 @@ sub add_feature_file {
     $file->render(
 		  $args{panel},
 		  $args{position},
-	          $options,
+	          $options->{$name},
 		  $self->bump_density,
 		  $self->label_density,
 		  $select,
@@ -1925,8 +1926,8 @@ sub make_link {
     my $end   = CGI::escape($feature->end);
     my $src   = CGI::escape(eval{$feature->source} || '');
     my $url   = CGI->request_uri || '../..';
-    my $id    = eval {$feature->primary_id};
-    my $dbid  = eval {$feature->gbrowse_dbid};
+    my $dbid  = eval {CGI::escape($feature->gbrowse_dbid)};
+    my $id    = eval {CGI::escape($feature->primary_id)};
     $url      =~ s!/gbrowse.*!!;
     $url      .= "/gbrowse_details/$ds_name?ref=$ref;start=$start;end=$end";
     $url      .= ";name=$name"     if defined $name;

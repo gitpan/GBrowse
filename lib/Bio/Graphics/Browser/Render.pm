@@ -594,7 +594,7 @@ sub asynchronous_event {
     }
 
     # clear a cached data source
-    if (param('clear_dsn')) {
+    if (param('clear_dsn') || param('reset_dsn')) {
 	$self->data_source->clear_cached_config();
 	return (204,'text/plain',undef);
     }
@@ -2955,6 +2955,7 @@ sub featurefile_sections {
 sub _featurefile_sections {
     my $self = shift;
     my $ff   = shift;
+    return 'detail' if $ff->isa('Bio::Das::Segment');
 
     my %sections;
 
