@@ -1,6 +1,6 @@
 #!/usr/bin/perl
 
-# $Id$
+# $Id: gtf2gff3.pl,v 1.1 2009/06/16 15:26:37 lstein Exp $
 # transform a GTF file into GFF3
 
 use strict;

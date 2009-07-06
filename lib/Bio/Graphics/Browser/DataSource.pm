@@ -393,6 +393,14 @@ sub semantic_label {
   $label
 }
 
+sub semantic_fallback_setting {
+    my $self = shift;
+    my ($label,$option,$length) = @_;
+    my $setting = $self->semantic_setting($label,$option,$length);
+    return $setting if defined $setting;
+    return $self->fallback_setting($label,$option);
+}
+
 =head2 $section_setting = $data_source->section_setting($section_name)
 
 Returns "open" "closed" or "off" for the named section. Named sections are:
@@ -444,7 +452,7 @@ sub type2label {
     my @array  = $self->SUPER::type2label(lc $type) or return;
     my %label_groups;
     for my $label (@array) {
-      my ($label_base,$minlength) = $label =~ /(.+)(?::(\d+))?/;
+      my ($label_base,$minlength) = $label =~ /([^:]+)(?::(\d+))?/;
       $minlength ||= 0;
       next if defined $length && $minlength > $length;
       $label_groups{$label_base}++;
