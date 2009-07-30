@@ -19,12 +19,11 @@ bin/ucsc_genes2gff.pl
 bin/wiggle2gff3.pl
 bin/windows_install.pl
 Build.PL
-cgi-bin/gb2/gbgff
-cgi-bin/gb2/gbrowse
-cgi-bin/gb2/gbrowse_details
-cgi-bin/gb2/gbrowse_gmap
-cgi-bin/gb2/gbrowse_img
-cgi-bin/README
+cgi-bin/gbgff
+cgi-bin/gbrowse
+cgi-bin/gbrowse_details
+cgi-bin/gbrowse_gmap
+cgi-bin/gbrowse_img
 Changes
 conf/detail_select_menu.conf
 conf/enzymes.txt
@@ -457,7 +456,6 @@ lib/Bio/DB/Tagger.pm
 lib/Bio/DB/Tagger/mysql.pm
 lib/Bio/DB/Tagger/Tag.pm
 lib/Bio/Graphics/Browser.pm
-lib/Bio/Graphics/Browser/Admin.pm
 lib/Bio/Graphics/Browser/AuthorizedFeatureFile.pm
 lib/Bio/Graphics/Browser/CachedTrack.pm
 lib/Bio/Graphics/Browser/DataBase.pm
