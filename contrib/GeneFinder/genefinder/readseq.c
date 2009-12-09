@@ -13,7 +13,7 @@
  * Last edited: Dec 11 14:00 2000 (rd)
  * * Dec 29 23:35 1993 (rd): now works off FILE*, returns id and desc
  * Created: Tue Jan 19 21:14:35 1993 (rd)
- * CVS info: $Id: readseq.c,v 1.1 2003/04/15 20:30:39 lstein Exp $
+ * CVS info: $Id: readseq.c,v 1.1 2003-04-15 20:30:39 lstein Exp $
  *-------------------------------------------------------------------
  */
 

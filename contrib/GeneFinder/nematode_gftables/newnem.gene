@@ -1,4 +1,4 @@
-// $Id: newnem.gene,v 1.1 2003/04/15 20:30:42 lstein Exp $
+// $Id: newnem.gene,v 1.1 2003-04-15 20:30:42 lstein Exp $
  CELACI  actin-I atg 114 intron5 304 intron3 351 *
  CELACII  actin-II atg 121 intron5 311 intron3 355 *
  CELACIII  actin-III atg 108 intron5 298 intron3 345 *

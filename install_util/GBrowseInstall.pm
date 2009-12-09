@@ -181,6 +181,8 @@ sub ACTION_reconfig {
 	}
     }
     $self->depends_on('config_data');
+    warn "\n**Paths reconfigured. Running \"Build clean\".\n";
+    $self->ACTION_clean;
 }
 
 sub ACTION_test {
@@ -218,7 +220,7 @@ sub ACTION_config {
 
 	# next if $self->config_data($key);
 	my $conf_dir = $props->{$key} =~ /directory/i;
-	
+
 	$opts{$key} = prompt($props->{$key},
 			     $opts{$key} ||
 			     ($conf_dir 
@@ -461,9 +463,10 @@ sub process_htdocs_files {
 	$self->substitute_in_place("blib/$_")
 	    if $copied
 	    or !$self->up_to_date('_build/config_data',"blib/$_");
-	if (/\.pl$/ && $copied) {
-	    
-	}
+# was  trying to do something about localizing installed perl, but forget what it was
+#	if (/\.pl$/ && $copied) {
+#	    
+#	}
     }
 }
 

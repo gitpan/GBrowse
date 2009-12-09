@@ -1,4 +1,4 @@
-// $Id: zk637.intron5,v 1.1 2003/04/15 20:30:43 lstein Exp $
+// $Id: zk637.intron5,v 1.1 2003-04-15 20:30:43 lstein Exp $
 siteType: intron5  refSeqs: all  freqType: within  classDef: unique  
 startOff: -5  endOff: 25  numSymbs: 1  maxSymb: 5  numForced: 2  forcedPos:  1 2 jump: 1 
 *

@@ -1,5 +1,5 @@
 #!/usr/bin/perl
-# $Id: bp_load_gff.pl,v 1.1 2008/10/16 17:01:27 lstein Exp $
+# $Id: bp_load_gff.pl,v 1.1 2008-10-16 17:01:27 lstein Exp $
 
 use strict;
 use Bio::DB::GFF;

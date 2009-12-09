@@ -3,7 +3,7 @@
 # ===============================================
 # Author: Todd Harris (harris@cshl.org)
 # gbrowse_on_osx.pod
-# Revision $Id: INSTALL.MacOSX.pod,v 1.3 2003/12/01 18:15:08 scottcain Exp $
+# Revision $Id: INSTALL.MacOSX.pod,v 1.3 2003-12-01 18:15:08 scottcain Exp $
 # Copyright @ 2003 Cold Spring Harbor Laboratory
 # ===============================================
 
@@ -570,7 +570,7 @@ Material in this document is copyright 2001-2003 by the Cold Spring
 Harbor Laboratory. This information is provided "AS-IS" without any
 warranty, expressed or implied.
 
-$Id: INSTALL.MacOSX.pod,v 1.3 2003/12/01 18:15:08 scottcain Exp $
+$Id: INSTALL.MacOSX.pod,v 1.3 2003-12-01 18:15:08 scottcain Exp $
 
 =cut
 

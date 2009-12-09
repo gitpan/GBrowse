@@ -1,6 +1,6 @@
 #!/usr/bin/perl
 
-#$Id: scan_gbrowse.pl,v 1.1 2009/03/05 23:02:59 lstein Exp $
+#$Id: scan_gbrowse.pl,v 1.1 2009-03-05 23:02:59 lstein Exp $
 
 # This script scans the gbrowse at the indicated URL and returns track
 # configuration stanzas for all tracks that are marked "discoverable."

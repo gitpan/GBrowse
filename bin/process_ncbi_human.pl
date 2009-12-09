@@ -11,7 +11,7 @@ ncbi_2_gff.pl - Massage NCBI chromosome annotation into GFF-format suitable for 
  $RCSfile: process_ncbi_human.pl,v $
  $Revision: 1.1 $
  $Author: lstein $
- $Date: 2008/10/16 17:01:27 $
+ $Date: 2008-10-16 17:01:27 $
 
 
 =head2 SYNOPSIS

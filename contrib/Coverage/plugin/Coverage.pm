@@ -1,6 +1,6 @@
 #!/usr/bin/perl
 #
-# $Id: Coverage.pm,v 1.1 2002/10/23 21:43:19 mavcunha Exp $
+# $Id: Coverage.pm,v 1.1 2002-10-23 21:43:19 mavcunha Exp $
 #
 #
 

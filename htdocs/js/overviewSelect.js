@@ -4,7 +4,7 @@
                       This class handles overview-specific configuration.
 
  Sheldon McKay <mckays@cshl.edu>
- $Id: overviewSelect.js,v 1.6 2008/12/23 08:07:12 lstein Exp $
+ $Id: overviewSelect.js 22286 2009-11-20 21:43:52Z lstein $
 
 */
 
@@ -38,8 +38,6 @@ Overview.prototype.initialize = function() {
   var i = document.getElementById(self.imageId);
   if (!i) return false;
 
-  var images = document.getElementsByName('region');
-  
   var img = document.getElementsByName('overview');
   for (var n = 0;n < img.length; n++) {
     if (img[n].getAttribute('src')) {
@@ -56,6 +54,7 @@ Overview.prototype.initialize = function() {
   self.left    = self.elementLocation(i,'x1');
   self.right   = self.elementLocation(i,'x2');
   self.selectLayer = p.parentNode.parentNode;
+
 
 //   try {
 //       overviewBalloon = new Balloon();
@@ -75,8 +74,10 @@ Overview.prototype.initialize = function() {
 //   }
 
   self.scalebar = i;
+
   self.addSelectMenu('overview');
   self.addSelectBox('overview');
+
   overviewObject = self;
 }
 

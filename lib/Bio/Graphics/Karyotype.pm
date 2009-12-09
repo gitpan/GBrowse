@@ -1,6 +1,6 @@
 package Bio::Graphics::Karyotype;
 
-# $Id: Karyotype.pm,v 1.15 2009/05/29 18:57:29 lstein Exp $
+# $Id: Karyotype.pm 22257 2009-11-16 15:11:04Z lstein $
 # Utility class to create a display of a karyotype and a series of "hits" on the individual chromosomes
 # Used for searching
 

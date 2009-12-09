@@ -1,5 +1,5 @@
 #!/usr/bin/perl
-# $Id: build-libraries.pl,v 1.3 2005/12/09 22:19:09 mwz444 Exp $
+# $Id: build-libraries.pl,v 1.3 2005-12-09 22:19:09 mwz444 Exp $
 
 =pod
 
@@ -55,7 +55,7 @@ Finally, the backup directories are restored to their original name.
 =head1 AUTHOR
 
   Todd Harris (harris@cshl.org)
-  Version: $Id: build-libraries.pl,v 1.3 2005/12/09 22:19:09 mwz444 Exp $
+  Version: $Id: build-libraries.pl,v 1.3 2005-12-09 22:19:09 mwz444 Exp $
   Copyright @ 2003 Cold Spring Harbor Laboratory
   $Z<>Revision$
 

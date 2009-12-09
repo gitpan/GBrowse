@@ -1,5 +1,5 @@
 #!/usr/bin/perl
-# $Id: build-gbrowse.pl,v 1.1 2003/11/19 01:49:18 tharris Exp $
+# $Id: build-gbrowse.pl,v 1.1 2003-11-19 01:49:18 tharris Exp $
 
 =pod
 
@@ -61,7 +61,7 @@
 =head1 AUTHOR
 
   Todd Harris (harris@cshl.org)
-  Version: $Id: build-gbrowse.pl,v 1.1 2003/11/19 01:49:18 tharris Exp $
+  Version: $Id: build-gbrowse.pl,v 1.1 2003-11-19 01:49:18 tharris Exp $
   Copyright @ 2003 Cold Spring Harbor Laboratory
 
 =cut

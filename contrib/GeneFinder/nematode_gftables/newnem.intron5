@@ -1,4 +1,4 @@
-// $Id: newnem.intron5,v 1.1 2003/04/15 20:30:42 lstein Exp $
+// $Id: newnem.intron5,v 1.1 2003-04-15 20:30:42 lstein Exp $
 // Created by colin on Wed Jan 14 09:49:06 1998
 siteType: intron5  refSeqs: genes  freqType: within  classDef: unique  
 startOff: -5  endOff: 25  numSymbs: 1  maxSymb: 5  numForced: 2  

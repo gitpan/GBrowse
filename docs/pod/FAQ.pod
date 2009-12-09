@@ -213,6 +213,6 @@ Because I just started this document.
 
 =back
 
-$Id: FAQ.pod,v 1.2 2005/12/09 22:19:09 mwz444 Exp $
+$Id: FAQ.pod,v 1.2 2005-12-09 22:19:09 mwz444 Exp $
 
 

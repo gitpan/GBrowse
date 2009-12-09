@@ -1,5 +1,5 @@
 #!/usr/bin/perl
-# $Id: load_genbank.pl,v 1.1 2008/10/16 17:01:27 lstein Exp $
+# $Id: load_genbank.pl,v 1.1 2008-10-16 17:01:27 lstein Exp $
 use strict;
 use Bio::DB::GFF;
 use Getopt::Long;

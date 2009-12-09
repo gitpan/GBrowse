@@ -1,5 +1,5 @@
 #!/usr/bin/perl
-# $Id: make_das_conf.pl,v 1.1 2008/10/16 17:01:27 lstein Exp $
+# $Id: make_das_conf.pl,v 1.1 2008-10-16 17:01:27 lstein Exp $
 
 use strict;
 use Bio::Das 1.03;

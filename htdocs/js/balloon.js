@@ -1,7 +1,7 @@
 /*
  balloon.js -- a DHTML library for balloon tooltips
 
- $Id: balloon.js,v 1.14 2009/05/04 17:57:13 sheldon_mckay Exp $
+ $Id: balloon.js 22257 2009-11-16 15:11:04Z lstein $
 
  See http://www.gmod.org/wiki/index.php/Popup_Balloons
  for documentation.

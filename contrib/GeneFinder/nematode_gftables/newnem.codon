@@ -1,4 +1,4 @@
-// $Id: newnem.codon,v 1.1 2003/04/15 20:30:42 lstein Exp $
+// $Id: newnem.codon,v 1.1 2003-04-15 20:30:42 lstein Exp $
 siteType: codon  refSeqs: spliced  freqType: within  classDef: unique  
 startOff: 0  endOff: 2  numSymbs: 3  maxSymb: 5  numForced: 0  forcedPos:  jump: 3 
 class: 124 122 

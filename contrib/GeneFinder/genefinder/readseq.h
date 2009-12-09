@@ -1,5 +1,5 @@
 /*  Last edited: Dec 11 14:02 2000 (rd) */
-/*  CVS info: $Id: readseq.h,v 1.1 2003/04/15 20:30:39 lstein Exp $ */
+/*  CVS info: $Id: readseq.h,v 1.1 2003-04-15 20:30:39 lstein Exp $ */
 
 extern int readSequence (FILE *fil, int *conv,
 			 char **seq, char **id, char **desc, int *length) ;

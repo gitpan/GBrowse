@@ -51,7 +51,7 @@ print OUT <<'!NO!SUBS!';
 
 
 #====================================================================
-#$Id: GbrowseServices.PMS,v 1.2 2004/01/07 22:21:49 markwilkinson Exp $
+#$Id: GbrowseServices.PMS,v 1.2 2004-01-07 22:21:49 markwilkinson Exp $
 
 use strict;
 use Text::Shellwords;

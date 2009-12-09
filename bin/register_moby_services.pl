@@ -12,7 +12,7 @@ $CONF_DIR  = '/usr/local/apache/conf/gbrowse.conf';
 
 
 #=======================================================================
-#$Id: register_moby_services.pl,v 1.1 2008/10/16 17:01:27 lstein Exp $
+#$Id: register_moby_services.pl,v 1.1 2008-10-16 17:01:27 lstein Exp $
 
 use MOBY::Client::Central;
 use strict;

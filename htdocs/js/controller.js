@@ -3,7 +3,7 @@
 
  Lincoln Stein <lincoln.stein@gmail.com>
  Ben Faga <ben.faga@gmail.com>
- $Id: controller.js,v 1.101 2009/07/30 16:38:02 lstein Exp $
+ $Id: controller.js 22339 2009-12-08 19:04:34Z lstein $
 
 Indentation courtesy of Emacs javascript-mode 
 (http://mihai.bazon.net/projects/emacs-javascript-mode/javascript.el)
@@ -33,6 +33,8 @@ var page_title_id           = 'page_title';
 var galaxy_form_id          = 'galaxy_form';
 var visible_span_id         = 'span';
 var search_form_objects_id  = 'search_form_objects';
+var userdata_table_id       = 'userdata_table_div';
+var userimport_table_id     = 'userimport_table_div';
 
 //  Sorta Constants
 var expired_limit  = 1;
@@ -51,6 +53,7 @@ var GBrowseController = Class.create({
     // segment_info holds the information used in rubber.js
     this.segment_info;
     this.last_update_key;
+    this.tabs;
   },
 
   reset_after_track_load:
@@ -225,7 +228,7 @@ var GBrowseController = Class.create({
 
   // Update Section Methods *****************************************
   update_sections:
-  function(section_names, param_str, scroll_there, spin) {
+  function(section_names, param_str, scroll_there, spin, onSuccessFunc) {
 
     if (param_str==null){
         param_str = '';
@@ -237,7 +240,7 @@ var GBrowseController = Class.create({
         spin = false;
     }
 
-    var request_str = "update_sections=1" + param_str;
+    var request_str = "action=update_sections" + param_str;
     for (var i = 0; i < section_names.length; i++) {
       if (spin)
          $(section_names[i]).innerHTML="<img src='/gbrowse2/images/spinner.gif' alt='loading...' />";
@@ -261,6 +264,7 @@ var GBrowseController = Class.create({
 	    }
 	  if (section_name == page_title_id)
 	     document.title = $(section_name).innerHTML;
+	  if (onSuccessFunc != null) onSuccessFunc();
         }
       }
     });
@@ -270,7 +274,7 @@ var GBrowseController = Class.create({
    set_display_option:
    function(option,value) {
 
-     var param = {set_display_option: 1};
+     var param = {action: 'set_display_option'};
      param[option] = value;
      new Ajax.Request(document.URL,
             {
@@ -298,9 +302,9 @@ var GBrowseController = Class.create({
       new Ajax.Request(document.URL,{
         method:     'post',
         parameters: {
-          set_track_visibility:  1,
-          visible:             visible,
-          track_name:          track_name
+	  action:     'set_track_visibility',
+          visible:    visible,
+          track_name: track_name
         },
         onSuccess: function(transport) {
           if (visible && 
@@ -314,26 +318,6 @@ var GBrowseController = Class.create({
   },
 
   // Kick-off Render Methods ****************************************
-
-  first_render:
-  function()  {
-
-    new Ajax.Request(document.URL,{
-      method:     'post',
-      parameters: {first_render: 1},
-      onSuccess: function(transport) {
-	var results             = transport.responseJSON;
-        var track_keys          = results.track_keys;
-        Controller.segment_info = results.segment_info;
-        $('details_msg').innerHTML = results.details_msg;
-        Controller.set_last_update_keys(track_keys);
-        Controller.get_multiple_tracks(track_keys);
-        if (results.display_details == 0){
-          Controller.hide_detail_tracks();
-        }
-      }
-    });
-  },
 
   update_coordinates:
   function (action) {
@@ -354,7 +338,9 @@ var GBrowseController = Class.create({
     
     new Ajax.Request(document.URL,{
       method:     'post',
-      parameters: {navigate: action},
+      parameters: {action:   'navigate',  // 'action'   triggers an async call
+                   navigate: action       // 'navigate' is an argument passed to the async routine
+                  },
       onSuccess: function(transport) {
 	var results                 = transport.responseJSON;
         Controller.segment_info     = results.segment_info;
@@ -404,7 +390,7 @@ var GBrowseController = Class.create({
 
     if (force == null) force=false;
 
-    var request_str = "add_tracks=1";
+    var request_str = "action=add_tracks";
     var found_track = false;
     for (var i = 0; i < track_names.length; i++) {
       var track_name = track_names[i];
@@ -465,10 +451,12 @@ var GBrowseController = Class.create({
   },
 
   rerender_track:
-  function(track_id,scroll_there) {
+  function(track_id,scroll_there,nocache) {
 
     if (scroll_there == null)
       scroll_there = false;
+    if (nocache == null)
+      nocache = false;
 
     this.each_track(track_id,function(gbtrack) {
 
@@ -478,8 +466,9 @@ var GBrowseController = Class.create({
        new Ajax.Request(document.URL,{
          method:     'post',
          parameters: {
-           rerender_track:  1,
-           track_id:        gbtrack.track_id
+           action:          'rerender_track',
+           track_id:        gbtrack.track_id,
+	   nocache:         nocache
          },
          onSuccess: function(transport) {
            var results    = transport.responseJSON;
@@ -503,6 +492,28 @@ var GBrowseController = Class.create({
     }); //end each_track()
 
   }, // end rerender_track
+
+  scroll_to_matching_track:
+  function scroll_to_matching_track(partial_name) {
+     var tracks = $$('span.titlebar');
+     var first_track = tracks.find(function(n) {
+                         var result = n.id.include(partial_name)
+                                      && n.visible();
+                         return result;
+                           }
+			);
+     if (first_track != null) {
+         new Effect.ScrollTo(first_track.id);
+     }
+  },
+
+  delete_track:
+  function(track_name) {
+      this.each_track(track_name,function(gb) {
+	  Controller.unregister_track(gb.track_name);
+	  actually_remove(gb.track_div_id);         
+      });
+  }, // end delete_track
 
   // Retrieve Rendered Track Methods ********************************
   
@@ -544,7 +555,7 @@ var GBrowseController = Class.create({
 
     new Ajax.Request(document.URL,{
       method:     'post',
-      parameters: $H({ retrieve_multiple: 1, 
+      parameters: $H({ action:        'retrieve_multiple', 
                        track_ids:     track_ids
 		    }).toQueryString()  + track_key_str,
       onSuccess: function(transport) {
@@ -614,14 +625,15 @@ var GBrowseController = Class.create({
     new Ajax.Request(document.URL,{
       method:     'post',
       parameters: form_element.serialize() +"&"+ $H({
-            reconfigure_track: track_id,
+            action:         'reconfigure_track',
+	    track:          track_id,
 	    semantic_label: semantic_label
           }).toQueryString(),
       onSuccess: function(transport) {
         var track_div_id = Controller.gbtracks.get(track_id).track_div_id;
         Balloon.prototype.hideTooltip(1);
         if (show_track == track_id){
-          Controller.rerender_track(track_id,true);
+          Controller.rerender_track(track_id,false,false);
         }
         else{
           if ($(track_div_id) != null){
@@ -640,7 +652,8 @@ var GBrowseController = Class.create({
     new Ajax.Request(document.URL,{
       method:     'post',
       parameters: form_element.serialize() +"&"+ $H({
-            filter_subtrack:  track_id
+            action:  'filter_subtrack',
+	    track:   track_id
           }).toQueryString(),
       onSuccess: function(transport) {
         Balloon.prototype.hideTooltip(1);
@@ -669,7 +682,7 @@ var GBrowseController = Class.create({
       method:     'post',
       parameters: form_element.serialize() +"&"+ $H({
             plugin_action: plugin_action,
-            reconfigure_plugin: 1
+	    action:  'reconfigure_plugin'
           }).toQueryString(),
 
       onSuccess: function(transport) {
@@ -744,13 +757,19 @@ var GBrowseController = Class.create({
     new Ajax.Request(document.URL,{
       method:     'post',
       parameters: form_element.serialize() +"&"+ $H({
-            edited_file: edited_file,
-            commit_file_edit: 1
+            action:      'commit_file_edit',
+            edited_file: edited_file
           }).toQueryString(),
       onSuccess: function(transport) {
         var results      = transport.responseJSON;
         var file_created = results.file_created;
 	var tracks       = results.tracks;
+	var error        = results.error;
+	
+	if (error) {
+           alert(error);
+           return; 
+        }        
 
         Controller.wipe_div(external_utility_div_id); 
 
@@ -803,8 +822,8 @@ var GBrowseController = Class.create({
     new Ajax.Request(document.URL,{
       method:     'post',
       parameters: {
-        delete_upload_file: 1,
-        file: file_name
+        action: 'delete_upload_file',
+	file:   file_name
       },
       onSuccess: function(transport) {
         Controller.each_track(file_name,function(gbtrack) {
@@ -814,6 +833,17 @@ var GBrowseController = Class.create({
         Controller.unregister_track(file_name);
       } // end onSuccess
     });
+  },
+
+  cancel_upload:
+  function(upload_id) {
+       new Ajax.Request(document.URL,{
+              method:    'post',
+              parameters: {
+                              action: 'cancel_upload',
+                           upload_id: upload_id
+                          }
+        });
   },
 
   // Remote Annotations Methods *************************************************
@@ -827,8 +857,8 @@ var GBrowseController = Class.create({
     new Ajax.Request(document.URL,{
       method:     'post',
       parameters:{
-            add_url:    1,
-            eurl:       eurl
+            action: 'add_url',
+            eurl:    eurl
       },
       onSuccess: function(transport) {
         var results     = transport.responseJSON;
@@ -843,18 +873,6 @@ var GBrowseController = Class.create({
           });
         }
     });
-  },
-
-  // this is for testing ....
-  new_test_track:
-  function () {
-      new Ajax.Request(document.URL, {
-            method:      'post',
-            parameters:  { new_test_track: 1 },
-            onSuccess: function (transport) {
-	        Controller.update_sections(new Array(track_listing_id,external_listing_id),null,null,true);
-            } // end onSuccess
-      });
   },
 
   // Utility methods *********************************
@@ -901,13 +919,142 @@ var GBrowseController = Class.create({
        caption.innerHTML="Hide details";
        detailsdiv.show();
     }
- }
+ },
+
+  edit_upload_description:
+  function(upload_name,container_element) {
+      if (container_element == null)
+	  return true;
+      container_element.setStyle({
+	      border: '2px',
+	      inset:  'black',
+	      backgroundColor:'beige',
+	      padding:'5px 5px 5px 5px'
+		  });
+      // var r = document.createRange();
+      // r.selectNodeContents(container_element);
+      // window.getSelection().addRange(r);
+      Event.observe(container_element,'keypress',this.set_upload_description);
+      Event.observe(container_element,'blur',this.set_upload_description);
+  },
+
+  set_upload_description:
+  function(event) {
+      var el = event.findElement();
+      if (event.type=='blur' || event.keyCode==Event.KEY_RETURN) {
+	  var upload_name = el.id.sub('_description$','');
+	  var desc        = el.innerHTML;
+	  el.innerHTML  = "<img src='/gbrowse2/images/spinner.gif' alt='loading...' />";
+	  new Ajax.Request(document.URL, {
+		      method:      'post',
+		      parameters:{  
+		          action: 'set_upload_description',
+			  upload_name: upload_name,
+			  description: desc
+		      },
+		      onSuccess: function(transport) {
+		      Controller.update_sections(new Array(userdata_table_id,userimport_table_id))
+		      }
+	       });
+	  el.stopObserving('keypress');
+	  el.stopObserving('blur');
+	  el.blur();
+	  return true;
+      }
+      if (event.keyCode==Event.KEY_ESC) {
+	  el.innerHTML  = "<img src='/gbrowse2/images/spinner.gif' alt='loading...' />";
+	  Controller.update_sections(new Array(userdata_table_id,userimport_table_id));
+	  el.stopObserving('keypress');
+	  el.stopObserving('blur');
+	  el.blur();
+	  return true;
+      }
+      return false;
+  },
+
+  // downloadUserTrackSource() is called to populate the user track edit field
+  // with source or configuration data for the track
+  downloadUserTrackSource:
+  function (destination,fileName,sourceFile) {
+      new Ajax.Updater(destination,
+                       document.URL, 
+		       {
+		         method:     'post',
+			 parameters: {
+			     userdata_download: sourceFile,
+                                         track: fileName
+			 }
+		       });
+
+  },
+
+  // uploadUserTrackSource() is called to submit a user track edit field
+  // to the server
+  uploadUserTrackSource:
+  function (sourceField,fileName,sourceFile,editElement) {
+
+     var upload_id  = 'upload_' + Math.floor(Math.random() * 99999);
+
+     new Ajax.Request(document.URL, {
+     	 method:       'post',
+	 parameters:   { action:     'modifyUserData',
+                         track:      fileName,
+                         sourceFile: sourceFile,
+			 upload_id:  upload_id,
+			 data:       $F(sourceField)},
+         onCreate:    function() {
+	      if ($(editElement) != null) {
+	      	 $(editElement).innerHTML = '<div id="'+upload_id+'_form'+'"></div>'
+                               		   +'<div id="'+upload_id+'_status'+'"></div>';
+	      }
+	      startAjaxUpload(upload_id);
+	     },
+         onSuccess:   function (transport) {
+//	 	          if ($(editElement) != null) $(editElement).innerHTML = '';
+	 	          if ($(editElement) != null) $(editElement).remove();
+			  var r = transport.responseJSON;
+			  r.tracks.each(function(t) {
+			  	      Controller.rerender_track(t);
+				      });
+		          var updater = Ajax_Status_Updater.get(upload_id);
+			  if (updater != null) updater.stop();
+		          Controller.update_sections(new Array(userdata_table_id,userimport_table_id,track_listing_id));
+	               }
+         });
+  },
+
+// monitor_upload is redundant and needs to be refactored
+// the idea is to register a new upload
+  monitor_upload:
+  function (upload_id,upload_name) {
+  	new Ajax.Request(document.URL, {
+	    method:     'post',
+	    parameters: {
+	    		action:      'register_upload',
+			upload_id:   upload_id,
+			upload_name: upload_name
+	      }
+	    });
+	startAjaxUpload(upload_id);
+  },
+
+  select_tab:
+  function (tab_id) {
+     if (this.tabs != null) {
+       this.tabs.select_tab(tab_id);
+     }
+  }
+
 
 });
 
 var Controller = new GBrowseController; // singleton
 
 function initialize_page() {
+
+  // These statements initialize the tabbing
+  Controller.tabs = new TabbedSection(['main_page','custom_tracks_page','settings_page']);
+
   //event handlers
     [page_title_id,visible_span_id,galaxy_form_id,search_form_objects_id].each(function(el) {
     if ($(el) != null) {
@@ -915,8 +1062,6 @@ function initialize_page() {
     }
   });
   
-  //  Controller.first_render(); // no longer because "left 0" will do the same
-
   // The next statement is to avoid the scalebars from being "out of sync"
   // when manually advancing the browser with its forward/backward buttons.
   // Unfortunately it causes an infinite loop when there are multiple regions!
@@ -929,6 +1074,7 @@ function initialize_page() {
   Details.prototype.initialize();
   if ($('autocomplete_choices') != null) 
        initAutocomplete();
+
 }
 
 // set the colors for the rubberband regions

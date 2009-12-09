@@ -1,4 +1,4 @@
-/* $Id: realign.h,v 1.1 2003/05/19 17:25:47 lstein Exp $ */
+/* $Id: realign.h,v 1.1 2003-05-19 17:25:47 lstein Exp $ */
 /* Fast implementation of a global dp aligner, used by the Realign.pm module
    for realigning short HSPs */
 

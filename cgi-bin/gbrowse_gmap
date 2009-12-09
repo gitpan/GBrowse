@@ -188,12 +188,12 @@ need it again.
 =cut
 
 use strict;
-use Bio::Graphics::Browser;
-use Bio::Graphics::Browser::RegionSearch;
+use Bio::Graphics::Browser2;
+use Bio::Graphics::Browser2::RegionSearch;
 use Template;
 use JSON;
 
-our $VERSION = '$Id: gbrowse_gmap,v 1.1 2009/07/07 16:59:51 lstein Exp $';
+our $VERSION = '$Id: gbrowse_gmap,v 1.2 2009-08-27 19:13:18 idavies Exp $';
 
 use constant DEFAULT_CONF   => '/etc/apache2/gbrowse';
 use constant DEFAULT_MASTER => 'GBrowse.conf';
@@ -215,7 +215,7 @@ my @color_list = (
 my $conf_dir  = $ENV{GBROWSE_CONF}   || DEFAULT_CONF;
 my $conf_file = $ENV{GBROWSE_MASTER} || DEFAULT_MASTER;
 my $conf
-    = Bio::Graphics::Browser->new(
+    = Bio::Graphics::Browser2->new(
     File::Spec->catfile( $conf_dir, $conf_file ) )
     or die "Couldn't read globals";
 
@@ -353,7 +353,7 @@ sub run {
 
     $self->state->{dbid} = $db_id if $db_id;    # to search correct database
 
-    my $search = Bio::Graphics::Browser::RegionSearch->new(
+    my $search = Bio::Graphics::Browser2::RegionSearch->new(
         {   source => $self->source,
             state  => $self->state,
         }

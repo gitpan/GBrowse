@@ -48,11 +48,17 @@ END
 
    BOOKMARK => 'Bookmark this',
 
-   IMAGE_LINK => 'Link to Image',
+   EXPORT => 'Export as...',
 
-   SVG_LINK   => 'High-res Image',
+   IMAGE_LINK => '...low-res image',
 
-   PDF_LINK   => 'Download PDF',
+   SVG_LINK   => '...high-res image',
+
+   PDF_LINK   => '...PDF',
+
+   DUMP_GFF   => '...GFF annotation table',
+
+   DUMP_SEQ   => '...FASTA sequence file',
 
    SVG_DESCRIPTION => <<END,
 <p>
@@ -127,7 +133,7 @@ END
 
    SCROLL   => 'Scroll/Zoom',
 
-   RESET    => 'Reset',
+   RESET    => 'Reset to defaults',
 
    FLIP     => 'Flip',
 
@@ -213,9 +219,17 @@ END
 
    UPLOAD_TRACKS=>'Add custom tracks',
 
+   USERDATA_TABLE=>'Upload and share tracks',
+
+   USERIMPORT_TABLE=>'Import tracks',
+
    UPLOAD_TITLE=> 'Upload your own data',
 
-   UPLOAD_FILE => 'Upload a file',
+   UPLOAD_FILE => 'Upload a track',
+
+   IMPORT_TRACK => 'Import a track',
+
+   REMOVE       => 'Remove',
 
    KEY_POSITION => 'Key position',
 
@@ -446,7 +460,7 @@ END
 
  OPTIONS_UPDATED   => 'A new site configuration is in effect; all page settings have been reset to their defaults',
 
- SEND_TO_GALAXY    => 'Send to Galaxy',
+ SEND_TO_GALAXY    => 'Export to Galaxy',
 
  NO_DAS            => 'Installation error: Bio::Das module must be installed for DAS URLs to work. Please inform this site\'s webmaster.',
 
@@ -502,5 +516,9 @@ Annotation System (DAS)</a> first copy the URL below, then go to the
 other browser and enter it as a new DAS source. <i>Quantitative tracks
 ("wiggle" files) and uploaded files can not be shared using DAS.</i>
 END
+
+    MAIN_PAGE          => 'Browser',
+    CUSTOM_TRACKS_PAGE => 'Upload and Share Tracks',
+    SETTINGS_PAGE      => 'Preferences',
 
 };

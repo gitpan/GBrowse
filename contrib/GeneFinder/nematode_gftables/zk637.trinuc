@@ -1,4 +1,4 @@
-// $Id: zk637.trinuc,v 1.1 2003/04/15 20:30:43 lstein Exp $
+// $Id: zk637.trinuc,v 1.1 2003-04-15 20:30:43 lstein Exp $
 siteType: intron  refSeqs: all  freqType: within  classDef: unique  
 startOff: 0  endOff: 0  numSymbs: 3  maxSymb: 5  numForced: 0  forcedPos:  jump: 3
 *
