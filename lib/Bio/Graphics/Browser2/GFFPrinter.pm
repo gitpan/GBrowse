@@ -7,7 +7,7 @@ package Bio::Graphics::Browser2::GFFPrinter;
 #
 ###################################################################
 
-# $Id: GFFPrinter.pm 22273 2009-11-18 13:51:14Z lstein $
+# $Id: GFFPrinter.pm 22365 2009-12-11 17:20:18Z lstein $
 
 # Dirt simple GFF3 dumper, suitable for a lightweight replacement to DAS.
 # Call this way:
@@ -24,9 +24,8 @@ use strict;
 
 use CGI 'param', 'path_info', 'header';
 use Bio::Graphics::Browser2;
-use Bio::Graphics::Browser2::UserData;
-use Bio::Graphics::Browser2::RegionSearch;
 use Bio::Graphics::FeatureFile;
+use Bio::Graphics::Browser2::RegionSearch;
 use Bio::Graphics::Browser2::Shellwords;
 
 sub new {

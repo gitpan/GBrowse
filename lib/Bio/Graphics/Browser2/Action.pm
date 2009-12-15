@@ -1,6 +1,6 @@
 package Bio::Graphics::Browser2::Action;
 
-#$Id: Action.pm 22340 2009-12-08 19:33:49Z lstein $
+#$Id: Action.pm 22409 2009-12-15 15:54:35Z lstein $
 # dispatch
 
 use strict;
@@ -105,15 +105,6 @@ sub ACTION_update_sections {
     return ( 200, 'application/json', $return_object );
 }
 
-sub ACTION_upload_table {
-    my $self   = shift;
-    my $render = $self->render_table;
-    $render->init_remote_sources();
-    my $html   = $render->render_external_table();
-    return ( 200, 'text/html', $html );
-}
-
-
 sub ACTION_configure_track {
     my $self = shift;
     my $q    = shift;
@@ -172,7 +163,6 @@ sub ACTION_retrieve_multiple {
     my $render = $self->render;
 
     $render->init_plugins();
-    $render->init_remote_sources();
 
     my %track_html;
     my @track_ids = $q->param('track_ids');
@@ -201,7 +191,6 @@ sub ACTION_add_tracks {
 
     $render->init_database();
     $render->init_plugins();
-    $render->init_remote_sources();
     my $track_data = $render->add_tracks(\@track_names);
     my $return_object = { track_data => $track_data, };
 
@@ -220,7 +209,6 @@ sub ACTION_set_track_visibility {
 
     if ($visible) {
 	$render->init_plugins();
-	$render->init_remote_sources();
 	$render->add_track_to_state($track_name);
     }
     else {
@@ -247,7 +235,6 @@ sub ACTION_rerender_track {
 
     $render->init_database();
     $render->init_plugins();
-    $render->init_remote_sources();
 
     my ( $track_keys, $display_details, $details_msg )
 	= $render->background_individual_track_render($track_id,$nocache);
@@ -258,57 +245,6 @@ sub ACTION_rerender_track {
 	details_msg     => $details_msg,
     };
     return (200,'application/json',$return_object);
-}
-
-sub ACTION_commit_file_edit {
-    my $self = shift;
-    my $q    = shift;
-
-    my $data        = $q->param('a_data');
-    my $edited_file = $q->param('edited_file');
-
-    return ( 204, 'text/plain', undef ) unless ( $edited_file and $data );
-
-    $self->render->init_remote_sources();
-    my ($file_created,$tracks,$error) = $self->render->handle_edit( $edited_file, $self->state, $data );
-
-    my $return_object = {
-	file_created   => $file_created,
-	tracks         => $tracks,
-	error          => "$error"
-    };
-
-    return (200,'application/json',$return_object);
-}
-
-sub ACTION_add_url {
-    my $self = shift;
-    my $q    = shift;
-
-    my $data   = $q->param('eurl');
-    my $render = $self->render;
-
-    $render->init_remote_sources;
-    $render->remote_sources->add_source($data);
-    $render->add_track_to_state($data);
-    warn "adding $data to remote sources" if DEBUG;
-    return (200,'application/json',{url_created=>1});
-}
-
-sub ACTION_delete_upload_file {
-    my $self = shift;
-    my $q    = shift;
-
-    my $render = $self->render;
-    my $file   = $q->param('file');
-    warn "deleting file $file " if DEBUG;
-
-    $render->init_remote_sources();
-    $render->uploaded_sources->clear_file($file);
-    $render->remote_sources->delete_source($file);
-    $render->remove_track_from_state($file);
-
-    return (204,'text/plain',undef);
 }
 
 sub ACTION_show_hide_section {
@@ -403,19 +339,6 @@ sub ACTION_authorize_login {
     return (200,'application/json',{id=>$id,authority=>$nonce});
 }
 
-# DEBUGGING METHOD
-sub ACTION_new_test_track {
-    my $self = shift;
-    my $q    = shift;
-
-    my $render   = $self->render;
-    my $userdata = Bio::Graphics::Browser2::UploadSet->new($render->data_source,
-							   $render->state,
-							   $render->language);
-    warn "Adding test track for ",$render->state->{uploadid}," path = ",($userdata->name_file('test'))[1];
-    return (204,'text/plain',undef);
-}
-
 sub ACTION_register_upload {
     my $self = shift;
     my $q    = shift;
@@ -433,7 +356,10 @@ sub ACTION_upload_file {
     my $self = shift;
     my $q    = shift;
 
-    my $fh = $q->param('file') or 
+    my $fh   = $q->param('file');
+    my $data = $q->param('data');
+
+    ($fh || $data) or 
 	return(200,'text/html',JSON::to_json({success=>0,
 					      error_msg=>'empty file'}
 	       ));
@@ -448,12 +374,17 @@ sub ACTION_upload_file {
 							      $render->state,
 							      $render->language);
 
-    my $name = File::Basename::basename($fh );
+    my $name = $fh ? File::Basename::basename($fh) : $q->param('name');
+    $name ||= 'New track definition';
+
+    my $content_type = $fh ? $q->uploadInfo($fh)->{'Content-Type'} : 'text/plain';
+
     $state->{uploads}{$upload_id} = [$name,$$];
     $session->flush();
     $session->unlock();
     
-    my ($result,$msg,$tracks,$pid) = $usertracks->upload_file($name,$fh);
+    my ($result,$msg,$tracks,$pid) = $data ? $usertracks->upload_data($name, $data,$content_type)
+                                           : $usertracks->upload_file($name, $fh,  $content_type);
 
     $session->lock('exclusive');
     delete $state->{uploads}{$upload_id};
@@ -559,16 +490,17 @@ sub ACTION_cancel_upload {
     my $state      = $self->state;
     my $render     = $self->render;
 
-    if (my ($file_name,$pid) = @{$state->{uploads}{$upload_id}}) {
+    if ($state->{uploads}{$upload_id} && (my ($file_name,$pid) = @{$state->{uploads}{$upload_id}})) {
 	my $usertracks = Bio::Graphics::Browser2::UserTracks->new($render->data_source,
 								  $render->state,
 								  $render->language);
 	kill TERM=>$pid;
 	$usertracks->delete_file($file_name);
 	delete $state->{uploads}{$upload_id};
-	return (200,'text/html',"<b>$file_name:</b> <i>Cancelled</i>");
+	return (200,'text/html',"<div class='error'><b>$file_name:</b> <i>Cancelling</i></div>");
     } else {
-	return (204,'text/plain',undef);
+	warn "here I am";
+	return (200,'text/html','<div class="error"><i>Not found</i></div>');
     }
     
 }
@@ -600,13 +532,12 @@ sub ACTION_modifyUserData {
     my $userdata = $self->render->user_tracks;
     my $state    = $self->state;
 
-    warn 'uploads = ',join ' ',keys %{$state->{uploads}};
     $state->{uploads}{$upload_id} = [$ftype,$$];
 
     if ($ftype eq 'conf') {
 	$userdata->merge_conf($track,$text);
     } else {
-	$userdata->upload_data($track,$text,1);
+	$userdata->upload_data($track,$text,'text/plain',1); # overwrite
     }
     delete $state->{uploads}{$upload_id};
     my @tracks     = $userdata->labels($track);
@@ -617,22 +548,4 @@ sub ACTION_modifyUserData {
 1;
 
 __END__
-
-# some dead code follows here
-
-# This looks like an older version of the retrieve_multiple request
-
-# Slightly different -- process a tracks request in the background.
-#     if ( my @labels = param('render') ) {    # deferred rendering requested
-#         $self->init_database();
-#         $self->init_plugins();
-#         $self->init_remote_sources();
-#         my $features = $self->region->features;
-#         my $seg      = $self->features2segments($features)->[0];    # likely wrong
-
-#         $self->set_segment($seg);
-
-#         my $deferred_data = $self->render_deferred( labels => \@labels );
-# 	return (200,'application/json',$deferred_data);
-#     }
 

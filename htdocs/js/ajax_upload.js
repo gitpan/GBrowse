@@ -64,7 +64,7 @@ function startAjaxUpload(upload_id) {
   var status       = $(upload_id + '_status');
   var upload_form  = $(upload_id + '_form');
   upload_form.hide();
-  var cancel_script = 'Controller.cancel_upload("'+upload_id+'");'
+  var cancel_script = 'Controller.cancel_upload("'+upload_id+'_status","'+upload_id+'");'
   
   status.update("<image src='/gbrowse2/images/spinner.gif' />");
   status.insert(new Element('span').update('<b>Uploading...</b>'));
@@ -183,7 +183,7 @@ function editUpload (fileName,sourceFile) {
     Controller.downloadUserTrackSource(editID,fileName,sourceFile);
 }
 
-function addAnUploadField(after_element,action,upload_prompt,remove_prompt,field_type) {
+function addAnUploadField(after_element,action,upload_prompt,remove_prompt,field_type,help_link) {
 
     if (field_type == null) field_type='upload';
 
@@ -204,19 +204,39 @@ function addAnUploadField(after_element,action,upload_prompt,remove_prompt,field
                                        enctype: 'multipart/form-data',
                                         method: 'post'
 				      });
-    var paragraph   = new Element('p',{style:'text-indent:10pt'});
+    var paragraph   = new Element('p');
     form.update(paragraph);
-    paragraph.insert('<b>'+upload_prompt+' </b>');
-    paragraph.insert(new Element('input',{type:'hidden', 
-                                          name:'action', 
-                                         value:(field_type=='upload'
-                                                ?'upload_file':'import_track')
-                                         }));
-    if (field_type=='upload')
-       paragraph.insert(new Element('input',{type:'file',   name:'file',   id:'upload_field'}));
-    else
-       paragraph.insert(new Element('input',{type:'text',   name:'url',    id:'import_field',
-                                             size:50}));
+    paragraph.insert(new Element('a',
+    			     {href:  help_link,
+			      target:'_new'
+			     }).update('<i>[Help with the file format]</i>'));
+    paragraph.insert('<br><b>'+upload_prompt+' </b><br>');
+
+    if (field_type=='upload') {
+       paragraph.insert(new Element('input',{type:'hidden', 
+                                             name:'action', 
+                                            value:'upload_file'}));
+       paragraph.insert(new Element('input',   {name:'file', id:'upload_field', type:'file'}));
+    }
+
+    else if (field_type=='edit') {
+       paragraph.insert(new Element('input',{type:'hidden', 
+                                             name:'action', 
+                                            value:'upload_file'}));
+       paragraph.insert(new Element('input',{type:'hidden', 
+                                             name:'name', 
+                                            value:upload_tag}));
+       paragraph.insert(new Element('textarea',{name:'data', id:'edit_field',
+       			    		        rows:20, cols:120, wrap:'off'})); 
+    }
+
+    else {
+       paragraph.insert(new Element('input',{type:'hidden', 
+                                             name:'action', 
+                                            value:'import_track'}));
+       paragraph.insert(new Element('input',   {name:'url',  id:'import_field',type:'text',
+                                                size:50}));
+    }
 
     paragraph.insert(new Element('input',{type:'submit', name:'submit', value:'Upload'}));
     paragraph.insert(new Element('input',{type:'hidden', name:'upload_id',value:upload_tag}));

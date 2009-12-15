@@ -1,6 +1,6 @@
 package Bio::Graphics::Browser2::DataLoader::generic;
 
-# $Id: generic.pm 22336 2009-12-07 22:18:43Z lstein $
+# $Id: generic.pm 22407 2009-12-14 20:18:06Z lstein $
 use strict;
 use Bio::DB::SeqFeature::Store;
 use Carp 'croak';
@@ -131,7 +131,6 @@ sub load_line {
 
     my $old_state = $self->state;
     my $state     = $self->_state_transition($old_state,$line);
-
 
     if ($state eq 'data') {
 	$self->loader->load_line($line);
