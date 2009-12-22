@@ -7,6 +7,7 @@ use strict;
 use Bio::Graphics::Browser2;
 use Bio::Graphics::Browser2::Render;
 use Bio::Graphics::Browser2::Util;
+use Bio::Graphics::Karyotype;
 use Digest::MD5 'md5_hex';
 
 
@@ -86,11 +87,7 @@ sub run {
     $render->set_source() && exit;  # may cause a redirect and exit 
     $render->init();
 
-    # This guarantees that all user-specific tracks
-    # disappear after the current session completes.
-    # local $render->data_source->{_user_tracks} = {};
     $render->add_user_tracks($render->data_source);
-
     $render->update_state();
 
     warn join ' ',$render->potential_tracks if DEBUG;
@@ -166,23 +163,10 @@ sub render_image {
     my $self     = shift;
     my $render   = $self->render;
     my $renderer = $render->get_panel_renderer;
-    my $external = $render->external_data;
-    warn 'visible = ',join ' ',$render->visible_tracks if DEBUG;
-    my @labels   = $render->expand_track_names($render->detail_tracks);
 
     my $format   = param('format') || 'GD';
     my $flip     = param('flip')   || 0;
     my $embed    = param('embed');
-    $format      = 'GD' if $embed;
-
-    warn "labels = ",join ',',@labels if DEBUG;
-    my @track_types     = map { s/%%/-/g; $_  }   # unescape %% as "-", damage done in gbrowse link generator
-                          map { split /[+-]/ }
-			  (param('type'));
-
-    # If no tracks specified, we want to see all tracks with this feature
-    if (!@track_types) { @track_types = @labels; } 
-    unshift @track_types,'_scale';
 
     my $convert_to_pdf;
     if ($format eq 'PDF' && `which inkscape`) {
@@ -190,32 +174,18 @@ sub render_image {
 	$format = 'GD::SVG';
     }
 
-    my $result   = $renderer->render_track_images(
-						  {
-						      labels            => \@track_types,
-						      external_features => $external,
-						      section           => 'detail',
-						      cache_extra       => [$format],
-						      image_class       => $format,
-						      flip              => $flip,
-						      -key_style        => 'between',
-						      }
-						  );
-    
-    warn "returned labels = ",join ',',%$result if DEBUG;
+    $format = 'GD::SVG' if $format eq 'SVG';
+    $format      = 'GD' if $embed;
 
-    # Previously - @labels (caused drawing more tracks than asked for)
-    my @image_data      = @{$result}{grep {$result->{$_}} @track_types};
-    my @gds             = map {$_->{gd} } @image_data;
-    my @map_data        = map {$_->{map}} @image_data;
+    my ($img_data,$map) = $render->region->feature_count > 1 
+                                 ? $self->render_multiple($renderer,$format,$flip,$embed)
+	                         : $self->render_tracks  ($renderer,$format,$flip,$embed);
 
-    my $img_data  = $self->consolidate_images(\@gds);
-
+ 
     my $seg   = $render->segment;
     my $fname = $seg ? $seg->seq_id.':'.$seg->start.'..'.$seg->end : "NA";
 
     if ($embed) {
-	my $map    = $self->consolidate_maps  (\@map_data, \@gds);
         my $url    = $renderer->source->generate_image($img_data);
 	print $self->header(-type=>'text/html');
 	print start_html(),
@@ -249,7 +219,7 @@ sub render_image {
     elsif ($format eq 'GD::SVG') {
 	print $self->header(-type => 'image/svg+xml',
 			    -content_disposition => "filename=$fname.svg");
-	print $img_data
+	print $img_data;
     } 
     else { 
 	print $self->header('text/plain');
@@ -257,19 +227,90 @@ sub render_image {
     }
 }
 
+sub render_multiple {
+    my $self = shift;
+    my ($renderer,$format,$flip,$embed) = @_;
+    my $features = $self->render->region->features;
+    my $karyotype = Bio::Graphics::Karyotype->new(source   => $self->render->data_source,
+						  language => $self->render->language);
+    $karyotype->add_hits($features);
+    my $panels = $karyotype->generate_panels($format);
+    my (@gds,@seqids);
+    for my $seqid (keys %$panels) {
+	push @gds,$panels->{$seqid}{panel}->gd;
+	push @seqids,$seqid;
+    }
+    my $img_data = $self->consolidate_images(\@gds,undef,undef,'horizontal',\@seqids);
+    return ($img_data,undef);
+}
+
+sub render_tracks {
+    my $self = shift;
+    my ($renderer,$format,$flip,$embed) = @_;
+
+    my $render   = $self->render;
+
+    my $external = $render->external_data;
+    warn 'visible = ',join ' ',$render->visible_tracks if DEBUG;
+    my @labels   = $render->expand_track_names($render->detail_tracks);
+
+    warn "labels = ",join ',',@labels if DEBUG;
+    my @track_types     = map { s/%%/-/g; $_  }   # unescape %% as "-", damage done in gbrowse link generator
+                          map { split /[+-]/ }
+			  (param('type'));
+
+    # If no tracks specified, we want to see all tracks with this feature
+    if (!@track_types) { @track_types = @labels; } 
+    unshift @track_types,'_scale';
+
+    my $result   = $renderer->render_track_images(
+						  {
+						      labels            => \@track_types,
+						      external_features => $external,
+						      section           => 'detail',
+						      cache_extra       => [$format],
+						      image_class       => $format,
+						      flip              => $flip,
+						      -key_style        => 'between',
+						      }
+						  );
+    
+    warn "returned labels = ",join ',',%$result if DEBUG;
+
+    # Previously - @labels (caused drawing more tracks than asked for)
+    my @image_data      = @{$result}{grep {$result->{$_}} @track_types};
+    my @gds             = map {$_->{gd} } @image_data;
+    my @map_data        = map {$_->{map}} @image_data;
+
+    my $img_data  = $self->consolidate_images(\@gds);
+    my $map       = $self->consolidate_maps  (\@map_data, \@gds) if $embed;
+
+    return ($img_data,$map);
+
+}
+
 sub calculate_composite_bounds {
     my $self = shift;
-    my $gds  = shift;
+    my ($gds,$orientation)  = @_;
 
     warn "consolidating ",scalar @$gds," GD objects" if DEBUG;
 
     my $height = 0;
     my $width  = 0;
-    for my $g (@$gds) {
-	warn "g=$g" if DEBUG;
-	next unless $g;
-	$height +=   ($g->getBounds)[1];  # because GD::SVG is missing the width() and height() methods
-	$width   ||= ($g->getBounds)[0];
+    if ($orientation eq 'vertical') {
+	for my $g (@$gds) {
+	    warn "g=$g" if DEBUG;
+	    next unless $g;
+	    $height +=   ($g->getBounds)[1];  # because GD::SVG is missing the width() and height() methods
+	    $width   ||= ($g->getBounds)[0];
+	}
+    } elsif ($orientation eq 'horizontal') {
+	for my $g (@$gds) {
+	    warn "g=$g" if DEBUG;
+	    next unless $g;
+	    $height    = ($g->getBounds)[1] if $height < ($g->getBounds)[1];
+	    $width    += ($g->getBounds)[0];
+	}
     }
     
     return ($width,$height);
@@ -277,8 +318,10 @@ sub calculate_composite_bounds {
 
 sub consolidate_images {
     my $self = shift;
-    my ($gds,$width,$height) = @_;
-    ($width,$height) = $self->calculate_composite_bounds($gds) 
+    my ($gds,$width,$height,$orientation,$labels) = @_;
+    $orientation ||= 'vertical';
+
+    ($width,$height) = $self->calculate_composite_bounds($gds,$orientation) 
 	unless defined $width && defined $height;
 
     warn "consolidating ",scalar @$gds," GD objects" if DEBUG;
@@ -286,22 +329,51 @@ sub consolidate_images {
     my $format = ref($gds->[0]);
     warn "format = $format" if DEBUG;
 
-    return $format =~ /^GD::SVG/ ? $self->_consolidate_svg($width,$height,@$gds)
-                                 : $self->_consolidate_gd ($width,$height,@$gds);
+    return $format =~ /^GD::SVG/ ? $self->_consolidate_svg($width,$height,$gds,$orientation,$labels)
+                                 : $self->_consolidate_gd ($width,$height,$gds,$orientation,$labels);
 }
 
 sub _consolidate_gd {
     my $self = shift;
-    my ($width,$height,@gds) = @_;
+    my ($width,$height,$gds,$orientation,$labels) = @_;
 
-    my $gd = GD::Image->new($width,$height);
-    $gd->colorAllocate(255,255,255);
+    my $class     = ref($gds->[0]);
+    (my $fontclass = $class)=~s/::Image//;
+
+    my $lineheight = $fontclass->gdMediumBoldFont->height;
+    my $charwidth  = $fontclass->gdMediumBoldFont->width;
+    $height += $lineheight if $orientation eq 'horizontal';
+
+    my $gd = $class->new($width,$height);
+    my $white = $gd->colorAllocate(255,255,255);
+    my $black = $gd->colorAllocate(0,0,0);
+
+    eval {
+	my $bg = $gds->[0]->getPixel(0,0);
+	my @bg = $gds->[0]->rgb($bg);
+	my $i  = $gd->colorAllocate(@bg);
+	$gd->filledRectangle(0,0,$width,$height,$i);
+    };
 
     my $offset = 0;
-    for my $g (@gds) {
-	next unless $g;
-	$gd->copy($g,0,$offset,0,0,$g->getBounds);
-	$offset += ($g->getBounds)[1];
+    if ($orientation eq 'vertical') {
+	for my $g (@$gds) {
+	    next unless $g;
+	    $gd->copy($g,0,$offset,0,0,$g->getBounds);
+	    $offset += ($g->getBounds)[1];
+	}
+    } else {
+	for my $g (@$gds) {
+	    next unless $g;
+	    $gd->copy($g,$offset,$height-($g->getBounds)[1]-$lineheight,0,0,$g->getBounds);
+	    if ($labels) {
+		my $l = shift @$labels;
+		$gd->string($fontclass->gdMediumBoldFont,
+			    $offset+(($g->getBounds)[0]-$charwidth*length $l)/2,
+			    $height-$lineheight,$l,$black);
+	    }
+	    $offset += ($g->getBounds)[0];
+	}
     }
 
     return $gd;
@@ -310,31 +382,74 @@ sub _consolidate_gd {
 # because the GD::SVG copy() method is broken
 sub _consolidate_svg {
     my $self = shift;
-    my ($width,$height,@gds) = @_;
+    my ($width,$height,$gds,$orientation,$labels) = @_;
+
+    my $image_height = $height;
+
+    if ($labels) {
+	my $font = GD::SVG->gdMediumBoldFont;
+	my $charwidth = $font->width;
+	my $lineheight=$font->height;
+	$image_height += $lineheight;
+	for my $gd (@$gds) {
+	    my $l     = shift @$labels;
+	    my $black = $gd->colorAllocate(0,0,0);
+	    $gd->string($font,
+			(($gd->getBounds)[0]-$charwidth*length $l)/2,
+			($gd->getBounds)[1],
+			$l,$black);
+	}
+    }
 
     my $svg = qq(<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n\n);
-    $svg   .= qq(<svg height="$height" width="$width" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">\n);
+    $svg   .= qq(<svg height="$image_height" width="$width" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">\n);
 
-    my $offset = 0;
-    for my $g (@gds) {
-	my $s              = $g->svg;
-	my $current_height = 0;
-	foreach (split "\n",$s) {
-	    if (m!</svg>!) {
-		last;
+    if ($orientation eq 'vertical') {
+	my $offset = 0;
+	for my $g (@$gds) {
+	    my $s              = $g->svg;
+	    my $current_height = 0;
+	    foreach (split "\n",$s) {
+		if (m!</svg>!) {
+		    last;
+		}
+		elsif (/<svg.+height="([\d.]+)"/) {
+		    $current_height = int($1+0.5);
+		    $svg .= qq(<g transform="translate(0,$offset)">\n);
+		}
+		elsif ($current_height) {
+		    $svg .= "$_\n";
+		}
 	    }
-	    elsif (/<svg height="([\d.]+)"/) {
-		$current_height = int($1+0.5);
-		$svg .= qq(<g transform="translate(0,$offset)">\n);
-	    }
-	    elsif ($current_height) {
-		$svg .= "$_\n";
-	    }
+	    $svg .= "</g>\n" if $current_height;
+	    $offset += $current_height;
 	}
-	$svg .= "</g>\n" if $current_height;
-	$offset += $current_height;
+	$svg   .= qq(</svg>\n);
+ 
+
+   } else {
+	my $offset = 0;
+	for my $g (@$gds) {
+	    my $s              = $g->svg;
+	    my $current_width = 0;
+	    foreach (split "\n",$s) {
+		if (m!</svg>!) {
+		    last;
+		}
+		elsif (/<svg.+width="([\d.]+)"/) {
+		    $current_width = int($1+0.5);
+		    my $height     = $height - ($g->getBounds)[1];
+		    $svg .= qq(<g transform="translate($offset,$height)">\n);
+		}
+		elsif ($current_width) {
+		    $svg .= "$_\n";
+		}
+	    }
+	    $svg .= "</g>\n" if $current_width;
+	    $offset += $current_width;
+	}
+	$svg   .= qq(</svg>\n);
     }
-    $svg   .= qq(</svg>\n);
 
     # munge fonts slightly for systems that don't have Helvetica installed
     $svg    =~ s/font="Helvetica"/font="san-serif"/gi;
@@ -374,39 +489,49 @@ sub usage {
 
 <pre>
 
-  &lt;img src="http://www.wormbase.org/db/seq/gbrowse_img/elegans?name=mec-3;width=400"&gt;
+  &lt;img src="http://www.wormbase.org/db/seq/gbrowse_img/c_elegans?name=mec-3;width=400"&gt;
 <blockquote>
   <i>Will generate this picture:</i>
- <img src="http://www.wormbase.org/db/seq/gbrowse_img/elegans?name=mec-3;width=400">
+ <img src="http://www.wormbase.org/db/seq/gbrowse_img/c_elegans?name=mec-3;width=400">
 </blockquote>
 
   &lt;a href="http://www.wormbase.org/db/seq/gbrowse_img?list=sources"&gt;list&lt;/a&gt;
 <blockquote>
   <i>Will return this document:</i>
   ## Sources
-  fly
+  b_malayi
+  c_brenneri
+  c_briggsae_cb25
+  c_briggsae
+  c_elegans
+  c_elegans_gmap
+  c_elegans_pmap
+  ws77
+  c_japonica
+  c_remanei
+  c_remanei_nGASP
+  nGASP_submissions
+  nGASP
+  Gbrowse_karyotype
+  p_pacificus
   yeast
-  wormbase
 </blockquote>
 
-  &lt;a href="http://www.wormbase.org/db/seq/gbrowse_img/elegans?list=types"&gt;types&lt;/a&gt;
+  &lt;a href="http://www.wormbase.org/db/seq/gbrowse_img/c_elegans?list=types"&gt;types&lt;/a&gt;
 <blockquote>
   <i>Will return this document:</i>
-  ## Feature types for source wormbase
-  tRNA	tRNAs	
-  NG	Named Genes	default
-  CG	Curated genes	default
-  PG	Predicted genes	
-  WABA	Briggsae alignments (WABA)	
-  ESTB	ESTs aligned by BLAT (best)	
-  ESTO	ESTs aligned by BLAT (other)	
-  mRNAB	mRNAs aligned by BLAT (best)	
-  mRNAO	mRNAs aligned by BLAT (other)	
-  RNAi	RNAi experiments	
-  EXPR	Expression chip profiles	
-  WTP	Worm Transcriptome Project genes	
-  SNP	SNPs	
-  TcI	Transposon Insertions
+  ## Feature types for source c_elegans
+  LOCI:overview	Landmarks	default
+  RNAZ	RNAz non-coding RNA genes	
+  CG	Gene Models	default
+  CDS	Coding Segments	
+  RNA	Predicted non-coding RNAs	
+  HISTORICAL	Obsolete gene models	
+  GENEFINDER	GeneFinder Predictions	
+  TWINSCAN	Twinscan Predictions	
+  GENEMARKHMM	GeneMarkHMM Predictions	
+  mSPLICER_TRANSCRIPT	mSplicer
+  ...
 </blockquote>
 
 </pre>
@@ -420,7 +545,7 @@ can be used as the destination of an &lt;img&gt; tag like this:
 </p>
 
 <blockquote><pre>
-&lt;img src="http://www.wormbase.org/db/seq/gbrowse_img/elegans?name=III:1..1000"&gt;
+&lt;img src="http://www.wormbase.org/db/seq/gbrowse_img/c_elegans?name=III:1..1000"&gt;
 </pre></blockquote>
 
 <p>
@@ -488,7 +613,7 @@ lengths.
       a list of track names separated by spaces ("+" characters when URL-escaped).  For example:
       <p>
       <pre>
-      &lt;img src="http://www.wormbase.org/db/seq/gbrowse_img/elegans?name=mec-3;
+      &lt;img src="http://www.wormbase.org/db/seq/gbrowse_img/c_elegans?name=mec-3;
                    type=tRNA+NG+WABA+CG+ESTB"&gt;
       </pre>
       Multiple <i>type=</i> arguments will be combined to form a single space-delimited list.
@@ -621,7 +746,7 @@ lengths.
 </dl>
 <p>
 Putting it all together, here's a working (very long) URL:
-<pre><a href="http://www.wormbase.org/db/seq/gbrowse_img/elegans?name=B0001;add=B0001+pcr+pcr1+20000..333000;add=B0001+%22cool%20knockout%22+kn2+30000..20000,10000..5000;type=add+CG+WTP;style=pcr+glyph=primers;style=%22cool%20knockout%22+glyph=transcript2+bgcolor=orange;abs=1">http://www.wormbase.org/db/seq/gbrowse_img/elegans?name=B0001;add=B0001+pcr+pcr1+20000..333000;add=B0001+%22cool%20knockout%22+kn2+30000..20000,10000..5000;type=add+CG+WTP;style=pcr+glyph=primers;style=%22cool%20knockout%22+glyph=transcript2+bgcolor=orange;abs=1</a>
+<pre><a href="http://www.wormbase.org/db/seq/gbrowse_img/c_elegans?name=B0001;add=B0001+pcr+pcr1+20000..333000;add=B0001+%22cool%20knockout%22+kn2+30000..20000,10000..5000;type=add+CG+WTP;style=pcr+glyph=primers;style=%22cool%20knockout%22+glyph=transcript2+bgcolor=orange;abs=1">http://www.wormbase.org/db/seq/gbrowse_img/c_elegans?name=B0001;add=B0001+pcr+pcr1+20000..333000;add=B0001+%22cool%20knockout%22+kn2+30000..20000,10000..5000;type=add+CG+WTP;style=pcr+glyph=primers;style=%22cool%20knockout%22+glyph=transcript2+bgcolor=orange;abs=1</a>
 </pre>
 
 <p>
@@ -633,8 +758,8 @@ gbrowse config file, you may do so by placing the URL in an
 </p>
 
 <pre>
-&lt;iframe src="http://localhost/cgi-bin/gbrowse_img/elegans?name=B0001;embed=1" width="100%" height="250"&gt;
-   &lt;img src="http://localhost/cgi-bin/gbrowse_img/elegans?name=B0001"/&gt;
+&lt;iframe src="http://localhost/cgi-bin/gbrowse_img/c_elegans?name=B0001;embed=1" width="100%" height="250"&gt;
+   &lt;img src="http://localhost/cgi-bin/gbrowse_img/c_elegans?name=B0001"/&gt;
 &lt;/iframe&gt;
 </pre>
 

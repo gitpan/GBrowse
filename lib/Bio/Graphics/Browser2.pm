@@ -1,5 +1,5 @@
 package Bio::Graphics::Browser2;
-# $Id: Browser2.pm 22409 2009-12-15 15:54:35Z lstein $
+# $Id: Browser2.pm 22456 2009-12-22 21:18:58Z lstein $
 # Globals and utilities for GBrowse and friends
 
 use strict;
@@ -20,7 +20,7 @@ use CGI 'redirect','url';
 use constant DEFAULT_MASTER => 'GBrowse.conf';
 
 my %CONFIG_CACHE;
-our $VERSION = 1.9983;
+our $VERSION = 1.9984;
 
 sub open_globals {
     my $self = shift;

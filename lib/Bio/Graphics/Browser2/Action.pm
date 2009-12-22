@@ -1,6 +1,6 @@
 package Bio::Graphics::Browser2::Action;
 
-#$Id: Action.pm 22409 2009-12-15 15:54:35Z lstein $
+#$Id: Action.pm 22444 2009-12-21 18:35:28Z lstein $
 # dispatch
 
 use strict;
@@ -126,13 +126,23 @@ sub ACTION_select_subtracks {
     return ( 200, 'text/html', $html );
 }
 
+# return a listing of all discoverable tracks
+sub ACTION_scan {
+    my $self = shift;
+    my $q    = shift;
+    my $dumper = Bio::Graphics::Browser2::GFFPrinter->new(
+        -data_source => $self->data_source(),
+    );
+    return (200, 'text/plain', $dumper->get_scan);
+}
 
 sub ACTION_filter_subtrack {
     my $self = shift;
     my $q    = shift;
 
-    my $track_name = $q->param('track') or croak;
-    my $html = $self->render->filter_subtrack($track_name);
+    my $track_name = $q->param('track')  or croak;
+    my @subtracks  = $q->param('select') or croak;
+    my $html = $self->render->filter_subtrack($track_name,\@subtracks);
     return ( 200, 'application/json', {} );
 }
 
