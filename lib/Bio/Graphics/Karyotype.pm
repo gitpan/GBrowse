@@ -1,6 +1,6 @@
 package Bio::Graphics::Karyotype;
 
-# $Id: Karyotype.pm 22454 2009-12-22 20:52:29Z lstein $
+# $Id: Karyotype.pm 22460 2009-12-23 19:01:05Z lstein $
 # Utility class to create a display of a karyotype and a series of "hits" on the individual chromosomes
 # Used for searching
 
@@ -187,7 +187,7 @@ sub feature2link {
                                ? "id:$match_id"
  	           : $class    ? "$class:$name" 
  		   : $name;
-    my $dbid  = $_->gbrowse_dbid if $_ && $_->can('gbrowse_dbid');
+    my $dbid  = $feature->gbrowse_dbid if $feature && $feature->can('gbrowse_dbid');
     $dbid   ||= '';
     return "$url$fid;dbid=$dbid";
 }

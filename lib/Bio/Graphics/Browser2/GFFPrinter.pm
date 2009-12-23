@@ -7,7 +7,7 @@ package Bio::Graphics::Browser2::GFFPrinter;
 #
 ###################################################################
 
-# $Id: GFFPrinter.pm 22444 2009-12-21 18:35:28Z lstein $
+# $Id: GFFPrinter.pm 22467 2009-12-23 21:52:32Z lstein $
 
 # Dirt simple GFF3 dumper, suitable for a lightweight replacement to DAS.
 # Call this way:
@@ -63,6 +63,8 @@ sub print_stylesheet {
 
 sub print_gff3 {
     my $self = shift;
+
+    warn "print_gff3()";
 
     my $segment= $self->get_segment;
     my $labels = $self->get_labels;

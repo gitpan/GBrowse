@@ -17,6 +17,7 @@ use Bio::Graphics::Browser2::Action;
 use Bio::Graphics::Browser2::Region;
 use Bio::Graphics::Browser2::RegionSearch;
 use Bio::Graphics::Browser2::RenderPanels;
+use Bio::Graphics::Browser2::RemoteSet;
 use Bio::Graphics::Browser2::GFFPrinter;
 use Bio::Graphics::Browser2::Util qw[modperl_request url_label];
 use Bio::Graphics::Browser2::UserTracks;
@@ -96,6 +97,13 @@ sub user_tracks {
        ||= Bio::Graphics::Browser2::UserTracks->new($self->data_source,
 						   $self->state,
 						   $self->language);
+}
+
+sub remote_sources {
+  my $self = shift;
+  my $d = $self->{remote_sources};
+  $self->{remote_sources} = shift if @_;
+  $d;
 }
 
 sub db {
@@ -208,6 +216,8 @@ sub init {
     $self->init_database();
     warn "init_plugins()" if DEBUG;
     $self->init_plugins();
+    warn "init_remote_sources()" if DEBUG;
+    $self->init_remote_sources();
     warn "init done" if DEBUG;
 }
 
@@ -324,6 +334,7 @@ sub background_track_render {
     $self->session->unlock(); # don't hold session captive on renderers!
     
     $self->init_plugins();
+    $self->init_remote_sources();
 
     $self->segment or return;
     my $cache_extra = $self->create_cache_extra;
@@ -394,7 +405,13 @@ sub add_tracks {
     my %track_data;
     my $segment = $self->segment;
     
-    $self->add_track_to_state($_) foreach @$track_names;
+    my $remote;
+    foreach (@$track_names) {
+	$self->add_track_to_state($_);
+	$remote++ if /http|ftp|das/;
+    }
+    $self->init_remote_sources if $remote;
+    
     if ($segment) {
 	foreach my $track_name ( @$track_names ) {
 
@@ -974,12 +991,16 @@ sub region {
     # run any "find" plugins
     my $plugin_action  = $self->plugin_action || '';
     my $current_plugin = $self->current_plugin;
-    if ($current_plugin && $plugin_action eq $self->tr('Find') || 
-	$plugin_action eq 'Find') {
+    if ($current_plugin 
+	&& $plugin_action eq $self->tr('Find')
+	|| lc $plugin_action eq 'find') {
 	$region->features($self->plugin_find($current_plugin,$self->state->{name}));
     }
     elsif ($self->state->{ref}) { # a known region
 	$region->set_features_by_region(@{$self->state}{'ref','start','stop'});
+    }
+    elsif (my $features = $self->plugin_auto_find($self->state->{name})) {  # plugins with the auto_find() method defined
+	$region->features($features);
     }
     else { # a feature search
 	my $search   = $self->get_search_object();
@@ -1082,14 +1103,15 @@ sub init_plugins {
 
   my $plugins = $PLUGINS{$source} 
     ||= Bio::Graphics::Browser2::PluginSet->new($self->data_source,
-					       $self->state,
-					       $self->language,
-					       @plugin_path);
+						$self->state,
+						$self->language,
+						@plugin_path);
   $self->fatal_error("Could not initialize plugins") unless $plugins;
   $plugins->configure($self->db,
 		      $self->state,
 		      $self->language,
-		      $self->session);
+		      $self->session,
+		      $self->get_search_object);
   $self->plugins($plugins);
   $self->load_plugin_annotators();
 
@@ -1106,21 +1128,39 @@ sub plugin_action {
   if (param('plugin_do')) {
     $action = $self->tr(param('plugin_do')) || $self->tr('Go');
   }
-  $action ||= param('plugin_action');
+
+  $action   ||=  param('plugin_action');
+  $action   ||= 'find' if param('plugin_find');
+
   return $action;
 }
 
 sub current_plugin {
   my $self = shift;
-  my $plugin_base = param('plugin') or return;
+  my $plugin_base = param('plugin') || param('plugin_find') or return;
   $self->plugins->plugin($plugin_base);
+}
+
+sub plugin_auto_find {
+    my $self = shift;
+    my $search_string = shift;
+    my (@results,$found_one);
+
+    for my $plugin ($self->plugins->plugins) {  # not a typo
+	next unless $plugin->type eq 'finder' && $plugin->can('auto_find');
+	my $f = $plugin->auto_find($search_string);
+	next unless $f;
+	$found_one++;
+	push @results,@$f;
+    }
+    return $found_one ? \@results : undef;
 }
 
 sub plugin_find {
   my $self = shift;
   my ($plugin,$search_string) = @_;
 
-  my $settings = $self->state;
+  my $settings    = $self->state;
   my $plugin_name = $plugin->name;
   my ($results,$keyword) = $plugin->can('auto_find') && defined $search_string
                              ? $plugin->auto_find($search_string)
@@ -1135,6 +1175,7 @@ sub plugin_find {
   # Write informative information into the search box - not sure if this is the right thing to do.
   $settings->{name} = defined($search_string) ? $self->tr('Plugin_search_1',$search_string,$plugin_name)
                                               : $self->tr('Plugin_search_2',$plugin_name);
+  # do we really want to do this?!!
   $self->write_auto($results);
   return $results;
 }
@@ -1346,6 +1387,17 @@ sub do_plugin_dump {
 
     $plugin->dump( $segment, @additional_feature_sets );
     return 1;
+}
+
+#======================== remote sources ====================
+sub init_remote_sources {
+  my $self = shift;
+  my $remote_sources   = Bio::Graphics::Browser2::RemoteSet->new($self->data_source,
+                                                                $self->state,
+                                                                $self->language);
+  $remote_sources->add_files_from_state;
+  $self->remote_sources($remote_sources);
+  return $remote_sources;
 }
 
 # this generates the form that is sent to Galaxy
@@ -2231,6 +2283,7 @@ sub asynchronous_update_element {
     }
     elsif ( $element eq 'detail_panels' ) {
         $self->init_plugins();
+	$self->init_remote_sources();
         return join ' ',
             $self->render_detailview_panels( $self->region->seg );
     }
@@ -3224,10 +3277,10 @@ sub external_data {
 	my $rel2abs      = $search->coordinate_mapper($segment,1);
 	my $rel2abs_slow = $search->coordinate_mapper($segment,0);
 	eval {
-	    $self->plugins->annotate($meta_segment,$f,
-				     $rel2abs,$rel2abs_slow,$max_segment,
-				     $self->whole_segment,$self->region_segment);
-	} if $self->plugins;
+	    $_->annotate($meta_segment,$f,
+			 $rel2abs,$rel2abs_slow,$max_segment,
+			 $self->whole_segment,$self->region_segment);
+	} foreach ($self->plugins,$self->remote_sources);
     }
 
     warn "FEATURE files = ",join ' ',%$f if DEBUG;

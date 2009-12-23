@@ -1,7 +1,7 @@
 package Bio::Graphics::Browser2::PluginSet;
 # API for using plugins
 
-#  $Id: PluginSet.pm 22257 2009-11-16 15:11:04Z lstein $
+#  $Id: PluginSet.pm 22464 2009-12-23 21:00:15Z lstein $
 
 use strict;
 use Bio::Graphics::Browser2;
@@ -67,7 +67,7 @@ sub language {
 
 sub configure {
   my $self     = shift;
-  my ($database,$page_settings,$language,$session) = @_;
+  my ($database,$page_settings,$language,$session,$search) = @_;
   my $conf     = $self->config;
   my $plugins  = $self->plugins;
   my $conf_dir = $conf->globals->config_base;
@@ -82,6 +82,7 @@ sub configure {
       $p->config_path($conf_dir);
       $p->language($language);
       $p->page_settings($page_settings);
+      $p->db_search($search);
       $p->init();  # other initialization
 
       # retrieve persistent configuration

@@ -3,7 +3,7 @@
 
  Lincoln Stein <lincoln.stein@gmail.com>
  Ben Faga <ben.faga@gmail.com>
- $Id: controller.js 22409 2009-12-15 15:54:35Z lstein $
+ $Id: controller.js 22464 2009-12-23 21:00:15Z lstein $
 
 Indentation courtesy of Emacs javascript-mode 
 (http://mihai.bazon.net/projects/emacs-javascript-mode/javascript.el)
@@ -729,7 +729,10 @@ var GBrowseController = Class.create({
       return false; 
     }
     else if (plugin_type == 'finder'){
-        alert("Not Implemented Yet");
+        alert('Searching for ' + $F('landmark_search_field') + ' via ' + $F('plugin'));
+	document.searchform.plugin_find.value  = $F('plugin');
+	document.searchform.force_submit.value = 1;
+	document.searchform.submit();
     }
   }, // end plugin_go
 
