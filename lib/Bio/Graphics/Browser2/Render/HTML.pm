@@ -15,6 +15,7 @@ use Text::Tabs;
 use constant JS    => '/gbrowse/js';
 use constant ANNOTATION_EDIT_ROWS => 25;
 use constant ANNOTATION_EDIT_COLS => 100;
+use constant MAXIMUM_EDITABLE_UPLOAD => 1_000_000; # bytes
 use constant DEBUG => 0;
 
 use constant HAVE_SVG => eval "require GD::SVG; 1";
@@ -72,15 +73,15 @@ sub render_tabbed_pages {
     my $settings_title      = $self->tr('SETTINGS_PAGE');
 
     my $html = '';
-    $html   .= div({-id=>'tabbed_section',-class=>'tabbed'},
+    $html   .= div({-id=>'tabbed_section', -class=>'tabbed'},
 		   div({-id=>'tabbed_menu',-class=>'tabmenu'},
 		       span({id=>'main_page_select'},    $main_title),
 		       span({id=>'custom_tracks_page_select'},$custom_tracks_title),
 		       span({id=>'settings_page_select'},$settings_title)
 		   ),
-		   div({-id=>'main_page'},         $main_html),
-		   div({-id=>'custom_tracks_page'},$custom_tracks_html),
-		   div({-id=>'settings_page'},     $settings_html)
+		   div({-id=>'main_page',         -class=>'tabbody'}, $main_html),
+		   div({-id=>'custom_tracks_page',-class=>'tabbody'}, $custom_tracks_html),
+		   div({-id=>'settings_page',     -class=>'tabbody'}, $settings_html)
 	);
     return $html;
 }
@@ -146,7 +147,7 @@ sub render_navbar {
 
   return $self->toggle('Search',
 		       div({-class=>'searchbody'},
-			   table({-border=>0},
+			   table({-border=>0,-width=>'100%'},
 				 TR(td($search),td($plugin_form)),
 				 TR(td({-align=>'left'},
 				       $source_form,
@@ -268,7 +269,7 @@ sub render_html_head {
       foreach qw(controls.js autocomplete.js);
   }
 
-  if ($self->setting('login script')) {
+  if ($self->setting('user accounts')) {
     push @scripts,{src=>"$js/$_"}
       foreach qw(login.js);
   }
@@ -479,7 +480,7 @@ sub render_login {
 
     if ($session->private) {
         $html .= span({-style=>'float:right;font-weight:bold;color:black;'},
-                      'Welcome, '.$session->username.'.') . br() .
+                      'Welcome, '.$session->username) . br() .
                  span({-style       => $style,
 		       -title       => 'Click here to log out from '.$session->username.'',
 		       -onMouseDown => 'location.href=\'?id=logout\';',
@@ -492,7 +493,7 @@ sub render_login {
         $click .= 'load_login_balloon(event,\''.$session->id.'\',\'';
         $click .= $session->username.'\','.$session->using_openid.');';
     } else {
-        $title  = 'Click here to log in or create a new gbrowse account';
+        $title  = 'Click here to log in or create a new account. This will allow you to access your settings and uploaded tracks from multiple computers.';
         $text   = 'Log in / create account';
         $click .= 'load_login_balloon(event,\''.$session->id.'\',false,false);';
     }
@@ -581,7 +582,7 @@ sub render_actionmenu {
     my   @export_links=a({-href=>'?make_image=GD', -target=>'_blank'},     $self->tr('IMAGE_LINK'));
     push @export_links,a({-href=>'?make_image=GD::SVG',-target=>'_blank'}, $self->tr('SVG_LINK'))
 	if HAVE_SVG;
-    push @export_links,a({-href=>'?make_image=GD::SVG',-target=>'_blank'}, $self->tr('PDF_LINK'))
+    push @export_links,a({-href=>'?make_image=PDF',-target=>'_blank'}, $self->tr('PDF_LINK'))
 	if HAVE_SVG && $self->can_generate_pdf;
 
     push @export_links,a({-href=>$self->gff_dump_link},                    $self->tr('DUMP_GFF'));
@@ -593,11 +594,22 @@ sub render_actionmenu {
 			   -onMouseDown => "GBox.showTooltip(event,'url:?action=share_track;track=all')"},
 			  ($self->tr('SHARE_ALL') || "Share These Tracks" )),
 
-    my $help_link     = a({-href=>$self->general_help(),-target=>'help'},$self->tr('Help'));
+    my $help_link     = a({-href=>$self->general_help(),
+			   -target=>'_new'},$self->tr('HELP_WITH_BROWSER'));
+    my $about_gb_link    = a({-onMouseDown => "GBox.showTooltip(event,'url:?action=about_gbrowse')",
+			   -href        => 'javascript:void(0)',
+			   -style       => 'cursor:pointer'
+			  },
+			  $self->tr('ABOUT'));
+    my $about_dsn_link    = a({-onMouseDown => "GBox.showTooltip(event,'url:?action=about_dsn')",
+			       -href        => 'javascript:void(0)',
+			       -style       => 'cursor:pointer'
+			      },
+			      $self->tr('ABOUT_DSN'));
     my $plugin_link   = $self->plugin_links($self->plugins);
     my $reset_link    = a({-href=>'?reset=1',-class=>'reset_button'},    $self->tr('RESET'));
 
-    my $login = $self->setting('login script') ? $self->render_login : '';
+    my $login = $self->setting('user accounts') ? $self->render_login : '';
 
     my $file_menu = ul({-id    => 'actionmenu',
 			-class => 'dropdown downdown-horizontal'},
@@ -610,8 +622,13 @@ sub render_actionmenu {
 			     li($reset_link)
 			  )
 		       ),
-		       li({-class=>'dir'},'About',
-			  ul(li($help_link))),
+		       li({-class=>'dir'},$self->tr('HELP'),
+			  ul({-class=>'dropdown'},
+			     li($help_link),
+			     li({-class=>'divider'},''),
+			     li($about_gb_link),
+			     li($about_dsn_link),
+			  )),
 	);
     return div({-class=>'datatitle'},$file_menu.$login.br({-clear=>'all'}));
 }
@@ -735,7 +752,43 @@ sub render_track_table {
   my @labels     = $self->potential_tracks;
 
   warn "potential tracks = @labels" if DEBUG;
-  my %labels     = map {$_ => $self->label2key($_)}              @labels;
+
+  # add citation link and markup
+  my %labels;
+  for my $label (@labels) {
+   my $key = $self->label2key($label);
+   my ($link,$mouseover);
+   if ($label =~ /^plugin:/) {
+       $labels{$label} = $key;
+       next;
+       }
+   elsif ($label =~ /^file:/){
+       $link = "?Download%20File=$key";
+       }
+   else {
+       $link = "?display_citation=$label";#;source=" . $settings->{source};
+       my $cit_txt = citation( $source, $label, $self->language ) || '';
+       if ( length $cit_txt > 100) {
+   	$cit_txt =~ s/\<[^\>]+\>//g;     # truncate and strip tags for preview
+   	$cit_txt =~ s/(.{100}).+/$1/; 
+   	$cit_txt =~ s/\s+\S+$//; 
+   	$cit_txt =~ s/\'/\&\#39;/g;
+   	$cit_txt =~ s/\"/\&\#34;/g;
+        $cit_txt .= '... <i>Click for more</i>';
+        }
+        $mouseover = "<b>$key</b>: $cit_txt";
+        }
+   
+  my $balloon = $source->setting('balloon style') || 'GBubble';
+   
+  my @args = ( -href => $link, -target => 'citation');
+      push @args, -style => 'Font-style: italic' if $label =~ /^(http|ftp|file):/;
+      push @args, -onmouseover => "$balloon.showTooltip(event,'$mouseover')" if $mouseover;
+   
+  $labels{$label} = a({@args},$key);
+  }
+   
+  #my %labels     = map {$_ => $self->label2key($_)}              @labels;
   my @defaults   = grep {$settings->{features}{$_}{visible}  }   @labels;
 
   if (my $filter = $self->track_filter_plugin) {
@@ -962,9 +1015,9 @@ sub render_global_config {
                              grep {defined $_ && $_ > 0} ($region_size,@region_size);
     my $content
         = start_form( -name => 'display_settings', -id => 'display_settings' )
-        . div( {-class=>'searchbody'},
+        . div(
 	       table ({-border => 0, -cellspacing=>0, -width=>'100%'},
-		      TR( { -class => 'searchtitle' },
+		      TR(
 			  td( b(  checkbox(
 				      -name     => 'grid',
 				      -label    => $self->tr('SHOW_GRID'),
@@ -1002,7 +1055,7 @@ sub render_global_config {
 			      ),
 			  ),
 		      ),
-		      TR( { -class => 'searchtitle' },
+		      TR(
 			  td( $self->data_source->cache_time
 			      ? ( b(  checkbox(
 					  -name     => 'cache',
@@ -1037,7 +1090,7 @@ sub render_global_config {
 			      ),
 			  ),
 		      ),
-		      TR( { -class => 'searchtitle' },
+		      TR(
 			  td( { -align => 'left' },
 			      b(  checkbox(
 				      -name     => 'show_tooltips',
@@ -1064,7 +1117,7 @@ sub render_global_config {
 			      : (),
 			  ),
 		      ),
-		      TR( { -class => 'searchtitle' },
+		      TR(
 			  td( {   -colspan => 3,
 				  -align   => 'right'
 			      },
@@ -1076,11 +1129,32 @@ sub render_global_config {
     return div($content);
 }
 
+sub clear_highlights {
+    my $self = shift;
+    my $link = a({-style   => 'font-size:9pt',
+		  -href    => 'javascript:void(0)',
+		  -onClick => 'Controller.set_display_option("h_feat","_clear_");Controller.set_display_option("h_region","_clear_")'
+		 },
+		 $self->tr('CLEAR_HIGHLIGHTING'));
+}
+
+sub render_upload_share_section {
+    my $self = shift;
+    return $self->is_admin
+	? div(h2({-style=>'font-style:italic;background-color:yellow'}, # BUG: this is HTML - should not be here!!!
+		 'Admin mode: Uploaded tracks are public'),
+	      $self->render_toggle_userdata_table,
+	      $self->render_toggle_import_table)
+	: div($self->render_toggle_userdata_table,
+	      $self->render_toggle_import_table);
+}
+
 sub render_toggle_userdata_table {
     my $self = shift;
-    return h2('Uploaded Tracks').
-	div($self->render_userdata_table(),
-	    $self->userdata_upload()
+    return div(
+	h2({-style=>'margin: 0px 0px 0px 0px;padding:5px 0px 5px 0px'},'Uploaded Tracks'),
+	$self->render_userdata_table(),
+	$self->userdata_upload()
 	);
 }
 
@@ -1111,14 +1185,12 @@ sub list_userdata {
     my $self = shift;
     my $type = shift;
 
-    my $userdata = Bio::Graphics::Browser2::UserTracks->new($self->data_source,
-							   $self->state,
-							   $self->language);
+    my $userdata = $self->user_tracks();
 
     my $imported = $type eq 'imported' ? 1 : 0;
     my @tracks   = $userdata->tracks($imported);
     my %modified = map {$_ => $userdata->modified($_) } @tracks;
-    @tracks      = sort {$modified{$a}<=>$modified{$b}} @tracks;
+    @tracks      = sort @tracks;
 
     my $buttons = $self->data_source->globals->button_url;
     my $share   = "$buttons/share.png";
@@ -1127,6 +1199,15 @@ sub list_userdata {
     my $count = 0;
     my @rows = map {
 	my $name          = $_;
+	my $short_name    = $name;
+
+	if ($short_name =~ /http_([^_]+).+_gbgff_.+_t_(.+)_s_/) {
+	    my @tracks = split /\+/,$2;
+	    $short_name = "Shared track from $1 (@tracks)";
+	} elsif (length $short_name > 40) {
+	    $short_name       =~ s/^(.{40}).+/$1.../;
+	}
+
 	my $description   = div(
 	    {
 		-id              => "${name}_description",
@@ -1135,6 +1216,8 @@ sub list_userdata {
 	    },
 	    $userdata->description($_) || 'Click to add a description'
 	    );
+	my @track_labels        = $userdata->labels($name);
+	my $track_labels        = join '+',map {CGI::escape($_)} @track_labels;
 
 	my $status    = $userdata->status($name) || 'complete';
 	my $random_id = 'upload_'.int rand(9999);
@@ -1144,6 +1227,18 @@ sub list_userdata {
 	my @source_files  = $userdata->source_files($name);
 	my $download_data = 
 	    table({-class=>'padded-table'},
+		  TR([map {
+		      th({-align=>'left'},
+			 a({-href=>"?userdata_download=$_->[0];track=$name"},$_->[0])).
+			     td(scalar localtime($_->[2])).
+			     td($_->[1],'bytes').
+			     td(
+				 ($_->[1] <= MAXIMUM_EDITABLE_UPLOAD && -T $_->[3])
+				 ? a({-href    => "javascript:void(0)",
+				      -onClick => "editUploadData('$name','$_->[0]')"},'[edit]')
+				 : '&nbsp;'
+			     )
+		      } @source_files]),
 		  TR(th({-align=>'left'},
 			(a({-href=>"?userdata_download=conf;track=$name"},'Configuration'))),
 		     td(scalar localtime $conf_modified),
@@ -1151,34 +1246,39 @@ sub list_userdata {
 		     td(a({-href    => "javascript:void(0)",
 			   -onClick => "editUploadConf('$name')"},'[edit]'))
 		  ),
-		  TR([map { th({-align=>'left'},
-			       a({-href=>"?userdata_download=$_->[0];track=$name"},$_->[0])).
-				td(scalar localtime($_->[2])).
-				td($_->[1],'bytes').
-				td(a({-href    => "javascript:void(0)",
-				      -onClick => "editUploadData('$name','$_->[0]')"},'[edit]'))
-				,
-		      } @source_files]));
-		  
-	my $go_there      = a({-href    => 'javascript:void(0)',
-			       -onClick => 
-				   qq(Controller.select_tab('main_page');Controller.scroll_to_matching_track("$name"))},
-			      '[View track]');
+	    );
+
+
+	my $go_there = join(' ',
+			    map {
+				my $label = $_;
+				my $key   = $self->data_source->setting($label=>'key');
+				'['
+				    .a({-href    => 'javascript:void(0)',
+					-onClick => 
+					    qq(Controller.select_tab('main_page');Controller.scroll_to_matching_track("$label"))},
+				       b($key))
+				    .']'
+			    } @track_labels);
 	
 	my $color         = $count++%2 ? 'paleturquoise': 'lightblue';
 
 	div({-style=>"background-color:$color"},
 	    div({-id=>"${name}_stat"},''),
-#	    img({-src=>$share,
-#		 -onMouseOver => 'GBubble.showTooltip(event,"Share with other users",0)',
-#		 -onClick     => 'GBubble.showTooltip(event,"Sorry, not yet implemented",0)',
-#		}),
 	    img({-src     => $delete,
 		 -style   => 'cursor:pointer',
 		 -onMouseOver => 'GBubble.showTooltip(event,"Delete",0,100)',
 		 -onClick     => "deleteUploadTrack('$name')"
-		}
-	    ),'&nbsp;',b($name),$go_there,br(), 
+		},'&nbsp;',
+	    ($type eq 'uploaded') 
+		? img({-src=>$share,
+		 -style   => 'cursor:pointer',
+		 -onMouseOver => 'GBubble.showTooltip(event,"Share with other users",0)',
+		 -onClick     => "GBox.showTooltip(event,'url:?action=share_track;track=$track_labels')"
+		})
+	        : '',
+	    ),'&nbsp;',
+	    b($short_name),$go_there,br(), 
 	    i($description),
 	    div({-style=>'padding-left:10em'},
 		b('Source files:'),
@@ -1296,7 +1396,12 @@ sub tableize {
     $html .= qq(<tr class="searchtitle">);
     $html .= "<td><b>$row_labels[$row]</b></td>" if @row_labels;
     for (my $column=0;$column<$columns;$column++) {
-      $html .= td({-width=>$cwidth},$array->[$column*$rows + $row] || '&nbsp;');
+      my $checkbox = $array->[$column*$rows + $row] || '&nbsp;';
+
+      # de-couple the checkbox and label click behaviors
+      $checkbox =~ s/\<\/?label\>//gi;
+
+      $html .= td({-width=>$cwidth},$checkbox);
     }
     $html .= "</tr>\n";
   }
@@ -1670,15 +1775,32 @@ sub track_config {
     my $override = $state->{features}{$slabel}{override_settings}||{};
     my $return_html = start_html();
 
-    # truncate too-long citations
-    my $cit_txt = citation( $data_source, $slabel, $self->language ) || ''; #$self->tr('NO_CITATION');
-
-    if (my ($lim) = $slabel =~ /\:(\d+)$/) {
-	$key .= " (at >$lim bp)";
+    # citation info:
+    my $cit_txt = citation( $data_source, $slabel, $self->language ) || '';
+    my $cit_html;
+    my $cit_link = '';
+     
+    # For verbose citations, add a link to a new window
+    if (length $cit_txt > 512) {
+       $cit_link = "?display_citation=$label";
+       $cit_link =~ s!gbrowse\?!gbrowse/$state->{source}/\?!;
+       $cit_link = a(
+    	    {
+    	      -href    => $cit_link, 
+    	      -target  => "citation", #'_NEW',
+    	      -onclick => 'GBox.hideTooltip(1)'
+    		},
+    	    'Click here to display in new window...');    
+       $cit_link = p($cit_link);
+                               }
+    if ( length $cit_txt > 70 ) {
+       $cit_html = $self->toggle_section({on => undef},'citation_text','Track Information',$cit_link||br,$cit_txt);
+                                }
+    else {
+      $cit_html = $cit_txt;
     }
 
-    $cit_txt =~ s/(.{512}).+/$1\.\.\./;
-    my $citation = h4($key) . p($cit_txt);
+    $cit_html = div({-style => 'background:gainsboro;padding:5px'},$cit_html);
 
     my $height   = $data_source->semantic_fallback_setting( $label => 'height' ,        $length)    || 5;
     my $width    = $data_source->semantic_fallback_setting( $label => 'linewidth',      $length )   || 1;
@@ -1694,7 +1816,8 @@ sub track_config {
     @glyph_select = $glyph =~ /wiggle/ ? qw(wiggle_xyplot wiggle_density wiggle_box)
                                        : qw(arrow anchored_arrow box crossbox dashed_line diamond 
                                          dna dot dumbbell ellipse
-                                         ex line primers saw_teeth segments span splice_site translation triangle
+                                         ex gene line primers saw_teeth segments 
+                                         span splice_site translation transcript triangle
                                          two_bolts wave) unless @glyph_select;
     unshift @glyph_select,$dynamic if ref $data_source->fallback_setting($label=>'glyph') eq 'CODE';
 
@@ -1723,6 +1846,7 @@ END
 
     $form .= table(
         { -border => 0 },
+        TR( td( {-colspan => 2}, $cit_html)),
         TR( th( { -align => 'right' }, $self->tr('Show') ),
             td( checkbox(
                     -name     => 'show_track',
@@ -1842,7 +1966,7 @@ END
     $form .= end_form();
 
     $return_html
-        .= table( TR( td( { -valign => 'top' }, [ $citation, $form ] ) ) );
+        .= table( TR( td( { -valign => 'top' }, [ $form ] ) ) );
     $return_html .= end_html();
     return $return_html;
 }
@@ -1858,6 +1982,7 @@ sub select_subtracks {
 
     my $select_options = $data_source->setting($label=>'select');
     my ($method,@values) = shellwords($select_options);
+    foreach (@values) {s/#.+$//}  # get rid of comments
 
     my $filter = $state->{features}{$label}{filter};
 
@@ -1893,34 +2018,48 @@ sub share_track {
     my $label = shift;
 
     my $state = $self->state();
+    my $source = $self->data_source;
+
+    (my $lbase = $label) =~ s/:\w+$//;
 
     my $description;
     my $labels;
+    my $usertracks_present;
+
     my @visible
         = grep { $state->{features}{$_}{visible} && !/:(overview|region)$/ }
         @{ $state->{tracks} };
 
     if ( $label eq 'all' ) {
+	for my $l (@visible) {
+	    $usertracks_present ||= $source->is_usertrack($l);
+	}
         $labels = join '+', map { CGI::escape($_) } @visible;
         $description = 'all selected tracks';
     }
     else {
-        $description = $self->setting( $label => 'key' ) || $label;
+        $description = $self->setting( $label => 'key' ) 
+	    || $self->setting( $lbase => 'key')
+	    || $label;
+	$usertracks_present ||= $source->is_usertrack($label);
         $labels = $label;
     }
+
+    my $base = url(-full=>1,-path_info=>1);
 
     my $gbgff;
     my $segment = $label =~  /:region$/   ? '$region'
                  :$label =~  /:overview$/ ? '$overview'
                  :'$segment';
     my $upload_id = $state->{uploadid} || $state->{userid};
-    if ( $label =~ /^(http|ftp):/ ) {    # reexporting and imported track!
-        $gbgff = $label;
+    if ( $label =~ /^(http|ftp)/ ) {    # reexporting an imported track!
+        $gbgff   = $source->setting($label=>'remote feature');
+        $gbgff ||= $source->setting($lbase=>'remote feature');
     }
     else {
-        $gbgff = url( -full => 1, -path_info => 1 );
+        $gbgff  = $base;
         $gbgff .= "?gbgff=1;q=$segment;t=$labels;s=1";
-        $gbgff .= ";id=$upload_id" if $labels =~ /file(:|%3A)/;
+        $gbgff .= ";uuid=$upload_id" if $usertracks_present;
     }
 
     my $das_types = join( ';',
@@ -1937,25 +2076,43 @@ sub share_track {
     $das .= "?$das_types";
 
     my $return_html = start_html();
-    $return_html .= h1( $self->tr( 'SHARE', $description ) )
-        . p(
-        $self->tr(
-            $label eq 'all'
-            ? 'SHARE_INSTRUCTIONS_ALL_TRACKS'
-            : 'SHARE_INSTRUCTIONS_ONE_TRACK'
-        )
-        )
-        . br()
-	. b('GBrowse URL: ') 
-	. br()
-	. p( textfield(
-            -style    => 'background-color: wheat',
-            -readonly => 1,
-            -value    => $gbgff,
-            -size     => 56,
-            -onFocus  => 'this.select()',
-            -onSelect => 'this.select()' )
-	);
+    $return_html .= h1( $self->tr( 'SHARE', $description ) );
+
+    if ($label ne 'all' && $label !~ /^(http|ftp)/) {
+	
+	my $shared;
+	if ($source->is_usertrack($label)) {
+	    (my $escaped = $gbgff) =~ s/;/%251D/g;
+	    $shared = "$base?eurl=$escaped";
+	} else {
+	    $shared="$base?label=$label";
+	}
+
+	$return_html .= p(
+	    $self->tr('SHARE_INSTRUCTIONS_BOOKMARK'),br(),
+	    textfield(
+		-style    => 'background-color: wheat',
+		-readonly => 1,
+		-value    => $shared,
+		-size     => 65,
+		-onClick  => 'this.select()'
+	    )
+	    )
+    }
+
+    $return_html .=
+	p(
+	    $self->tr(
+		$label eq 'all'
+		? 'SHARE_INSTRUCTIONS_ALL_TRACKS'
+		: 'SHARE_INSTRUCTIONS_ONE_TRACK'
+	    ),br(),
+	    textfield(
+		-style    => 'background-color: wheat',
+		-readonly => 1,
+		-value    => $gbgff,
+		-size     => 65,
+		-onClick  => 'this.select()'));
 
     if ($das_types) {
         $return_html .= p(
@@ -2117,6 +2274,44 @@ sub format_autocomplete {
     }
     $html .= "</ul>\n";
     return $html;
+}
+
+## Truncated version (of track_config) to for displaying citation only:
+sub display_citation {
+    my $self        = shift;
+    my $label       = shift;
+    my $state       = $self->state();
+    my $data_source = $self->data_source();
+    my $length      = $self->thin_segment->length;
+    my $slabel      = $data_source->semantic_label($label,$length);
+ 
+    my $key = $self->label2key($slabel);
+ 
+    my @stylesheets;
+    my @style = shellwords($self->setting('stylesheet') || '/gbrowse2/gbrowse.css');
+     for my $s (@style) {
+      my ($url,$media) = $s =~ /^([^\(]+)(?:\((.+)\))?/;
+      $media ||= 'all';
+      push @stylesheets, CGI::Link({-rel=>'stylesheet',
+ 				    -type=>'text/css',
+ 				    -href=>$self->globals->resolve_path($url,'url'),
+ 				    -media=>$media});
+     }
+ 				
+   my $return_html = start_html(-title => $key, -head => \@stylesheets);
+   my $cit_txt = citation( $data_source, $label, $self->language ) || $self->tr('NO_CITATION');
+     
+   if (my ($lim) = $slabel =~ /\:(\d+)$/) {
+        $key .= " (at >$lim bp)";
+   }
+     
+   my $citation = div({-class => 'searchbody', -style => 'padding:10px;width:70%'}, h4($key), $cit_txt);
+     
+ 
+   $return_html
+           .= table( TR( td( { -valign => 'top' }, $citation ) ) );
+   $return_html .= end_html();
+   return $return_html;
 }
 
 1;

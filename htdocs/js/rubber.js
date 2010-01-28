@@ -3,7 +3,7 @@
  rubber.js -- a base class for drag/rubber-band selection in gbrowse
 
  Sheldon McKay <mckays@cshl.edu>
- $Id: rubber.js 22286 2009-11-20 21:43:52Z lstein $
+ $Id: rubber.js 22594 2010-01-21 16:55:15Z lstein $
 
 */
 
@@ -270,7 +270,7 @@ SelectArea.prototype.moveRubber = function(event) {
   }
 
   // reset the value of the 'name' input box
-  self.currentSegment = self.ref +':'+self.selectSequenceStart+'..'+self.selectSequenceEnd;
+  self.currentSegment = self.ref +':'+self.selectSequenceStart+'..'+(self.selectSequenceEnd-1);
   document.searchform.name.value = self.currentSegment;
 
   // size and appearance of the "rubber band" select box

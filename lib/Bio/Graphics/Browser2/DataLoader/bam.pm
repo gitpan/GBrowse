@@ -1,6 +1,6 @@
 package Bio::Graphics::Browser2::DataLoader::bam;
 
-# $Id: bam.pm 22407 2009-12-14 20:18:06Z lstein $
+# $Id: bam.pm 22606 2010-01-25 00:00:13Z lstein $
 use strict;
 use base 'Bio::Graphics::Browser2::DataLoader';
 use File::Basename 'basename','dirname';
@@ -18,6 +18,7 @@ sub create_conf_file {
 
     # find a fasta file to use
     my $fasta  = $self->get_fasta_file || '';
+    my $category = $self->category;
 
     print $conf <<END;
 [$loadid:database]
@@ -50,7 +51,7 @@ bgcolor        = blue
 fgcolor        = blue
 height         = 3
 label          = sub {shift->display_name}
-category       = My Tracks:Uploaded Tracks
+category       = $category
 label density = 50
 bump          = fast
 key           = $filename
@@ -85,6 +86,8 @@ sub load {
 	mkdir $self->sources_path or die $!;
 	my $source_file = IO::File->new(
 	    File::Spec->catfile($self->sources_path,$self->track_name),'>');
+
+	warn "sourcefile=",File::Spec->catfile($self->sources_path,$self->track_name);
 
 	$self->start_load;
 

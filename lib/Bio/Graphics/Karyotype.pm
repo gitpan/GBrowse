@@ -1,6 +1,6 @@
 package Bio::Graphics::Karyotype;
 
-# $Id: Karyotype.pm 22460 2009-12-23 19:01:05Z lstein $
+# $Id: Karyotype.pm 22566 2010-01-17 23:59:49Z lstein $
 # Utility class to create a display of a karyotype and a series of "hits" on the individual chromosomes
 # Used for searching
 
@@ -355,7 +355,7 @@ sub hits_table {
 	    -onMouseOut =>"k_unhilite_feature(this)",
 	   },
 	   th({-align=>'left'},a({-href=>$link},$name)),
-	   td($_->method),
+	   td(eval{$_->method} || 'region'),
 	   td($desc),
 	   td(a({-href=>"$url$pos"},$pos)),
 	   td($_->score || $na)
@@ -372,7 +372,7 @@ sub hits_table {
     return 
 	b($count),
 	div({-id=>'scrolling_table',-style=>'cursor:default'},
-	    table({-class=>'searchbody',-style=>'width:98.8%'}, #firefox display problems
+	    table({-class=>'searchbody',-style=>'width:95%'}, #firefox display problems
 		  TR(
 		      th({-align=>'left'},
 			 [$self->trans('NAME'),

@@ -1,12 +1,13 @@
 package Bio::Graphics::Browser2::DataLoader;
-# $Id: DataLoader.pm 22440 2009-12-21 16:54:27Z lstein $
+# $Id: DataLoader.pm 22606 2010-01-25 00:00:13Z lstein $
 
 use strict;
 use IO::File;
 use Carp 'croak';
 
 # for mysql to work, you must do something like this:
-# grant create on `userdata_%`.* to www-data@localhost
+# grant create on `userdata\_%`.* to 'www-data'@localhost
+# NOTICE the backticks around `userdata\_%` !!
 
 sub new {
     my $class = shift;
@@ -28,6 +29,18 @@ sub conf_path  { shift->{conf} }
 sub conf_fh    { shift->{conf_fh}  }
 sub settings   { shift->{settings} }
 sub loadid     { shift->{loadid}   }
+sub force_category {
+    my $self = shift;
+    my $d    = $self->{category};
+    $self->{category} = shift if @_;
+    return $d;
+}
+sub eol_char   {
+    my $self = shift;
+    my $d    = $self->{eol_char};
+    $self->{eol_char} = shift if @_;
+    return $d;
+}
 sub setting {
     my $self   = shift;
     my $option = shift;
@@ -35,15 +48,18 @@ sub setting {
 }
 sub busy_path {
     my $self = shift;
-    return File::Spec->catfile($self->data_path,Bio::Graphics::Browser2::UserTracks->busy_file_name);
+    return File::Spec->catfile($self->data_path,
+			       Bio::Graphics::Browser2::UserTracks->busy_file_name);
 }
 sub status_path {
     my $self = shift;
-    return File::Spec->catfile($self->data_path,Bio::Graphics::Browser2::UserTracks->status_file_name);
+    return File::Spec->catfile($self->data_path,
+			       Bio::Graphics::Browser2::UserTracks->status_file_name);
 }
 sub sources_path {
     my $self = shift;
-    return File::Spec->catfile($self->data_path,Bio::Graphics::Browser2::UserTracks->sources_dir_name);
+    return File::Spec->catfile($self->data_path,
+			       Bio::Graphics::Browser2::UserTracks->sources_dir_name);
 }
 
 sub set_status {
@@ -101,18 +117,25 @@ sub load {
 	$self->start_load;
 
 	$self->set_status('load data');
-	foreach (@$initial_lines) {
-	    $source_file->print($_) if $source_file;
-	    $self->load_line($_);
+
+	my $eol   = $self->eol_char;
+	{
+	    local $/  = $eol if $eol;
+
+	    foreach (@$initial_lines) {
+		$source_file->print($_) if $source_file;
+		$self->load_line($_);
+	    }
+
+	    my $count = @$initial_lines;
+	    while (<$fh>) {
+		$source_file->print($_) if $source_file;
+		$self->load_line($_);
+		$self->set_status("loaded $count lines") if $count++ % 1000;
+	    }
+	    $source_file->close;
 	}
 
-	my $count = @$initial_lines;
-	while (<$fh>) {
-	    $source_file->print($_) if $source_file;
-	    $self->load_line($_);
-	    $self->set_status("loaded $count lines") if $count++ % 1000;
-	}
-	$source_file->close;
 	$self->finish_load;
 	$self->close_conf;
     };
@@ -175,6 +198,11 @@ sub load_line {
     croak "virtual base class";
 }
 
+sub category {
+    my $self = shift;
+    return $self->force_category || "My Tracks:Uploaded Tracks:".$self->track_name;
+}
+
 sub backend {
     my $self = shift;
     my $backend   = $self->setting('userdb_adaptor') || $self->guess_backend;
@@ -206,27 +234,24 @@ sub create_database {
     if ($backend eq 'DBI::mysql') {
 	my @components = split '/',$data_path;
 	my $db_name    = 'userdata_'.join '_',@components[-3,-2,-1];
+	$db_name       =~ s/[^a-zA-Z0-9_-]/_/g;
 	$data_path     = $db_name;
 	$self->dsn($db_name);
-	my $db_host    = $self->setting('userdb_host') || 'localhost';
-	my $db_user    = $self->setting('userdb_user') || '';
-	my $db_pass    = $self->setting('userdb_pass') || '';
-	eval "require DBI" unless DBI->can('connect');
-	my $dsn        = 'dbi:mysql:';
-	$dsn          .= 'host=$db_host' if $db_host;
+	my $mysql_admin = $self->mysql_admin;
 
 	my $mysql_usage = <<END;
 For mysql to work as a backend to stored user data, you must set up the server
 so that the web server user (e.g. "www-data") has the privileges to create databases
 named "userdata_*". The usual way to do this is with the mysql shell:
 
- mysql> grant create on `userdata_%`.* to www-data\@localhost
+ mysql> grant create on `userdata\_%`.* to www-data\@localhost
 END
 
-	my $dbh = DBI->connect($dsn)
-	    or die DBI->errstr,'  ',$mysql_usage;
-	$dbh->do("create database $data_path")
-	    or die "Could not create $data_path:",DBI->errstr,'. ',$mysql_usage,;
+	my $dbh = DBI->connect($mysql_admin)
+	    or die DBI->errstr,".\n",$mysql_usage;
+	$dbh->do("drop database if exists `$data_path`");
+	$dbh->do("create database `$data_path`")
+	    or die "Could not create $data_path:",DBI->errstr,".\n",$mysql_usage,;
 		 
     } elsif ($backend eq 'DBI::SQLite') {
 	$self->dsn(File::Spec->catfile($data_path,'index.SQLite'));
@@ -237,6 +262,44 @@ END
     return Bio::DB::SeqFeature::Store->new(-adaptor=> $backend,
 					   -dsn    => $self->dsn,
 					   -create => 1);
+}
+
+sub drop_databases {
+    my $self = shift;
+    my $conf_path = shift;
+    # hacky job here - just drop anything that looks like a mysql database
+    my (@dsns,$using_mysql);
+    open my $f,$conf_path or (warn "Couldn't open $conf_path: $!" && return);
+    while (<$f>) {
+	if (/-adaptor/) {
+	    $using_mysql = /DBI::mysql/;
+	}
+	push @dsns,$1 if /-dsn\s+(.+)/i && $using_mysql;
+    }
+    close $f;
+    
+    for my $dsn (@dsns) {
+	eval "require DBI" unless DBI->can('connect');
+	my $mysql_admin  = $self->mysql_admin;
+	my $dbh = DBI->connect($mysql_admin)
+	    or die DBI->errstr;
+	$dbh->do("drop database `$dsn`")
+	    or die "Could not drop $dsn:",DBI->errstr;
+    }
+}
+
+sub mysql_admin {
+    my $self = shift;
+    my $db_host    = $self->setting('userdb_host') || 'localhost';
+    my $db_user    = $self->setting('userdb_user') || '';
+    my $db_pass    = $self->setting('userdb_pass') || '';
+    eval "require DBI" unless DBI->can('connect');
+    my $dsn        = 'DBI:mysql:';
+    my @options;
+    push @options,"host=$db_host"     if $db_host;
+    push @options,"user=$db_user"     if $db_user;
+    push @options,"password=$db_pass" if $db_pass;
+    return $dsn . join ';',@options;
 }
 
 1;

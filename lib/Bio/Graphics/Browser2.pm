@@ -1,5 +1,5 @@
 package Bio::Graphics::Browser2;
-# $Id: Browser2.pm 22468 2009-12-23 21:53:20Z lstein $
+# $Id: Browser2.pm 22606 2010-01-25 00:00:13Z lstein $
 # Globals and utilities for GBrowse and friends
 
 use strict;
@@ -15,12 +15,11 @@ use Bio::Graphics::Browser2::DataSource;
 use Bio::Graphics::Browser2::Session;
 use GBrowse::ConfigData;
 use Carp 'croak','carp';
-use CGI 'redirect','url';
 
 use constant DEFAULT_MASTER => 'GBrowse.conf';
 
-my %CONFIG_CACHE;
-our $VERSION = 1.9990;
+my (%CONFIG_CACHE,$HAS_DBFILE,$HAS_STORABLE);
+our $VERSION = '2.00';
 
 sub open_globals {
     my $self = shift;
@@ -210,10 +209,28 @@ sub url_fetch_max_size     { shift->setting(general=>'url_fetch_max_size')      
 sub application_name       { shift->setting(general=>'application_name')      || 'GBrowse'                    }
 sub application_name_long  { shift->setting(general=>'application_name_long') || 'The Generic Genome Browser' }
 sub email_address          { shift->setting(general=>'email_address')         || 'noreply@gbrowse.com'        }
-sub smtp                   { shift->setting(general=>'smtp')                  || 'smtp.res.oicr.on.ca'        }
+sub smtp                   { shift->setting(general=>'smtp_gateway')          || 'smtp.res.oicr.on.ca'        }
+sub user_account_db        { shift->setting(general=>'user_account_db')       
+				   || 'DBI:mysql:gbrowse_login;user=gbrowse;password=gbrowse'  }
+sub admin_account          { shift->setting(general=>'admin_account') }
+sub admin_dbs              { shift->setting(general=>'admin_dbs')     }
 
-sub session_driver         { shift->setting(general=>'session driver') 
-				 || 'driver:file;serializer:default' }
+sub session_driver {
+    my $self = shift;
+    my $driver = $self->setting(general=>'session driver');
+    return $driver if $driver;
+
+    $HAS_DBFILE = eval "require DB_File; 1" || 0
+	unless defined $HAS_DBFILE;
+    $HAS_STORABLE = eval "require Storable; 1" || 0
+	unless defined $HAS_STORABLE;
+
+    my $sdriver    = $HAS_DBFILE ? 'db_file' : 'file';
+    my $serializer = $HAS_STORABLE ? 'storable' : 'default';
+
+    return "driver:$sdriver;serializer:$serializer";
+}
+
 sub session_args    {
   my $self = shift;
   my %args = shellwords($self->setting(general=>'session args')||'');
@@ -249,7 +266,16 @@ sub create_data_source {
   my $self = shift;
   my $dsn  = shift;
   my $path = $self->data_source_path($dsn) or return;
-  return Bio::Graphics::Browser2::DataSource->new($path,$dsn,$self->data_source_description($dsn),$self);
+  my $source = Bio::Graphics::Browser2::DataSource->new($path,
+							$dsn,
+							$self->data_source_description($dsn),
+							$self) or return;
+  if (my $adbs = $self->admin_dbs) {
+      my $path  = File::Spec->catfile($adbs,$dsn);
+      my $expr = "$path/*/*.conf";
+      $source->add_conf_files($expr);
+  }
+  return $source;
 }
 
 sub default_source {

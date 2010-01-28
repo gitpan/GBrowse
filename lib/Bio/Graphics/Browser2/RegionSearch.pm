@@ -9,7 +9,7 @@ use Bio::Graphics::Browser2::Util 'shellwords';
 use Bio::Graphics::Browser2::Render::Slave::Status;
 use LWP::UserAgent;
 use HTTP::Request::Common 'POST';
-use Carp 'cluck';
+use Carp 'cluck','croak';
 use Storable 'nfreeze','thaw';
 
 use constant DEBUG => 0;
@@ -57,7 +57,7 @@ Create a new RegionSearch object. Required parameters are:
 
         state         The page_settings document describing the
                       current state of the user session (for
-                      looking up search options and the like in the
+                      looking up search_options and the like in the
                       future).
 
 =cut
@@ -112,9 +112,10 @@ sub init_databases {
 	    my @remotes  = shellwords($remote);
 	    $remote = $slave_status->select(@remotes);
 	}
+
 	my ($dbid)         = $source->db_settings($l);
-	next if $state->{dbid} && $state->{dbid} ne $dbid;
-	my $search_options = $source->setting($dbid => 'search options') || '';
+
+	my $search_options = $source->search_options($dbid);
 
 	# this can't be right - we need to do id searches
 	# next if $search_options eq 'none';  
@@ -123,9 +124,9 @@ sub init_databases {
 	$dbs{$dbid}{remotes}{$remote}++ if $remote;
     }
 
-    my $default_dbid = $self->source->global_setting('database');
-    $default_dbid  ||= '';
-    $default_dbid   .= ":database" unless $default_dbid =~ /:database$/;
+    # slightly roundabout way to get the default dbid, but this allows you
+    # to handle anonymous (unnamed) databases consistently.
+    my $default_dbid = $self->source->default_dbid;
 
     # try to spread the work out as much as possible among the remote renderers
     my %remotes;
@@ -141,15 +142,7 @@ sub init_databases {
 	}
 	
 	if (!$can_remote || $dbs{$dbid}{options} =~ /(?<!-)autocomplete/) {
-	    my $db = $source->open_database($dbid);
-	    $self->{local_dbs}{$db} ||= 
-		Bio::Graphics::Browser2::Region->new(
-		    { source     => $source,
-		      state      => $self->state,
-		      db         => $db,
-		      searchopts => $dbs{$dbid}{options}
-		    }
-		);
+	    $self->{local_dbs}{$dbid}++;
 	}
     }
 }
@@ -270,12 +263,14 @@ sub search_features {
 
     @found = grep {
 	defined $_ 
-	    && !$seenit{($_->name||''),
-			$_->primary_tag,
-			$_->seq_id,
-			$_->start,
-			$_->end,
-			$_->strand}++} @found;
+	    && !$seenit{
+		((lc $_->seq_id eq $state->{name}) # this hack gives special privileges to matches to seq_ids
+		 ? 'region' 
+		 : $_->primary_tag),
+		 $_->seq_id,
+		 $_->start,
+		 $_->end,
+		 $_->strand}++} @found;
     return wantarray ? @found : \@found;
 }
 
@@ -292,6 +287,7 @@ sub search_features_locally {
     ref $args && %$args or return;
 
     my $state       = $self->state;
+    my $source      = $self->source;
 
     my @found;
 
@@ -299,42 +295,43 @@ sub search_features_locally {
     my $local_dbs = $self->local_dbs;
     return unless $local_dbs;
 
-    my @dbs = keys %{$local_dbs};
+    warn "local dbs = ",join ' ',keys %{$local_dbs} if DEBUG;
+
+    my @dbids = $state->{dbid} ? $state->{dbid} 
+	                       : keys %{$local_dbs};
 
     # the default database is treated slightly differently - it is searched
     # first, and finding a hit in it short-circuits other hits
-    my $default_dbid = $self->source->global_setting('database');
-    $default_dbid  ||= '';
-    $default_dbid   .= ":database" unless $default_dbid =~ /:database$/;
+    my $default_dbid = $self->source->default_dbid;
 
-    warn "default_dbid = $default_dbid" if DEBUG;
+    @dbids = sort {$a eq $default_dbid ? -1 
+                  :$b eq $default_dbid ? +1
+                  :0} @dbids;
 
-    my %is_default = map {
-	$_=>($self->source->db2id($_) eq $default_dbid)
-    } @dbs;
-    @dbs           = sort {$is_default{$b} cmp $is_default{$a}} @dbs;
+    warn "dbs = @dbids" if DEBUG;
+    my %seenit;
 
-    for my $db (@dbs) {
-	my $dbid = $self->source->db2id($db);
-	next if ($state->{dbid} && $state->{dbid} ne $dbid); #if we have dbid param, search only that database 
+    for my $dbid (@dbids) {
 	warn "searching in ",$dbid if DEBUG;
-	# allow explicit db_id to override cached list of local dbs
-	my $region   = $local_dbs->{$db} || 
-	    Bio::Graphics::Browser2::Region->new(
-						{ source  => $self->source,
-						  state   => $self->state,
-						  db      => $db,
-						  }
-						); 
+	my $db = $self->source->open_database($dbid);
+	next if $seenit{$db}++;
+	my $region   = Bio::Graphics::Browser2::Region->new(
+	    { source     => $self->source,
+	      state      => $self->state,
+	      db         => $db,
+	      searchopts => $self->source->search_options($dbid),
+	    }
+	    ); 
  	my $features = $region->search_features($args);
+	warn $features ? "got @$features" : "got no features" if DEBUG;
 	next unless $features && @$features;
-	$self->add_dbid_to_features($db,$features);
+	$self->add_dbid_to_features($dbid,$features);
 	push @found,@$features;
 
-	if ($is_default{$db}) {
+	if ($dbid eq $default_dbid) {
 	    warn "hit @found in the default database, so short-circuiting" if DEBUG;
 	    $self->{shortcircuit}++;
-	    last;
+#	    last;
 	}
     }
 
@@ -479,11 +476,11 @@ Add a gbrowse_dbid() method to each of the features in the list.
 =cut
 
 sub add_dbid_to_features {
-    my $self           = shift;
-    my ($db,$features) = @_;
+    my $self             = shift;
+    my ($dbid,$features) = @_;
     return unless $features;
     my $source = $self->source;
-    my $dbid   = $source->db2id($db);
+    cluck "$dbid is not a dbid" if ref $dbid;
     $source->add_dbid_to_feature($_,$dbid) foreach @$features;
 }
 
@@ -565,9 +562,13 @@ sub features_by_prefix {
     # only local databases for now
     my $local_dbs = $self->local_dbs;
     my (@f,$count);
-    for my $region (values %{$local_dbs}) {
-	next unless $region->searchopts->{autocomplete};
-	my $db = $region->db;
+    my $source = $self->source;
+    for my $dbid (keys %{$local_dbs}) {
+	my $options = 
+	    Bio::Graphics::Browser2::Region->parse_searchopts($source->search_options($dbid));
+	next unless $options && $options->{autocomplete};
+
+	my $db = $source->open_database($dbid);
 	eval {
 	    my $i = $db->get_seq_stream(-name=>"${match}*",
 					-aliases=>1);

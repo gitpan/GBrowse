@@ -55,10 +55,12 @@ END
    SVG_LINK   => '...high-res image',
 
    PDF_LINK   => '...PDF',
-
+   
    DUMP_GFF   => '...GFF annotation table',
 
    DUMP_SEQ   => '...FASTA sequence file',
+
+   FILTER     => 'Filter',
 
    SVG_DESCRIPTION => <<END,
 <p>
@@ -163,11 +165,17 @@ END
 
    HELP     => 'Help',
 
-   HELP_FORMAT => 'Help with File Format',
+   HELP_WITH_BROWSER     => 'Help with this browser',
+
+   HELP_FORMAT => 'Help with uploading',
 
    CANCEL   => 'Cancel',
 
-   ABOUT    => 'About...',
+   ABOUT    => 'About GBrowse...',
+
+   ABOUT_DSN    => 'About this database...',
+
+   ABOUT_NAME   => 'About <i>%s</i>...',
 
    REDISPLAY   => 'Redisplay',
 
@@ -474,7 +482,7 @@ END
 
  KILL_THIS_TRACK    => '<b>Turn off this track.</b>',
 
- CONFIGURE_THIS_TRACK   => '<b class="error">Configure this track.</b>',
+ CONFIGURE_THIS_TRACK   => '<b>Click to configure this track.</b>',
 
  SUBTRACKS_SHOWN    => 'This track contains selectable subtracks:',
 
@@ -488,26 +496,27 @@ END
 
  SHARE              => 'Share %s',
 
+ SHARE_INSTRUCTIONS_BOOKMARK => <<END,
+To <b>share</b this track with another user, copy the URL below and
+send it to him or her.
+END
+
  SHARE_INSTRUCTIONS_ONE_TRACK => <<END,
-To share this track with another GBrowse genome browser,
-first copy the URL below, then go to the other GBrowse and
-paste the URL into the "Enter remote track URL" field at
-the bottom of the page. If this track is from an uploaded file,
-then be aware that sharing this URL with another user potentially
-allows <b>all</b> your uploaded data to be viewable by that user.
+To <b>export</b> this track to a different GBrowse genome browser,
+first copy the URL below, then go to the other GBrowse, 
+select the "Upload and Share Tracks" tab and
+paste the URL into the "Import tracks" section at the bottom.
 END
 
  SHARE_INSTRUCTIONS_ALL_TRACKS => <<END,
-To share all currently selected tracks with another GBrowse genome
-browser, first copy the URL below, then go to the other GBrowse and
-paste the URL into the "Enter remote track URL" field at
-the bottom of the page. If any of the selected tracks are from an uploaded file,
-then be aware that sharing this URL with another user potentially
-allows <b>all</b> your uploaded data to be viewable by that user.
+To export all currently selected tracks to another GBrowse genome
+browser, first copy the URL below, then go to the other GBrowse,
+select the "Upload and Share Tracks" tab and
+paste the URL into the "Import tracks" section at the bottom.
 END
 
  SHARE_DAS_INSTRUCTIONS_ONE_TRACK => <<END,
-To share this track with another genome browser using 
+To export this track with another genome browser using 
 the <a href="http://www.biodas.org" target="_new">
 Distributed Annotation System (DAS)</a> first copy the URL below, 
 then go to the other browser and enter it as a new DAS source.
@@ -516,7 +525,7 @@ be shared using DAS.</i>
 END
 
  SHARE_DAS_INSTRUCTIONS_ALL_TRACKS => <<END,
-To share all currently selected tracks with another genome browser
+To export all currently selected tracks with another genome browser
 using the <a href="http://www.biodas.org" target="_new"> Distributed
 Annotation System (DAS)</a> first copy the URL below, then go to the
 other browser and enter it as a new DAS source. <i>Quantitative tracks

@@ -32,6 +32,7 @@ sub searchopts { shift->{searchopts}  }
 sub parse_searchopts {
     my $self      = shift;
     my $optstring = shift;
+
     my @default   = qw(exact wildcard stem fulltext heuristic);
     my %all       = map {$_=>1} qw(exact wildcard stem fulltext heuristic autocomplete);
 
@@ -141,9 +142,11 @@ sub search_features {
       $args->{-search_term} = $state->{name};
   }
 
-  warn "SEARCHING FOR ",join ' ',%$args if DEBUG; 
+  warn "SEARCHING FOR ",join ' ',%$args," in $db" if DEBUG; 
 
   my $features = $self->search_db($args);
+
+  warn "FOUND @$features " if $features && DEBUG;
   $self->features($features);
   return $features;
 }
@@ -231,6 +234,8 @@ sub lookup_features {
 
  SEARCHING:
   {
+
+      warn "searchopts = ",join ',',%$searchopts if DEBUG;
       last SEARCHING unless %$searchopts;
 
       for my $n ([$name,$class,$start,$stop],
@@ -452,7 +457,7 @@ sub region_segment {
 
     $whole     ||= $self->whole_segment($segment) or return;
 
-    my $regionview_length = $settings->{region_size};
+    my $regionview_length = $settings->{region_size}||0;
     my $detail_start      = $segment->start;
     my $detail_end        = $segment->end;
     my $whole_start       = $whole->start;

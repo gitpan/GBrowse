@@ -1,13 +1,16 @@
 package Bio::Graphics::Browser2::DataLoader::generic;
 
-# $Id: generic.pm 22440 2009-12-21 16:54:27Z lstein $
+# $Id: generic.pm 22606 2010-01-25 00:00:13Z lstein $
 use strict;
 use Bio::DB::SeqFeature::Store;
 use Carp 'croak';
 use File::Basename 'basename';
 use base 'Bio::Graphics::Browser2::DataLoader';
 
-my @COLORS = qw(blue red orange brown mauve peach green cyan black ivory beige);
+my @COLORS = qw(blue red orange brown mauve peach green cyan 
+                black yellow cyan papayawhip coral);
+
+my $DUMPING_FIXED;  # flag that we patched Bio::SeqFeature::Lite
 
 sub start_load {
     my $self = shift;
@@ -45,6 +48,8 @@ sub finish_load {
     my $dsn       = $self->dsn;
     my $backend   = $self->backend;
 
+    $self->write_gff3($db,$dsn) if $backend eq 'memory';
+
     my $trackno   = 0;
     my $loadid    = $self->loadid;
     $self->set_status('creating configuration');
@@ -59,8 +64,8 @@ db_args    = -adaptor $backend
 END
 
     if (my @lines = @{$self->{conflines}}) {  # good! user has provided some config hints
-	my $in_sub;
 	my ($old_trackname,$seen_feature);
+	my $category = $self->category;
 	for my $line (@lines) {
 	    chomp $line;
 	    if ($line =~ /^\s*database/) {
@@ -72,15 +77,8 @@ END
 		my $trackname = $self->new_track_label;
 		print $conf "[$trackname]\n";
 		print $conf "database = $loadid\n" ;
-		print $conf "category = My Tracks:Uploaded Tracks:",$self->track_name,"\n";
-	    } elsif ($line =~ s/(=\s*)(sub .*)/$1 1 # no user subs allowed! $2/) {
-		$in_sub++;
-		print $conf $line,"\n";
-	    } elsif ($in_sub && $line =~ /^\s+/) { # continuation line
-		$line =~ s/^/# /;                  # continuation line of
-		print $conf $line,"\n";
-	    }
-	    elsif ($line =~ /^feature/) {
+		print $conf "category = $category\n";
+	    } elsif ($line =~ /^feature/) {
 		$seen_feature++;
 		print $conf $line,"\n";
 	    } elsif (!$line && $old_trackname && !$seen_feature) {
@@ -88,7 +86,6 @@ END
 		undef $old_trackname;
 		undef $seen_feature;
 	    } else {
-		undef $in_sub;
 		print $conf $line,"\n";
 	    }
 	}
@@ -114,6 +111,7 @@ END
 	    }
 
 	    my $color = $COLORS[rand @COLORS];
+	    my $category  = $self->category;
 	    print $conf <<END;
 [$trackname]
 database = $loadid
@@ -125,7 +123,7 @@ label     = 1
 stranded  = $stranded
 connector = solid
 balloon hover = \$description
-category    = My Tracks:Uploaded Tracks:$filename
+category    = $category
 key         = $t
 
 END
@@ -155,6 +153,67 @@ sub load_line {
 	# ignore it
     }
     $self->state($state) if $state ne $old_state;
+}
+
+# This is called to save out the feature file in GFF3 format,
+# which is needed when using the memory backend.
+sub write_gff3 {
+    my $self = shift;
+    my ($db,$path) = @_;
+    $self->fix_memory_dumping;
+    $self->set_status('writing GFF3 file');
+    $path .= "/data.gff3";
+    open my $f,">",$path or die "Can't open $path: $!";
+    print $f "##gff-version 3\n";
+    print $f "##Index-subfeatures 0\n\n";
+    my $i = $db->get_seq_stream;
+    while (my $feature = $i->next_seq) {
+	print $f $feature->gff3_string(1),"\n";
+    }
+    close $f;
+}
+
+# This is a hack to patch errors in bioperl feature file loading
+sub fix_memory_dumping {
+    my $self = shift;
+    return if $DUMPING_FIXED++;
+    *Bio::SeqFeature::Lite::gff3_string = eval <<'END';
+sub {
+    my ($self,$recurse,$parent_tree,$seenit,$force_id) = @_;
+    $parent_tree ||= {};
+    $seenit      ||= {};
+    my @rsf      =   ();
+    my @parent_ids;
+
+    if ($recurse) {
+	$self->_traverse($parent_tree) unless %$parent_tree;  # this will record parents of all children
+	my $primary_id = defined $force_id ? $force_id : $self->_real_or_dummy_id;
+
+	@rsf = $self->get_SeqFeatures;
+	return if $seenit->{$primary_id}++;
+	@parent_ids = keys %{$parent_tree->{$primary_id}};
+    }
+
+    my $group      = $self->format_attributes(\@parent_ids,$force_id);
+    my $name       = $self->name;
+
+    my $class = $self->class;
+    my $strand = ('-','.','+')[$self->strand+1];
+    my $p = join("\t",
+		 $self->seq_id||'.',
+		 $self->source||'.',
+		 $self->method||'.',
+		 $self->start||'.',
+		 $self->stop||'.',
+		 defined($self->score) ? $self->score : '.',
+		 $strand||'.',
+		 defined($self->phase) ? $self->phase : '.',
+		 $group||'');
+    return join("\n",
+		$p,
+		map {$_->gff3_string(1,$parent_tree,$seenit)} @rsf);
+}
+END
 }
 
 # shamelessly copied from Bio::Graphics:;FeatureFile.

@@ -104,6 +104,14 @@ sub config_file {
   $d;
 }
 
+sub add_conf_files {
+    my $self        = shift;
+    my $expression  = shift;
+    while (my $conf = glob($expression)) {
+	$self->parse_file($conf);
+    }
+}
+
 sub globals {
   my $self = shift;
   my $d    = $self->{globals};
@@ -356,6 +364,17 @@ sub clear_usertracks {
     delete $self->{_user_tracks};
 }
 
+sub usertrack_labels {
+    my $self = shift;
+    return keys %{$self->{_user_tracks}{config}};
+}
+
+sub is_usertrack {
+    my $self  = shift;
+    my $label = shift;
+    return exists $self->{_user_tracks}{config}{$label};
+}
+
 sub user_style {
     my $self = shift;
     my $type = shift;
@@ -448,6 +467,12 @@ sub section_setting {
   return $s;
 }
 
+sub show_section {  # one of instructions, upload_tracks, search, overview, region, detail, tracks, or display_settings
+    my $self    = shift;
+    my $setting = $self->section_setting(@_);
+    return $setting eq 'hide' || $setting eq 'off' ? 0 : 1;
+}
+
 sub get_ranges {
   my $self      = shift;
   my $divisor   = $self->global_setting('unit_divider') || 1;
@@ -470,10 +495,11 @@ sub type2label {
 
   my @labels;
 
-  @labels =  @{$self->{_type2labelmemo}{$type,$length,$dbid}}
-    if defined $self->{_type2labelmemo}{$type,$length,$dbid};
+  if (exists $self->{_type2labelmemo}{$type,$length,$dbid}) {
+      @labels =  @{$self->{_type2labelmemo}{$type,$length,$dbid}};
+  }
 
-  unless (@labels) {
+  else {
       my @main_labels = $self->_type2label($self,
 					   $type,
 					   $dbid);
@@ -488,9 +514,26 @@ sub type2label {
 	  $label_groups{$label_base}++;
       }
       @labels = keys %label_groups;
-      $self->{_type2labelmemo}{$type,$length} = \@labels;
+      $self->{_type2labelmemo}{$type,$length,$dbid} = \@labels;
   }
+
   return wantarray ? @labels : $labels[0];
+}
+
+sub metadata {
+    my $self = shift;
+    my $metadata = $self->fallback_setting(general => 'metadata');
+    return unless $metadata;
+
+    my %a = $metadata =~ m/-(\w+)\s+([^-].+?(?= -[a-z]|$))/g;
+
+    my %metadata;
+    for (keys %a) { 
+	$a{$_} =~ s/\s+$// ;
+	$metadata{lc $_} = $a{$_};
+    }; # trim
+    
+    return \%metadata;
 }
 
 sub _type2label {
@@ -530,10 +573,9 @@ sub invert_types {
 
   my %inverted;
   for my $label (keys %{$config}) {
-    my $feature = $config->{$label}{'feature'} or next;
-    my $dbid    = $config->{$label}{'database'} ||
-	$self->fallback_setting(TRACK_DEFAULTS => 'database');
-    $dbid ||= '';
+    my $feature = $self->setting($label => 'feature') or next;
+    my ($dbid)  = $self->db_settings($label);
+    $dbid =~ s/:database$//;
     foreach (shellwords($feature||'')) {
       $inverted{lc $_}{$dbid}{$label}++;
     }
@@ -646,23 +688,34 @@ sub db_settings {
   # if the track contains the "database" option, then it is a symbolic name
   # that indicates a [symbolic_name:database] section in this file or the globals
   # file.
-  my ($symbolic_db_name,$section);
+  my ($symbolic_db_name,$section,$basename,$length);
 
-  if ($track =~ /:database$/) {
-      $section = $symbolic_db_name = $track;
-  } elsif ($self->setting($track=>'db_adaptor')) {
-      $section = $track;
+  if ($track =~ /(.+):(\d+)$/) {
+      $basename = $1;
+      $length   = $2;
   } else {
-      $symbolic_db_name   = $self->setting($track => 'database');
-      $symbolic_db_name ||= $self->fallback_setting('TRACK DEFAULTS' => 'database');
-      $section          = $symbolic_db_name   ? "$symbolic_db_name:database"   : $track;
+      $basename = $track;
+      $length   = 1;
   }
 
-  my $adaptor = $self->fallback_setting($section => 'db_adaptor')
+
+  if ($basename =~ /:database$/) {
+      $section = $symbolic_db_name = $basename;
+  } elsif ($self->semantic_setting($basename=>'db_adaptor',$length)) {
+      $section = $basename;
+  } else {
+      $symbolic_db_name  = $self->semantic_setting($basename => 'database', $length);
+      $symbolic_db_name ||= $self->fallback_setting('TRACK DEFAULTS' => 'database');
+      $section          = $symbolic_db_name   
+	                    ? "$symbolic_db_name:database" 
+                            : $basename;
+  }
+
+  my $adaptor = $self->semantic_fallback_setting($section => 'db_adaptor', $length)
       or die "Unknown database defined for $section";
   eval "require $adaptor; 1" or die $@;
 
-  my $args    = $self->fallback_setting($section => 'db_args');
+  my $args    = $self->semantic_fallback_setting($section => 'db_args', $length);
   my @argv    = ref $args eq 'CODE'
         ? $args->()
 	: shellwords($args||'');
@@ -676,7 +729,8 @@ sub db_settings {
       s/\$ROOT/Bio::Graphics::Browser2->url_base/ge;
   }
 
-  if (defined (my $a = $self->fallback_setting($section => 'aggregators'))) {
+  if (defined (my $a = 
+	       $self->semantic_fallback_setting($section => 'aggregators',$length))) {
     my @aggregators = shellwords($a||'');
     push @argv,(-aggregator => \@aggregators);
   }
@@ -724,6 +778,20 @@ sub open_database {
   $self->{db2track}{$db}{$dbid}++;
 
   return $db;
+}
+
+sub default_dbid {
+    my $self = shift;
+    return $self->db2id($self->open_database);
+}
+
+
+sub search_options {
+    my $self = shift;
+    my $dbid = shift;
+    return $self->setting($dbid => 'search options')
+	|| $self->setting($dbid => 'search_options')
+	|| 'default';
 }
 
 =item @ids   = $dsn->db2id($db)
@@ -964,10 +1032,22 @@ sub usertype2label {
 
 sub _setting {
     my $self = shift;
-    if (@_ == 2 && (my $base = $self->{_user_tracks})) {
-	return $base->{config}{$_[0]}{$_[1]} if exists $base->{config}{$_[0]};
+    my $base = $self->{_user_tracks};
+    if ($base && exists $base->{config}{$_[0]}) {
+	return $base->{config}{$_[0]}{$_[1]}  if @_ == 2;
+	return keys %{$base->{config}{$_[0]}} if @_ == 1;
     }
     return $self->SUPER::_setting(@_);
+}
+
+sub code_setting {
+    my $self    = shift;
+    my $base = $self->{_user_tracks};
+    if ($base && exists $base->{config}{$_[0]}) {
+	return $self->_setting(@_);  # don't allow code_setting on user tracks
+    } else {
+ 	return $self->SUPER::code_setting(@_);
+    }
 }
 
 sub parse_user_file {

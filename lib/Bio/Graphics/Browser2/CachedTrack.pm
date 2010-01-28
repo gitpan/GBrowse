@@ -1,6 +1,6 @@
 package Bio::Graphics::Browser2::CachedTrack;
 
-# $Id: CachedTrack.pm 22257 2009-11-16 15:11:04Z lstein $
+# $Id: CachedTrack.pm 22489 2010-01-04 23:38:52Z lstein $
 # This package defines a Bio::Graphics::Browser2::Track option that manages
 # the caching of track images and imagemaps.
 
@@ -141,8 +141,13 @@ sub errstr {
     my $self = shift;
     my $errorfile = $self->errorfile;
     open my $fh,'<',$errorfile or return;
-    chomp (my $msg = <$fh>);
-    return $msg;
+    while (my $msg = <$fh>) {
+	chomp $msg;
+	next if $msg =~ /EXCEPTION/; # bioperl error header
+	$msg =~ s/MSG://;            # more bioperl cruft
+	return $msg if $msg;
+    }
+    return 'unknown';
 }
 
 sub put_data {

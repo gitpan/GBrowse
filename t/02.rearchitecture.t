@@ -79,6 +79,8 @@ ok($globals->help_url,'/gbrowse/.');
 
 delete $ENV{$_} foreach qw(GBROWSE_CONF GBROWSE_DOCS GBROWSE_ROOT);
 
+$ENV{GBROWSE_DOCS} = $Bin;
+
 # exercise tmpdir a bit
 rmtree('/tmp/gbrowse_testing/images',0,0);  # in case it was left over
 my $path = $globals->tmpdir('test1/test2');
@@ -164,7 +166,7 @@ ok($source->setting(general => 'plugins'),'Aligner RestrictionAnnotator ProteinD
 ok($source->setting('plugins'),'Aligner RestrictionAnnotator ProteinDumper TestFinder');
 ok($source->semantic_setting(Alignments=>'glyph'),'segments');
 ok($source->semantic_setting(Alignments=>'glyph',30000),'box');
-ok($source->type2label('alignment',0),'Alignments');
+ok($source->type2label('alignment',0,'Alignments'),'Alignments');
 
 # Do callbacks work (or at least, do we get a CODE reference back)?
 ok(ref($source->code_setting(EST=>'bgcolor')),'CODE');
@@ -184,7 +186,6 @@ ok($dbs[0],'volvox1');
 
 
 # Test that we can get db args from "volvox2"
-$ENV{GBROWSE_DOCS} = $Bin;
 my ($dbid,$adapter,@args) = $source->db2args('volvox2');
 ok($adapter,'Bio::DB::GFF');
 ok("@args[0,1]",'-adaptor memory');

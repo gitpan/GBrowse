@@ -1,5 +1,8 @@
 #!/usr/bin/perl -w
 
+eval 'exec /usr/bin/perl -w -S $0 ${1+"$@"}'
+    if 0; # not running under some shell
+
 use strict;
 use Bio::Graphics::Browser2;
 use Bio::Graphics::Browser2::RegionSearch;
@@ -141,6 +144,8 @@ sub run {
 	end_html;
 	exit 0;
     }
+
+    warn "search term = $search_term" if DEBUG;
 
     my $features = eval {$search->search_features({-search_term=>$search_term})} || [];
     warn "search_features(-search_term=>$search_term): $@" if $@;

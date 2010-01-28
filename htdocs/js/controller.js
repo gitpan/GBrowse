@@ -3,7 +3,7 @@
 
  Lincoln Stein <lincoln.stein@gmail.com>
  Ben Faga <ben.faga@gmail.com>
- $Id: controller.js 22464 2009-12-23 21:00:15Z lstein $
+ $Id: controller.js 22614 2010-01-26 17:06:23Z lstein $
 
 Indentation courtesy of Emacs javascript-mode 
 (http://mihai.bazon.net/projects/emacs-javascript-mode/javascript.el)
@@ -804,9 +804,9 @@ var GBrowseController = Class.create({
 	      backgroundColor:'beige',
 	      padding:'5px 5px 5px 5px'
 		  });
-      // var r = document.createRange();
-      // r.selectNodeContents(container_element);
-      // window.getSelection().addRange(r);
+      var r = document.createRange();
+      r.selectNodeContents(container_element);
+      window.getSelection().addRange(r);
       Event.observe(container_element,'keypress',this.set_upload_description);
       Event.observe(container_element,'blur',this.set_upload_description);
   },

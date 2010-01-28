@@ -8,7 +8,7 @@ use Digest::MD5 'md5_hex';
 use Carp 'croak','cluck';
 use Bio::Graphics::Browser2::Render;
 use Bio::Graphics::Browser2::CachedTrack;
-use Bio::Graphics::Browser2::Util qw[citation shellwords url_label];
+use Bio::Graphics::Browser2::Util qw[shellwords url_label];
 use Bio::Graphics::Browser2::Render::Slave::Status;
 use IO::File;
 use Time::HiRes 'sleep';
@@ -207,6 +207,7 @@ sub render_track_images {
     while (%still_pending) {
 	for my $label (keys %$requests) {
 	    my $data = $requests->{$label};
+	    $data->cache_time(0) if $data->cache_time < 0;
 	    next if $data->status eq 'PENDING';
 	    next if $data->status eq 'EMPTY';
 	    if ($data->status eq 'AVAILABLE') {
@@ -406,15 +407,10 @@ sub wrap_rendered_track {
 	|| "Turn off this track.";
     my $share_this_track = $self->language->tr('SHARE_THIS_TRACK')
         || "Share This Track";
-    my $citation = $self->plain_citation( $label, 512 );
 
-    #$citation            =~ s/"/&quot;/g;
-    #$citation            =~ s/'/&#39;/g;
-
-    my $configure_this_track = $citation || '';
-    $configure_this_track .= '<br>' if $citation;
+    my $configure_this_track = '';
     $configure_this_track .= $self->language->tr('CONFIGURE_THIS_TRACK')
-        || "Configure this Track";
+        || "Click to configure this Track";
 
     my $escaped_label = CGI::escape($label);
 
@@ -528,7 +524,8 @@ sub wrap_rendered_track {
     # Add arrows for pannning to details scalebar panel
     if ($is_scalebar && $is_detail) {
 	my $style    = 'opacity:0.35;position:absolute;border:none;cursor:pointer';
-	$style      .= ';filter:alpha(opacity=70);moz-opacity:0.35';
+# works with IE7, but looks awful. IE8 should support standard css opacity.
+#	$style      .= ';filter:alpha(opacity=30);moz-opacity:0.35';
         my $pan_left   =  img({
 	    -style   => $style . ';left:10px',
 	    -class   => 'panleft',
@@ -536,13 +533,14 @@ sub wrap_rendered_track {
 	    -onClick => "Controller.scroll('left',0.5)"
 			      },
 	    );
-	my $pan_left2  =  img({
-            -style   => $style . ';left:-3px',
-            -class   => 'panleft',
-            -src     => "$buttons/panleft2.png",
-            -onClick => "Controller.scroll('left',1)",
-                              },
-            );
+ 	my $pan_left2  =  img({
+             -style   => $style . ';left:-3px',
+             -class   => 'panleft',
+             -src     => "$buttons/panleft2.png",
+             -onClick => "Controller.scroll('left',1)",
+                               },
+             );
+
 	my $pan_right  = img({ -style   => $style . ';right:10px',
 			       -class   => 'panright',
 			       -src     => "$buttons/panright.png",
@@ -558,10 +556,11 @@ sub wrap_rendered_track {
 
 	$img = $pan_left2 . $pan_left . $img . $pan_right . $pan_right2;
     }
-    return div({-class=>'centered_block',
-		-style=>"width:${width}px;position:relative"},
-	       ( $show_titlebar ? $titlebar : '' ) . $img . $pad_img )
-        . ( $map_html || '' );
+     return div({-class=>'centered_block',
+ 		-style=>"width:${width}px;position:relative"
+		},
+ 	       ( $show_titlebar ? $titlebar : '' ) . $img . $pad_img )
+         . ( $map_html || '' );
 
 }
 
@@ -1178,43 +1177,54 @@ sub run_local_requests {
 	    local $SIG{ALRM}    = sub { warn "alarm clock"; die "timeout" };
 	    alarm($timeout);
 
-	    if ( my $file = ($feature_files->{$base}) ) {
-		
-		# Add feature files, including remote annotations
-		my $featurefile_select = $args->{featurefile_select}
-                || $self->feature_file_select($section);
+	    my ($gd,$map);
 
-		if ( ref $file and $panel ) {
-		    $self->add_feature_file(
-			file     => $file,
-			panel    => $panel,
-			position => $feature_file_offsets{$label} || 0,
-			options  => {},
-			select   => $featurefile_select,
-			);
-		    %trackmap = map { $_ => $file } @{ $panel->{tracks} || [] };
-		}
+	    if (my $hide = $source->semantic_setting($label=>'hide',$self->segment_length)) {
+		$gd  = $self->render_hidden_track($hide,$args);
+		$map = [];
 	    }
+
 	    else {
-		
-		my $track_args = $requests->{$label}->track_args;
-		my $track      = $panel->add_track(@$track_args);
 
-		# == populate the tracks with feature data ==
-		$self->add_features_to_track(
-		    -labels    => [ $label, ],
-		    -tracks    => { $label => $track },
-		    -filters   => $filters,
-		    -segment   => $segment,
-		    -fsettings => $settings->{features},
-		    );
-		%trackmap = ($track=>$label);
+		if ( my $file = ($feature_files->{$base}) ) {
+		
+		    # Add feature files, including remote annotations
+		    my $featurefile_select = $args->{featurefile_select}
+		    || $self->feature_file_select($section);
+
+		    if ( ref $file and $panel ) {
+			$self->add_feature_file(
+			    file     => $file,
+			    panel    => $panel,
+			    position => $feature_file_offsets{$label} || 0,
+			    options  => {},
+			    select   => $featurefile_select,
+			    );
+			%trackmap = map { $_ => $file } @{ $panel->{tracks} || [] };
+		    }
+		}
+		else {
+		    my $track_args = $requests->{$label}->track_args;
+		    my $track      = $panel->add_track(@$track_args);
+
+		    # == populate the tracks with feature data ==
+		    $self->add_features_to_track(
+			-labels    => [ $label, ],
+			-tracks    => { $label => $track },
+			-filters   => $filters,
+			-segment   => $segment,
+			-fsettings => $settings->{features},
+			);
+		    %trackmap = ($track=>$label);
+
+		}
+
+		# == generate the maps ==
+		$gd  = $panel->gd;
+		$map = $self->make_map( scalar $panel->boxes,
+					$panel, $label,
+					\%trackmap, 0 );
 	    }
-	    # == generate the maps ==
-	    my $gd  = $panel->gd;
-	    my $map = $self->make_map( scalar $panel->boxes,
-				       $panel, $label,
-				       \%trackmap, 0 );
 
 	    $requests->{$label}->put_data($gd, $map );
 	    
@@ -1233,6 +1243,19 @@ sub run_local_requests {
     }
 }
 
+sub render_hidden_track {
+    my $self    = shift;
+    my ($message,$args) = @_;
+    $message    = 'Track not shown at this magnification' if $message eq '1';
+    my $gd     = $self->render_image_pad($args->{section});
+    my $font   = GD->gdMediumBoldFont;
+    my $len    = $font->width * length($message);
+    my ($wid)  = $gd->getBounds;
+    my $black  = $gd->colorClosest(0,0,0);
+    $gd->string(GD->gdMediumBoldFont,($wid-$len)/2,0,$message,$black);
+    return $gd;
+}
+
 # this method is a little unconventional; it modifies the title in-place
 sub select_features_menu {
     my $self     = shift;
@@ -1243,6 +1266,8 @@ sub select_features_menu {
     my $settings=$self->settings;
 
     my ($method,@values) = shellwords $source->setting($label=>'select');
+    foreach    (@values) {s/#.+$//}  # get rid of comments
+
     return unless @values;
 
     my $buttons = $self->source->globals->button_url;
@@ -1983,9 +2008,9 @@ sub make_link {
     my $end   = CGI::escape($feature->end);
     my $src   = CGI::escape(eval{$feature->source} || '');
     my $url   = CGI->request_uri || '../..';
-    my $dbid  = eval {CGI::escape($feature->gbrowse_dbid)};
     my $id    = eval {CGI::escape($feature->primary_id)};
-    warn $@ if $@;
+    my $dbid  = eval {$feature->gbrowse_dbid} || ($data_source->db_settings($label))[0];
+    $dbid     = CGI::escape($dbid);
     $url      =~ s!/gbrowse.*!!;
     $url      .= "/gbrowse_details/$ds_name?ref=$ref;start=$start;end=$end";
     $url      .= ";name=$name"     if defined $name;
@@ -2004,6 +2029,8 @@ sub make_title {
   local $^W = 0;  # tired of uninitialized variable warnings
   my $source = $self->source;
 
+  my $length = eval {$self->segment->length} || 0;
+
   my ($title,$key) = ('','');
 
  TRY: {
@@ -2019,15 +2046,15 @@ sub make_title {
       $key         =~ s/s$//;
       $key         = $feature->segment->dsn if $feature->isa('Bio::Das::Feature');  # for DAS sources
 
-      my $link     = $source->code_setting($label,'title')
-	|| $source->code_setting('TRACK DEFAULTS'=>'title')
-	  || $source->code_setting(general=>'title');
+      my $length   = $self->segment_length($label);
+
+      my $link     = $source->semantic_fallback_setting($label,'title',$length);
       if (defined $link && ref($link) eq 'CODE') {
 	$title       = eval {$link->($feature,$panel,$track)};
-	$self->_callback_complain($label=>'title') if $@;
+	$source->_callback_complain($label=>'title') if $@;
 	return $title if defined $title;
       }
-      return $source->link_pattern($link,$feature) if $link && $link ne 'AUTO';
+      return $source->link_pattern($link,$feature) if defined $link && $link ne 'AUTO';
     }
   }
 
@@ -2061,6 +2088,18 @@ sub make_title {
   return $title;
 }
 
+sub segment_length {
+    my $self    = shift;
+    my $label   = shift;
+    my $section = $label 
+	           ? Bio::Graphics::Browser2::Render->get_section_from_label($label) 
+		   : 'detail';
+    return eval {$section eq 'detail'   ? $self->segment->length
+	        :$section eq 'region'   ? $self->region_segment->length
+		:$section eq 'overview' ? $self->whole_segment->length
+		: 0} || 0;
+}
+
 sub make_link_target {
   my $self = shift;
   my ($feature,$panel,$label,$track) = @_;
@@ -2085,9 +2124,10 @@ sub make_link_target {
 sub balloon_tip_setting {
   my $self = shift;
   my ($option,$label,$feature,$panel,$track) = @_;
+  my $length = $self->segment_length($label);
   $option ||= 'balloon tip';
   my $source = $self->source;
-  my $value  = $source->code_setting($label=>$option);
+  my $value  = $source->semantic_setting($label=>$option,$length||0);
   $value     = $source->code_setting('TRACK DEFAULTS' => $option) unless defined $value;
   $value     = $source->code_setting('general' => $option)        unless defined $value;
 
@@ -2129,17 +2169,6 @@ sub make_postgrid_callback {
 
     return unless @h_regions;
     return hilite_regions_closure(@h_regions);
-}
-
-sub plain_citation {
-    my ( $self, $label, $truncate ) = @_;
-    my $text = citation( $self->source(), $label, $self->language ) || '';
-    $text =~ s/\<a/<span/gi;
-    $text =~ s/\<\/a/\<\/span/gi;
-    if ($truncate) {
-        $text =~ s/^(.{$truncate}).+/$1\.\.\./;
-    }
-    CGI::escape($text);
 }
 
 # this subroutine generates a Bio::Graphics::Panel callback closure 

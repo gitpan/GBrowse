@@ -1,7 +1,9 @@
 #!/usr/bin/perl -w
 
+eval 'exec /usr/bin/perl -w -S $0 ${1+"$@"}'
+    if 0; # not running under some shell
+
 use strict;
-use lib '~/Generic-Genome-Browser/lib';
 use Bio::Graphics::Browser2;
 use Bio::Graphics::Browser2::Render;
 use CGI qw(:standard);
@@ -9,32 +11,46 @@ use DBI;
 use Digest::SHA qw(sha1);
 use JSON;
 use LWP::UserAgent;
-#use LWPx::ParanoidAgent; (Better, but currently broken, try installing when a bug fix is released)
-use Mail::SendEasy;
+#use LWPx::ParanoidAgent; (Better, but currently broken)
+use Net::SMTP;
 use Net::OpenID::Consumer;
 use Text::ParseWords 'quotewords';
 
-# Required installation of Crypt::SSLeay and libssl-dev
-# If you dont have Math::BigInt, then Crypt::DH (installed with Net::OpenID::Consumer) will complain on every run.
+# Required modules:
+#    1. Net::SMTP
+#    1. Crypt::SSLeay & libssl-dev
+#    2. Net::OpenID::Consumer
+#    3. Math::BigInt
+#
+# If you need to sendmail via an SMTP server that requires
+# SASL and SSL authentication, you will need
+#
+#    1. Net::SMTP::SSL
+#    2. Authen::SASL
+
 
 our $VERSION = '$Id: gbrowse_login,v 1.1 2009-08-27 20:33:23 idavies Exp $';
 
 umask 022;
 
-my $globals = Bio::Graphics::Browser2->open_globals;
+our $Globals = Bio::Graphics::Browser2->open_globals;
 
-our $AppName       = $globals->application_name;
-our $AppNameLong   = $globals->application_name_long;
-our $ReturnAddress = $globals->email_address;
+our $AppName       = $Globals->application_name;
+our $AppNameLong   = $Globals->application_name_long;
+our $ReturnAddress = $Globals->email_address;
 
 my $index = index($ENV{'HTTP_REFERER'},'?');
 my $url   = substr($ENV{'HTTP_REFERER'},0,$index);
    $url  .= '/'  if $index == -1;
 
-my $smtp  = $globals->smtp;
-my $login = DBI->connect("DBI:mysql:gbrowse_login", 'login')
-    or (print "Error: Could not open login database."
-    and die "Could not open login database");
+my $smtp  = $Globals->smtp;
+my $dbi   = $Globals->user_account_db;
+my $login = DBI->connect($dbi);
+unless ($login) {
+    print header();
+    print "Error: Could not open login database.";
+    die "Could not open login database $dbi";
+}
 
 my %actions  = map {$_=>1} param('action');
 my %callback;
@@ -149,13 +165,21 @@ sub check_user {
     }
 }
 
+sub check_admin {
+    my $login = shift;
+    my $admin_name = $Globals->admin_account;
+    return unless $admin_name;
+    return $login eq $admin_name;
+}
+
 ##################################################################################
 # Check Old Confirmations - Deletes any unconfirmed accounts more than 7 days old.
 ##################################################################################
 sub check_old_confirmations {
     my $login  = shift;
+    my $nowfun = nowfun();
     my $delete = $login->prepare(
-        "DELETE FROM users WHERE confirmed=0 AND (now() - last_login) >= 7000000");
+        "DELETE FROM users WHERE confirmed=0 AND ($nowfun - last_login) >= 7000000");
     $delete->execute()
         or (print "Error: ",DBI->errstr,"." and die "Error: ",DBI->errstr);
     return;
@@ -171,17 +195,20 @@ sub do_validate {
     my $update;
 
     if(check_user($user)==0) {
-        print "Usernames cannot contain any backslashes, whitespace or non-ascii characters.";return;
+        print "Usernames cannot contain any backslashes, whitespace or non-ascii characters.";
+	return;
     }
 
+    my $nowfun = nowfun();
     if($remember != 2) {
         $update = $login->prepare(
-            "UPDATE users SET last_login=now(),remember=$remember WHERE username=? AND pass=? AND confirmed=1");
+            "UPDATE users SET last_login=$nowfun,remember=$remember WHERE username=? AND pass=? AND confirmed=1");
     } else {
         $update = $login->prepare(
-            "UPDATE users SET last_login=now() WHERE username=? AND pass=? AND confirmed=1");
+            "UPDATE users SET last_login=$nowfun WHERE username=? AND pass=? AND confirmed=1");
     }
 
+    # BUG: we should salt the password
     $pass = sha1($pass);
     $update->execute($user,$pass)
         or (print "Error: ",DBI->errstr,"." and die "Error: ",DBI->errstr);
@@ -240,32 +267,37 @@ sub do_add_user {
     my ($login,$smtp,$url,$user,$email,$pass,$userid) = @_;
     if(check_email($email)==0) {print "Invalid e-mail address provided.";return;}
     if(check_user($user)==0) {
-        print "Usernames cannot contain any backslashes, whitespace or non-ascii characters.";return;
+        print "Usernames cannot contain any backslashes, whitespace or non-ascii characters.";
+	return;
+    }
+    if(check_admin($user)) {
+	print "Invalid username. Try a different one."; 
+	return;
     }
 
     my $confirm = create_key('32');
-    my $select = $login->prepare(
-        "SELECT * FROM users WHERE userid=? OR username=? OR email=?");
-    $select->execute($userid,$user,$email)
-        or (print "Error: ",DBI->errstr,"." and die "Error: ",DBI->errstr);
+    my ($rows) = $login->selectrow_array(
+        "SELECT count(*) FROM users WHERE userid=? OR username=? OR email=?",
+	undef,
+	$userid,$user,$email);
 
-    if($select->rows == 0) {
+    if ($rows == 0) {
         do_send_confirmation($smtp,$url,$email,$confirm,$user,$pass);
     }
 
-    my $insert = $login->prepare(
-        "INSERT INTO users VALUES (?,?,?,?,0,0,0,?,now(),now())"
-    );
+    my $nowfun = nowfun();
+    my $insert = $login->prepare ("INSERT INTO users VALUES (?,?,?,?,0,0,0,?,$nowfun,$nowfun)");
 
+    # BUG: we should salt the password
     $pass = sha1($pass);
     if($insert->execute($userid,$user,$email,$pass,$confirm)) {
         print "Success";
     } else {
-        if(DBI->errstr =~ m/for key 1$/) {
+        if(DBI->errstr =~ m/for key 1$/      || DBI->errstr =~ m/username is not unique/) {
             print "Username already in use, please try another.";
-        } elsif(DBI->errstr =~ m/for key 3$/) {
+        } elsif(DBI->errstr =~ m/for key 3$/ || DBI->errstr =~ m/email is not unique/) {
             print "E-mail address already in use, please provide another.";
-        } elsif(DBI->errstr =~ m/for key 2$/) {
+        } elsif(DBI->errstr =~ m/for key 2$/ || DBI->errstr =~ m/userid is not unique/) {
             print "Session Error";
         } else {
             print "Error: ",DBI->errstr,".";
@@ -288,21 +320,16 @@ sub do_send_confirmation {
        $message .= "on the following link:\n    $link\n\n\n";
        $message .= get_footer();
 
-    my $mail = Mail::SendEasy->new(smtp=>$smtp);
-    my $status = $mail->send(
-        from       => $ReturnAddress,
-        from_title => $AppName,
-        to         => $email,
-        subject    => "$AppName Account Activation",
-        msg        => $message);
-
-    if(!$status) {
-        if($mail->error =~ m/ERROR: Can't connect to/) {
-            print "Error: Unable to send e-mail message, please check your internet connection.";}
-        else {print "Error: ",$mail->error;}
-        die "Error: ",$mail->error;
+    my ($status,$err) = do_sendmail({smtp => $smtp,
+				     from       => $ReturnAddress,
+				     from_title => $AppName,
+				     to         => $email,
+				     subject    => "$AppName Account Activation",
+				     msg        => $message});
+    unless ($status) {
+	print $err;
+	die   "Error while sending outgoing email: $err";
     }
-
     return;
 }
 
@@ -341,21 +368,20 @@ sub do_edit_confirmation {
 ##################################################################################
 sub do_confirm_account {
     my ($login,$user,$confirm) = @_;
+
+    # BUG: we should salt the password
     my $new_confirm = sha1($confirm);
 
-    my $select = $login->prepare(
-        "SELECT * FROM users WHERE cnfrm_code=? AND confirmed=0");
-    $select->execute($confirm)
-        or (print "Error: ",DBI->errstr,"." and die "Error: ",DBI->errstr);
-
-    my $rows = $select->rows;
+    my ($rows) = $login->selectrow_array(
+        "SELECT count(*) FROM users WHERE cnfrm_code=? AND confirmed=0",
+	undef,
+	$confirm);
     if($rows != 1) {print "Already Active"; return;}
 
     my $update = $login->prepare(
         "UPDATE users SET confirmed=1,cnfrm_code=? WHERE username=? AND cnfrm_code=? AND confirmed=0");
     $update->execute($new_confirm,$user,$confirm)
         or (print "Error: ",DBI->errstr,"." and die "Error: ",DBI->errstr);
-
     $rows = $update->rows;
     if($rows == 1) {
         my $query = $login->prepare(
@@ -383,6 +409,7 @@ sub do_edit_details {
             print "New e-mail address is invalid, please try another.";return;}
     }
 
+    # BUG: we should salt the password
     $old = sha1($old) if($column eq 'pass');
     $new = sha1($new) if($column eq 'pass');
 
@@ -444,21 +471,20 @@ sub do_email_info {
        $message .= "Password: $pass\n\n    OpenIDs: $openid\n\n";
        $message .= get_footer();
 
-    my $mail = Mail::SendEasy->new(smtp=>$smtp);
-    my $status = $mail->send(
-        from       => $ReturnAddress,
-        from_title => $AppName,
-        to         => $email,
-        subject    => "$AppName Account Information",
-        msg        => $message);
+    my ($status,$err) = do_sendmail({smtp => $smtp,
+				     from       => $ReturnAddress,
+				     from_title => $AppName,
+				     to         => $email,
+				     subject    => "$AppName Account Information",
+				     msg        => $message
+				    });
 
     if(!$status) {
-        if($mail->error =~ m/ERROR: Can't connect to/) {
-            print "Error: Unable to send e-mail message, please check your internet connection.";}
-        else {print "Error: ",$mail->error;}
-        die "Error: ",$mail->error;
+        print "Error: ",$err;
+        die "Error while sending outgoing email: ",$err;
     }
 
+    # BUG: we should salt the password
     my $secret = sha1($pass);
     my $update = $login->prepare(
         "UPDATE users SET pass=? WHERE username=? AND email=? AND confirmed=1");
@@ -476,14 +502,15 @@ sub do_retrieve_user {
     my ($login,$email) = @_;
     my @openids;
 
-    my $select = $login->prepare(
-        "SELECT username FROM users WHERE email=? AND confirmed=1");
-    $select->execute($email)
+    my $users = $login->selectcol_arrayref(
+        "SELECT username FROM users WHERE email=? AND confirmed=1",
+	undef,
+	$email)
         or (print "Error: ",DBI->errstr,"." and die "Error: ",DBI->errstr);
 
-    my $rows = $select->rows;
-    if($rows == 1) {
-        my $user  = $select->fetchrow_array();
+    my $rows = @$users;
+    if ($rows == 1) {
+        my $user  = $users->[0];
         my $query = $login->prepare(
             "SELECT openid_url FROM openid_users WHERE username=?");
         $query->execute($user)
@@ -507,6 +534,8 @@ sub do_retrieve_user {
 sub do_delete_user {
     my ($login,$user,$pass) = @_;
     my $unseqpass = $pass;
+
+    # BUG we should salt the password
     $pass = sha1($pass);
 
     my ($sql,@bind);
@@ -521,6 +550,7 @@ sub do_delete_user {
     my $delete = $login->prepare($sql);
     $delete->execute(@bind)
         or (print "Error: ",DBI->errstr,"." and die "Error: ",DBI->errstr);
+
     my $rows = $delete->rows;
     if($rows != 1) {
         if($rows != 0) {
@@ -549,6 +579,7 @@ sub do_delete_user {
 ##################################################################################
 sub do_check_openid {
     my ($url,$openid,$userid,$option) = @_;
+    warn "do_check_openid($openid,$userid)";
     my $return_to  = "$url?openid_confirm=1;page=$option;s=$userid;";
        $return_to .= "id=logout;" if $option ne "openid-add";
        #id=logout needed in case another user is already signed in
@@ -589,16 +620,17 @@ sub do_confirm_openid {
     );
 
     if($option eq "openid-add") {
-        $select = $login->prepare("SELECT username,openid_only FROM users WHERE userid=?");
-        $select->execute($userid)
+        ($user,$only) = $login->selectrow_array(
+	    "SELECT username,openid_only FROM users WHERE userid=?",
+	    undef,
+	    $userid)
             or ($error = DBI->errstr and push @results,{error=>"Error: $error."}
-            and print JSON::to_json(\@results) and return);
-        if($select->rows == 0) {
+		and print JSON::to_json(\@results) and return);
+        unless (defined $user) {
             push @results,{error=>"Error: Wrong session ID provided, please try again."};
             print JSON::to_json(\@results);
             return;
         }
-        ($user,$only) = $select->fetchrow_array();
     }
 
     $csr->handle_server_response(
@@ -638,20 +670,21 @@ sub do_get_openid {
     my ($login,$openid) = @_;
     my ($error,@results);
 
-    my $sql  = "SELECT A.username, A.userid,     ";
-       $sql .= "       A.remember, A.openid_only ";
-       $sql .= "  FROM users A, openid_users B   ";
-       $sql .= " WHERE A.userid     = B.userid   ";
-       $sql .= "   AND A.username   = B.username ";
-       $sql .= "   AND A.confirmed  = 1          ";
-       $sql .= "   AND B.openid_url = ?          ";
-
-    my $select = $login->prepare($sql);
-    $select->execute($openid)
-        or ($error = DBI->errstr and push @results,{error=>"Error: $error."}
-        and return \@results);
-
-    my $rows = $select->rows;
+    my $from = <<END;
+FROM users A, openid_users B
+ WHERE A.userid     = B.userid
+   AND A.username   = B.username
+   AND A.confirmed  = 1
+   AND B.openid_url = ?
+END
+;
+    my ($rows) = $login->selectrow_array(
+	"select count(*) $from",
+	undef,
+	$openid)
+	or ($error = DBI->errstr and push @results,{error=>"Error: $error."}
+	    and return \@results);
+    
     if($rows != 1) {
         if($rows != 0) {
             $error  = "Error: $rows rows returned, please consult your service host.";
@@ -663,9 +696,16 @@ sub do_get_openid {
         return \@results;
     }
 
+    my $select = $login->prepare("SELECT A.username, A.userid,A.remember, A.openid_only $from");
+    $select->execute($openid)
+        or ($error = DBI->errstr and push @results,{error=>"Error: $error."}
+        and return \@results);
+
     my @info = $select->fetchrow_array;
+
+    my $nowfun = nowfun();
     my $update = $login->prepare(
-        "UPDATE users SET last_login=now() WHERE username=? AND userid=? AND confirmed=1");
+        "UPDATE users SET last_login=$nowfun WHERE username=? AND userid=? AND confirmed=1");
     $update->execute($info[0],$info[1])
         or ($error = DBI->errstr and push @results,{error=>"Error: $error."}
         and return \@results);
@@ -680,6 +720,8 @@ sub do_get_openid {
 sub do_change_openid {
     my ($login,$url,$user,$pass,$openid,$option) = @_;
     my $unseqpass = $pass;
+
+    # BUG: we should salt the password
     $pass = sha1($pass);
 
     my ($sql,@bind);
@@ -691,11 +733,10 @@ sub do_change_openid {
         @bind = ($user,$pass);
     }
 
-    my $select = $login->prepare($sql);
-    $select->execute(@bind)
+    my $users = $login->selectrow_arrayref($sql,undef,@bind)
         or (print "Error: ",DBI->errstr,"." and die "Error: ",DBI->errstr);
+    my $rows = @$users;
 
-    my $rows = $select->rows;
     if($rows != 1) {
         if($rows != 0) {
             print "Error: $rows rows returned, please consult your service host.";
@@ -705,14 +746,14 @@ sub do_change_openid {
         return;
     }
 
-    if($option eq "add") {
-        do_check_openid($url,$openid,$select->fetchrow_array(),"openid-add");
+    if ($option eq "add") {
+        do_check_openid($url,$openid,$users->[0],"openid-add");
         return;
     }
 
     my $delete = $login->prepare(
         "DELETE FROM openid_users WHERE userid=? AND username=? AND openid_url=?");
-    if($delete->execute($select->fetchrow_array(),$user,$openid)) {
+    if($delete->execute($users->[0],$user,$openid)) {
         print "Success";
     } else {
         if(DBI->errstr =~ m/for key 1$/) {
@@ -759,13 +800,15 @@ sub do_add_openid_user {
     my $pass    = sha1(create_key('32'));
     my $email   = create_key('64');
 
+    my $nowfun = nowfun();
     my $query = $login->prepare(
-        "INSERT INTO users VALUES (?,?,?,?,?,1,1,?,now(),now())"
+        "INSERT INTO users (userid,username,email,pass,remember,openid_only,confirmed,cnfrm_code,last_login,created) VALUES (?,?,?,?,?,1,1,?,$nowfun,$nowfun)"
     );
 
+    # BUG: we should salt the password
     $pass = sha1($pass);
     if($query->execute($userid,$user,$email,$pass,$remember,$confirm)) {
-        my $insert = $login->prepare("INSERT INTO openid_users VALUES (?,?,?)");
+        my $insert = $login->prepare("INSERT INTO openid_users (userid,username,openid_url) VALUES (?,?,?)");
         if($insert->execute($userid,$user,$openid)) {
             print "Success";
         } else {
@@ -801,15 +844,87 @@ sub do_list_openid {
         or ($error = DBI->errstr and push @openids,{error=>"Error: $error."}
         and print JSON::to_json(\@openids) and die "Error: ",DBI->errstr);
 
-    if($select->rows == 0) {
-        push @openids,{error=>"There are no OpenIDs currently associated with this account."}
-    }
-
     while (my $openid = $select->fetchrow_array) {
         push @openids,{name=>$openid};
     }
+
+    unless (@openids) {
+        push @openids,{error=>"There are no OpenIDs currently associated with this account."}
+    }
+
     my @results = sort {$a->{name} cmp $b->{name}} @openids;
     print JSON::to_json(\@results);
+}
+
+# This handles outgoing email using either Net::SMTP or Net::SMTP::SSL
+# as required.
+# format of smtp argument is:
+#
+#      smtp.server.com:port:encryption:username:password
+#
+# This has up to five fields. Only the first field is required.
+#    The port is assumed to be 25 unless ssl encryption is specified, in
+#               which case it defaults to 465.
+#    protocol is either "plain" or "ssl", "plain" assumed.
+#    username and password may be required by the SMTP server to send 
+#               outgoing mail.
+sub do_sendmail {
+    my $args = shift;
+
+    eval {
+	my $smtp_info = $args->{smtp} or die "need SMTP argument";
+
+	my ($server,$port,$protocol,$username,$password) = split ':',$smtp_info;
+	$protocol ||= 'clear';
+	$port     ||= $protocol eq 'plain' ? 25 : 465;
+	$protocol =~ /plain|ssl/ or die 'encryption must be either "plain" or "ssl"';
+	
+	# At least some SMTP servers will refuse to accept mail
+	# unless From matches the authentication username.
+	my $smtp_from   = $username ? $username : $args->{from};
+
+	my $smtp_sender;
+	if ($protocol eq 'clear') {
+	    eval "require Net::SMTP" unless Net::SMTP->can('new');
+	    $smtp_sender = 'Net::SMTP';
+	} else {
+	    eval "require Net::SMTP::SSL" unless Net::SMTP::SSL->can('new');
+	    $smtp_sender = 'Net::SMTP::SSL';
+	}
+
+	my $smtp = $smtp_sender->new($server,
+				     Port    => $port,
+				     Debug  => 0,
+	    )
+	    or die "Could not connect to outgoing mail server $server";
+
+	if ($username) {
+	    $smtp->auth($username,$password) 
+		or die "Could not authenticate with outgoing mail server $server"
+	}
+
+	$smtp->mail("$smtp_from\n")                    or die $smtp->message;
+	$smtp->to("$args->{to}\n")                     or die $smtp->message;
+	$smtp->data()                                  or die $smtp->message;
+	$smtp->datasend("From: \"$args->{from_title}\" <$args->{from}>\n")
+	                                               or die $smtp->message;
+	$smtp->datasend("To: $args->{to}\n")           or die $smtp->message;
+	$smtp->datasend("Reply-to: $args->{from}\n")   or die $smtp->message;
+	$smtp->datasend("Subject: $args->{subject}\n") or die $smtp->message;
+	$smtp->datasend("\n")                          or die $smtp->message;
+	$smtp->datasend($args->{msg})                  or die $smtp->message;
+	$smtp->datasend("\n")                          or die $smtp->message;
+	$smtp->dataend()                               or die $smtp->message;
+	$smtp->quit();
+	
+    };
+    return (0,$@) if $@;
+    return (1,'');
+}
+
+# return the database-dependent function for determining current date & time
+sub nowfun {
+    return $dbi =~ /sqlite/i ? "datetime('now','localtime')" : 'now()';
 }
 
 __END__
@@ -827,7 +942,7 @@ CREATE DATABASE gbrowse_login;
 
 GRANT ALL PRIVILEGES 
 ON gbrowse_login.* 
-TO 'login'@'localhost'
+TO 'gbrowse'@'localhost' identified by "gbrowse"
 WITH GRANT OPTION;
 
 use gbrowse_login;

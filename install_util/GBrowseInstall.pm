@@ -16,6 +16,8 @@ use File::Compare 'compare';
 use File::Copy    'copy';
 use GBrowseGuessDirectories;
 
+use constant REGISTRATION_SERVER => 'http://modencode.oicr.on.ca/cgi-bin/gbrowse_registration';
+
 my @OK_PROPS = (conf          => 'Directory for GBrowse\'s config and support files?',
 		htdocs        => 'Directory for GBrowse\'s static images & HTML files?',
 		tmp           => 'Directory for GBrowse\'s temporary data',
@@ -35,7 +37,6 @@ sub ACTION_demo {
     my $self = shift;
     $self->depends_on('config_data');
 
-    my $home = File::Spec->catfile($self->base_dir(),'blib');
     my $dir  = tempdir(
 	'GBrowse_demo_XXXX',
 	TMPDIR=>1,
@@ -45,6 +46,7 @@ sub ACTION_demo {
 	|| GBrowseGuessDirectories->portdemo();
     my $modules = $self->config_data('apachemodules')
 	|| GBrowseGuessDirectories->apachemodules;
+    my $cgiurl  = $self->cgiurl;
 
     mkdir "$dir/conf";
     mkdir "$dir/htdocs";
@@ -59,9 +61,12 @@ sub ACTION_demo {
     my $f    = IO::File->new('MANIFEST');
     while (<$f>) {
 	chomp;
-	if (m!^(conf|htdocs|cgi-bin)!) {
+	if (m!^(conf|htdocs)!) {
 	    $self->copy_if_modified($_ => $dir);
+	} elsif (m!cgi-bin!) {
+	    $self->copy_if_modified(from => $_,to_dir => "$dir/cgi-bin/gb2",flatten=>1);
 	} elsif (m!^sample_data!) {
+	    chdir $self->base_dir();
 	    my ($subdir) = m!^sample_data/([^/]+)/!;
 	    $self->copy_if_modified(from    => $_,
 				    to_dir  => "$dir/htdocs/databases/$subdir",
@@ -70,27 +75,30 @@ sub ACTION_demo {
 	}
     }
     close $f;
+    chdir $self->base_dir;
     open STDOUT,"<&",$saveout;
 
     # fix GBrowse.conf to point to correct directories
-    for my $f ('GBrowse.conf',
-	       'yeast_simple.conf',
-	       'yeast_chr1+2.conf',
-	       'pop_demo.conf',
-	       'yeast_renderfarm.conf') {
-	my $in  = IO::File->new("$dir/conf/$f")         or die $!;
-	my $out = IO::File->new("$dir/conf/$f.new",'>') or die $!;
+    for my $f ("$dir/conf/GBrowse.conf",
+	       "$dir/conf/yeast_simple.conf",
+	       "$dir/conf/yeast_chr1+2.conf",
+	       "$dir/conf/pop_demo.conf",
+	       "$dir/conf/yeast_renderfarm.conf",
+	       "$dir/htdocs/index.html") {
+	my $in  = IO::File->new($f)         or die "$dir/conf/$f: $!";
+	my $out = IO::File->new("$f.new",'>') or die $!;
 	while (<$in>) {
 	    s!\$CONF!$dir/conf!g;
 	    s!\$HTDOCS!$dir/htdocs!g;
 	    s!\$DATABASES!$dir/htdocs/databases!g;
 	    s!\$TMP!$dir/tmp!g;
+	    s/\$CGIURL/$cgiurl/g;
 	    s!\$VERSION!$self->dist_version!eg;
 	    s!^url_base\s*=.+!url_base               = /!g;
 	    $out->print($_);
 	}
 	close $out;
-	rename "$dir/conf/$f.new","$dir/conf/$f";
+	rename "$f.new",$f;
     }
     
     my $conf_data = $self->httpd_conf($dir,$port);
@@ -167,6 +175,7 @@ sub ACTION_realclean {
 sub ACTION_build {
     my $self = shift;
     $self->depends_on('config');
+    $self->depends_on('register') unless $self->registration_done;
     $self->SUPER::ACTION_build;
     mkdir './htdocs/tmp';
     chmod 0777,'./htdocs/tmp';
@@ -245,6 +254,47 @@ sub ACTION_config {
 
     print STDERR "\n**Interactive configuration done. Run './Build reconfig' to reconfigure**\n";
 }
+
+sub ACTION_register {
+    my $self = shift;
+    return unless -t STDIN;
+    print STDERR "\n**Registration**\nGBrowse2 registration is optional, but will help us maintain funding for this project.\n";
+    if (Module::Build->y_n("Do you wish to register your installation?",'y')) {
+	print STDERR "All values are optional, but appreciated.\n";
+	my $user  = prompt('Your name:');
+	my $email = prompt('Your email address:');
+	my $org   = prompt('Your organization:');
+	my $organism = prompt('Organisms you will be using GBrowse for (one line):');
+	my $site  = prompt('If GBrowse will be public, the URL of your web site:');
+	my $result = eval {
+	    eval "use HTTP::Request::Common";
+	    eval "use LWP::UserAgent";
+	    my $ua = LWP::UserAgent->new;
+	    my $response = $ua->request(POST(REGISTRATION_SERVER,
+					     [user=>$user,email=>$email,
+					      org=>$org,organism=>$organism,
+					      site=>$site]
+					));
+	    die $response->status_line unless $response->is_success;
+	    my $content = $response->decoded_content;
+	    $content eq 'ok';
+	};
+	if ($@) {
+	    print STDERR "An error occurred during registration: $@\n";
+	    print STDERR "If you are able to fix the error, you can register later ";
+	    print STDERR "using \"./Build register\"\n";
+	} else {
+	    print STDERR $result ? "Thank you. Your registration was sent successfully.\n"
+		                 : "An error occurred during registration. Thanks anyway.\n";
+	}
+    } else {
+	print STDERR "If you wish to register at a later time please \"./Build register\"\n";
+    }
+    $self->registration_done(1);
+    print STDERR "Press any key to continue\n";
+    my $h = <STDIN>;
+}
+
 
 sub ACTION_config_data {
     my $self = shift;
@@ -449,8 +499,8 @@ sub process_conf_files {
 	    $skip ||= IO::File->new('>>INSTALL.SKIP');
 	    (my $new = $base) =~ s/^conf\///;
 	    my $installed = File::Spec->catfile($install_path,$new);
-	    if (-e $installed && (compare($base,$installed) != 0)) {
-		warn "$installed is already installed. New version will be installed as $installed.new\n";
+	    if (-e $installed && $base =~ /\.conf$/ && (compare($base,$installed) != 0)) {
+		warn "$installed conf file is already installed. New version will be installed as $installed.new\n";
 		copy ("blib/$base","blib/$base.new");
 		print $skip '^',"blib/",quotemeta($base),'$',"\n";
 	    }
@@ -585,7 +635,7 @@ sub substitute_in_place {
     my $wwwuser  = $self->config_data('wwwuser');
     my $perl5lib = $self->perl5lib || '';
     my $installscript = $self->scriptdir;
-    (my $cgiurl = $cgibin) =~ s!^.+/cgi-bin!/cgi-bin!;
+    my $cgiurl   = $self->cgiurl;
 
     while (<$in>) {
 	s/\$INSTALLSCRIPT/$installscript/g;
@@ -686,7 +736,8 @@ END
 sub gbrowse_demo_conf {
     my $self = shift;
     my ($port,$dir) = @_;
-    my $inc  = "$dir/blib/lib:$dir/blib/arch:$dir/lib";
+    my $blib = File::Spec->catfile($self->base_dir(),$self->blib);
+    my $inc  = "$blib/lib:$blib/arch";
     my $more = $self->added_to_INC;
     $inc    .= ":$more" if $more;
 
@@ -744,6 +795,13 @@ sub config_done {
     return $done;
 }
 
+sub registration_done {
+    my $self = shift;
+    my $done = $self->config_data('registration_done');
+    $self->config_data(registration_done=>shift) if @_;
+    return $done;
+}
+
 sub added_to_INC {
     my $self       = shift;
     my @inc        = grep {!/install_util/} eval {$self->_added_to_INC};  # not in published API
@@ -772,6 +830,14 @@ sub ownership_warning {
     my $self = shift;
     my ($path,$owner) = @_;
     warn "*** WARNING: Could not change ownership of $path to '$owner'.\n\tPlease change manually using 'sudo chown -R $owner $path' ***\n";
+}
+
+sub cgiurl {
+    my $self = shift;
+    my $cgibin  = $self->config_data('cgibin');
+    (my $cgiurl = $cgibin) =~ s!^.+/cgi-bin!/cgi-bin!;
+    $cgiurl =~ s!^.+/CGI-Executables!/cgi-bin!; #Macs and their crazy paths
+    return $cgiurl;
 }
 
 1;

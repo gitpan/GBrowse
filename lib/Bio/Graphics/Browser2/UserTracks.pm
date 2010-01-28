@@ -1,6 +1,6 @@
 package Bio::Graphics::Browser2::UserTracks;
 
-# $Id: UserTracks.pm 22454 2009-12-22 20:52:29Z lstein $
+# $Id: UserTracks.pm 22612 2010-01-25 22:28:22Z lstein $
 use strict;
 use Bio::Graphics::Browser2::DataSource;
 use Bio::Graphics::Browser2::DataLoader;
@@ -34,12 +34,14 @@ sub sources_dir_name   { 'SOURCES'   }
 
 sub new {
     my $self = shift;
-    my ($config,$state,$lang) = @_;
+    my ($config,$state,$lang,$uuid) = @_;
+    $uuid ||= $state->{uploadid};
 
     return bless {
 	config   => $config,
 	state    => $state,
 	language => $lang,
+	uuid     => $uuid,
     },ref $self || $self;
 }
 
@@ -49,20 +51,24 @@ sub language { shift->{language}  }
 
 sub path {
     my $self   = shift;
-    $self->config->userdata($self->state->{uploadid}||'');
+    my $uploadid = $self->{uuid} || '';
+    $self->config->userdata($uploadid);
 }
 
 sub tracks {
     my $self     = shift;
     my $path     = $self->path;
     my $imported = shift;
+    return unless $self->{uuid};
 
     my @result;
     opendir D,$path;
     while (my $dir = readdir(D)) {
 	next if $dir =~ /^\.+$/;
 
-	my $is_imported   = (-e File::Spec->catfile($path,$dir,$self->imported_file_name))||0;
+	my $is_imported   = (-e File::Spec->catfile($path,
+						    $dir,
+						    $self->imported_file_name))||0;
 	next if defined $imported && $imported != $is_imported;
 
 	push @result,$dir;
@@ -154,9 +160,10 @@ sub source_files {
     my @files;
     if (opendir my $dir,$path) {
 	while (my $f = readdir($dir)) {
-	    next unless -f File::Spec->catfile($path,$f);
+	    my $path = File::Spec->catfile($path,$f);
+	    next unless -f $path;
 	    my ($size,$mtime) = (stat(_))[7,9];
-	    push @files,[$f,$size,$mtime];
+	    push @files,[$f,$size,$mtime,$path];
 	}
     }
     return @files;
@@ -167,15 +174,14 @@ sub trackname_from_url {
     my $url      = shift;
 
     my $uniquefy = shift;
-
-    (my $track_name = $url) =~ tr!a-zA-Z0-9_%^@.!_!cs;
+    (my $track_name=$url) =~ tr!a-zA-Z0-9_%^@.!_!cs;
 
     my $unique = 0;
     while ($uniquefy && !$unique) {
 	my $path = $self->track_path($track_name);
 	if (-e $path) {
 	    $track_name .= "-0" unless $track_name =~ /-\d+$/;
-	    $track_name  =~ s/-(\d+)$/'-'.($1+1)/e;
+	    $track_name  =~ s/-(\d+)$/'-'.($1+1)/e; # add +1 to the trackname
 	} else {
 	    $unique++;
 	}
@@ -219,6 +225,23 @@ END
     return (1,'',[$track_name]);
 }
 
+sub reload_file {
+    my $self  = shift;
+    my $track   = shift;
+    my @sources = $self->source_files($track);
+    for my $s (@sources) {
+	my ($name,$size,$mtime,$path) = @$s;
+	rename $path,"$path.bak"            or next;
+	my $io = IO::File->new("$path.bak") or next;
+	my ($result) = $self->upload_file($name,$io,'',1);
+	if ($result) {
+	    unlink "$path.bak";
+	} else {
+	    rename "$path.bak",$path;
+	}
+    }
+}
+
 sub upload_data {
     my $self = shift;
     my ($file_name,$data,$content_type,$overwrite) = @_;
@@ -238,10 +261,10 @@ sub upload_file {
     } elsif ($content_type eq 'application/bzip2' or $file_name =~ /\.bz2$/) {
 	$fh = $self->install_filter($fh,'bunzip2 -c');
     }
-
+    
     # guess the file type from the first non-blank line
-    my ($type,$lines)   = $self->guess_upload_type($file_name,$fh);
-    $lines            ||= [];
+    my ($type,$lines,$eol)   = $self->guess_upload_type($file_name,$fh);
+    $lines                 ||= [];
     my (@tracks,$fcgi);
 
     my $result= eval {
@@ -249,13 +272,8 @@ sub upload_file {
 	croak "Could not guess the type of the file $file_name"
 	    unless $type;
 
-	my $loader = $self->get_loader($type);
-	my $load   = $loader->new($track_name,
-				  $self->track_path($track_name),
-				  $self->track_conf($track_name),
-				  $self->config,
-				  $self->state->{uploadid},
-	    );
+	my $load = $self->get_loader($type,$track_name);
+	$load->eol_char($eol);
 	@tracks = $load->load($lines,$fh);
 	1;
     };
@@ -266,14 +284,20 @@ sub upload_file {
     }
 
     my $msg = $@;
-    warn $msg if $msg;
+    warn "UPLOAD ERROR: ",$msg if $msg;
     $self->delete_file($track_name) unless $result;
-    return ($result,"$msg",\@tracks);
+    return ($result,$msg,\@tracks);
 }
 
 sub delete_file {
     my $self = shift;
     my $track_name  = shift;
+    my $loader = Bio::Graphics::Browser2::DataLoader->new($track_name,
+							  $self->track_path($track_name),
+							  $self->track_conf($track_name),
+							  $self->config,
+							  $self->state->{uploadid});
+    $loader->drop_databases($self->track_conf($track_name));
     rmtree($self->track_path($track_name));
 }
 
@@ -345,40 +369,80 @@ sub status {
 
 sub get_loader {
     my $self   = shift;
-    my $type   = shift;
+    my ($type,$track_name) = @_;
+
     my $module = "Bio::Graphics::Browser2::DataLoader::$type";
     eval "require $module";
     die $@ if $@;
-    return $module;
+    return $module->new($track_name,
+			$self->track_path($track_name),
+			$self->track_conf($track_name),
+			$self->config,
+			$self->state->{uploadid},
+	);
 }
 
+# guess the file type and eol based on its name and the first 1024 bytes
+# of the file. The @$lines will contain the lines that were consumed
+# during this operation so that the info isn't lost.
 sub guess_upload_type {
     my $self = shift;
     my ($filename,$fh) = @_;
 
+    my $buffer;
+    read($fh,$buffer,1024);
+
+    # first check for binary upload; currently only BAM
+    return ('bam',[$buffer],undef)
+	if substr($buffer,0,6) eq "\x1f\x8b\x08\x04\x00\x00";
+    
+    # everything else is text (for now)
+    my $eol = $buffer =~ /\015\012/ ? "\015\012"  # MS-DOS
+	     :$buffer =~ /\015/     ? "\015"      # Macintosh
+	     :$buffer =~ /\012/     ? "\012"      # Unix
+	     :"\012";  # default to Unix
+
+    local $/ = $eol;
+    my @lines     = map {$_.$eol} split $eol,$buffer;
+    $lines[-1]    =~ s/$eol$// unless $buffer =~ /$eol$/;
+    my $remainder = <$fh>;
+    $remainder   ||= '';
+    $lines[-1]   .= $remainder;
+
     # first guess based on file names
-    return ('gff')          if $filename =~ /\.gff(\.(gz|bz2|Z))?$/i;
-    return ('gff3')         if $filename =~ /\.gff3(\.(gz|bz2|Z))?$/i;
-    return ('bed')          if $filename =~ /\.bed(\.(gz|bz2|Z))?$/i;
-    return ('wiggle')       if $filename =~ /\.wig(\.(gz|bz2|Z))?$/i;
-    return ('featurefile')  if $filename =~ /\.fff(\.(gz|bz2|Z))?$/i;
-    return ('bam')          if $filename =~ /\.bam(\.gz)?$/i;
-    return ('sam')          if $filename =~ /\.sam(\.gz)?$/i;
+    my $ftype = $filename =~ /\.gff(\.(gz|bz2|Z))?$/i  ? 'gff'
+	       :$filename =~ /\.gff3(\.(gz|bz2|Z))?$/i ? 'gff3'
+	       :$filename =~ /\.bed(\.(gz|bz2|Z))?$/i  ? 'bed'
+	       :$filename =~ /\.wig(\.(gz|bz2|Z))?$/i  ? 'wiggle'
+	       :$filename =~ /\.fff(\.(gz|bz2|Z))?$/i  ? 'featurefile'
+	       :$filename =~ /\.bam(\.gz)?$/i          ? 'bam'
+	       :$filename =~ /\.sam(\.gz)?$/i          ? 'sam'
+	       :undef;
+    
+    return ($ftype,\@lines,$eol) if $ftype;
 
-    my @lines;
-    while (my $line = <$fh>) {
-	push @lines,$line;
-	return ('featurefile',\@lines) if $line =~ /^reference/i;
-	return ('featurefile',\@lines) if $line =~ /\w+:\d+\.\.\d+/i;
-	return ('gff2',\@lines)        if $line =~ /^\#\#gff-version\s+2/;
-	return ('gff3',\@lines)        if $line =~ /^\#\#gff-version\s+3/;
-	return ('wiggle',\@lines)      if $line =~ /type=wiggle/;
-	return ('bed',\@lines)         if $line =~ /^\w+\s+\d+\s+\d+/;
-	return ('sam',\@lines)         if $line =~ /^\@[A-Z]{2}/;
-	return ('sam',\@lines)         if $line =~ /^[^ \t\n\r]+\t[0-9]+\t[^ \t\n\r@=]+\t[0-9]+\t[0-9]+\t(?:[0-9]+[MIDNSHP])+|\*/;
-	return ('bam',\@lines)         if substr($line,0,6) eq "\x1f\x8b\x08\x04\x00\x00";
+    # otherwise scan the thing until we find a pattern we know about
+    # or hit the end of the file. Extra lines that we read are 
+    # accumulated into the @lines array.
+    my $i = 0;
+    while (1) {
+	my $line;
+	if ($i <= $#lines) {
+	    $line = $lines[$i++];
+	} else {
+	    my $line = <$fh>;
+	    last unless $line;
+	    push @lines,$line;
+	}
+	return ('featurefile',\@lines,$eol) if $line =~ /^reference/i;
+	return ('featurefile',\@lines,$eol) if $line =~ /\w+:\d+\.\.\d+/i;
+	return ('gff2',\@lines,$eol)        if $line =~ /^\#\#gff-version\s+2/;
+	return ('gff3',\@lines,$eol)        if $line =~ /^\#\#gff-version\s+3/;
+	return ('wiggle',\@lines,$eol)      if $line =~ /type=wiggle/;
+	return ('bed',\@lines,$eol)         if $line =~ /^\w+\s+\d+\s+\d+/;
+	return ('sam',\@lines,$eol)         if $line =~ /^\@[A-Z]{2}/;
+	return ('sam',\@lines,$eol)         if $line =~ /^[^ \t\n\r]+\t[0-9]+\t[^ \t\n\r@=]+\t[0-9]+\t[0-9]+\t(?:[0-9]+[MIDNSHP])+|\*/;
     }
-
     return;
 }
 
@@ -443,5 +507,27 @@ sub READLINE {
 }
 
 sub CLOSE { close shift->{fh} } 
+
+# this is for the administrator-uploaded tracks.
+# we simply change the location of the uploads
+package Bio::Graphics::Browser2::AdminTracks;
+use base 'Bio::Graphics::Browser2::UserTracks';
+
+sub path {
+    my $self    = shift;
+    my $globals   = $self->config->globals;
+    my $admin_dbs = $globals->admin_dbs 
+	or return $self->SUPER::path;
+    my $source    = $self->config->name;
+    my $path      = File::Spec->catfile($admin_dbs,$source);
+    return $path;
+}
+
+sub get_loader {
+    my $self = shift;
+    my $loader = $self->SUPER::get_loader(@_);
+    $loader->force_category('General');
+    return $loader;
+}
 
 1;

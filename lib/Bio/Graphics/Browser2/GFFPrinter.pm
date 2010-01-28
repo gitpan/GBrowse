@@ -7,7 +7,7 @@ package Bio::Graphics::Browser2::GFFPrinter;
 #
 ###################################################################
 
-# $Id: GFFPrinter.pm 22467 2009-12-23 21:52:32Z lstein $
+# $Id: GFFPrinter.pm 22614 2010-01-26 17:06:23Z lstein $
 
 # Dirt simple GFF3 dumper, suitable for a lightweight replacement to DAS.
 # Call this way:
@@ -34,7 +34,6 @@ sub new {
     my $self    = bless {
         data_source => $options{-data_source},
         stylesheet  => $options{-stylesheet},
-        id          => $options{-id},
         'dump'      => $options{'-dump'},  # in quotes because "dump" is a perl keyword
         labels      => $options{-labels},
 	mimetype    => $options{-mimetype},
@@ -63,8 +62,6 @@ sub print_stylesheet {
 
 sub print_gff3 {
     my $self = shift;
-
-    warn "print_gff3()";
 
     my $segment= $self->get_segment;
     my $labels = $self->get_labels;
@@ -168,18 +165,27 @@ sub get_segment {
     my $tracks     = $self->get_labels;
     $tracks        = $self->all_databases unless $tracks;
 
-    # Find the segment - it may be hiding in any of the databases.
-    my (%seenit,$s,$db);
-    for my $track ('general',@$tracks) {
-	$db = $datasource->open_database($track) or next;
-	next if $seenit{$db}++;
-	($s) = $db->segment(-name  => $seqid,
-			    -start => $start,
-			    -stop  => $end);
-	last if $s;
+    my $search = Bio::Graphics::Browser2::RegionSearch->new(
+	{
+	    source => $datasource,
+	    state  => $self->state || {},
+	}
+	);
+    $search->init_databases();
+    my ($f) = $search->search_features({-search_term=>$segment});
+    unless ($f) {
+	print header('text/plain'), "# The landmark named $segment was not found.\n";
+	return;
     }
-    $self->segment($s);
-    return $s;
+    $self->segment($f);
+    return $f;
+}
+
+sub state {
+    my $self = shift;
+    my $d    = $self->{state};
+    $self->{state} = shift if @_;
+    $d;
 }
 
 sub all_databases {
@@ -263,7 +269,7 @@ sub labels_to_files {
     my $search = Bio::Graphics::Browser2::RegionSearch->new(
 	{
 	    source => $data_source,
-	    state  => { },
+	    state  => $self->state || {},
 	}
 	);
     $search->init_databases();

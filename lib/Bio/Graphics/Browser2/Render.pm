@@ -91,12 +91,30 @@ sub state {
   $d;
 }
 
-sub user_tracks {
+sub is_admin {
     my $self = shift;
-    return $self->{usertracks} 
-       ||= Bio::Graphics::Browser2::UserTracks->new($self->data_source,
-						   $self->state,
-						   $self->language);
+    my $login = $self->session->username      or return;
+    my $admin = $self->globals->admin_account or return;
+    return $login eq $admin;
+}
+
+
+sub user_tracks {
+    my $self  = shift;
+    my $uuid  = shift;
+
+    # note: Bio::Graphics::Browser2::AdminTracks is a subclass of UserTracks
+    # that is defined within the UserTracks.pm file.
+    my $class = $self->is_admin ? 'Bio::Graphics::Browser2::AdminTracks'
+                                : 'Bio::Graphics::Browser2::UserTracks';
+    
+    $uuid  ||= $self->state->{upload_id} || '';
+    return $self->{usertracks}{$uuid} 
+       ||= $class->new($self->data_source,
+		       $self->state,
+		       $self->language,
+		       $uuid,
+	   );
 }
 
 sub remote_sources {
@@ -144,7 +162,7 @@ sub run {
        url(-path=>1),' ',
        query_string() if $debug;
 
-  $self->set_source();
+  $self->set_source() && return;
 
   warn "[$$] add_user_tracks()" if $debug;
   # This guarantees that all user-specific tracks
@@ -197,10 +215,7 @@ sub set_source {
 	my $url  = CGI::url(-absolute=>1,-path_info=>0);
 	$url     =~ s!(gbrowse[^/]*)(?\!.*gbrowse)/.+$!$1!;  # fix CGI/Apache bug
 	$url    .= "/$source/";
-	# clear out some of the session variables that shouldn't transfer
-	# delete $self->state->{name};
-	# delete $self->state->{q};
-	# $url .= "?$args" if $args;
+	$url .= "?$args" if $args;
 	print CGI::redirect($url);
 	return 1;
     }
@@ -281,6 +296,11 @@ sub asynchronous_event {
 	return @result;
     }
 
+    if ( my $track_name = param('display_citation') ) {
+         my $html = $self->display_citation($track_name);
+         return ( 200, 'text/html', $html );
+    }
+
     elsif (my $action = param('action')) {
 	my $dispatch = Bio::Graphics::Browser2::Action->new($self);
 	my $method   = "ACTION_${action}";
@@ -299,18 +319,18 @@ sub authorize_user {
     my $self = shift;
     my ($session,$error);
     my ($username,$id,$remember,$using_openid) = @_;
-
-	warn "Checking current session";
+    
+    warn "Checking current session" if DEBUG;
     my $current = $self->session->id;
     if($current eq $id) {
-        warn "Using current session";
+        warn "Using current session" if DEBUG;
         $session = $self->session;
     } elsif($self->session->private) {
         warn "Another account is currently in use";
         return ("error");
     } else {
-        warn "Retrieving old session";
-	    $session = $self->globals->session($id);  # create/retrieve session
+        warn "Retrieving old session" if DEBUG;
+	$session = $self->globals->session($id);  # create/retrieve session
     }
     
     my $nonce = Bio::Graphics::Browser2::Util->generate_id;
@@ -318,6 +338,7 @@ sub authorize_user {
 
     $session->set_nonce($nonce,$ip,$remember);
     $session->username($username);
+
     $session->using_openid($using_openid);
 
     $session->flush();
@@ -357,6 +378,7 @@ sub background_track_render {
     else{
         $display_details = 0;
         $details_msg = h1(
+	    br(),
             $self->tr(
                 'TOO_BIG',
                 scalar $self->data_source()->unit_label($self->get_max_segment),
@@ -647,6 +669,7 @@ sub render_body {
   my $region   = $self->region;
   my $features = $region->features;
   my $settings = $self->state;
+  my $source   = $self->data_source;
 
   my $title    = $self->generate_title($features);
 
@@ -664,7 +687,9 @@ sub render_body {
   }
 
   elsif (my $seg = $region->seg) {
-      $main_page .= $self->render_panels($seg,{overview=>1,regionview=>1,detailview=>1});
+      $main_page .= $self->render_panels($seg,{overview   => $source->show_section('overview'),
+					       regionview => $source->show_section('region'),
+					       detailview => $source->show_section('detail')});
       $main_page .= $self->render_toggle_track_table;
       $main_page .= $self->render_galaxy_form($seg);
   }
@@ -677,6 +702,8 @@ sub render_body {
 
   $output .= $self->render_tabbed_pages($main_page,$upload_share,$global_config);
   $output .= $self->render_bottom($features);
+
+  $output .= $self->render_login_section;
 
   print $output;
 }
@@ -698,17 +725,14 @@ sub render_login_section {
 
     if (param('confirm') && param('code') && param('id')) {
 	$output .= $self->render_login_account_confirm(param('code'));
-    }elsif (param('openid_confirm') && param('page') && param('s')) {
+    } elsif (param('openid_confirm') && param('page') && param('s')) {
 	$output .= $self->render_login_openid_confirm(param('page'),param('s'));
     }
     return $output;
 }
 
 sub render_upload_share_section {
-    my $self = shift;
-    return div($self->render_toggle_userdata_table,
-	       $self->render_toggle_import_table,
-	);
+    croak "implement in subclass";
 }
 
 
@@ -812,8 +836,8 @@ sub render_panels {
         my $panels_html    = $self->get_blank_panels( [$self->overview_tracks],
 						      'overview' );
 	my $drag_script    = $self->drag_script( 'overview_panels', 'track' );
- 	$html .= div(
- 	    $self->toggle({tight=>1},
+	$html .= div(
+	    $self->toggle({tight=>1},
  			  'Overview',
  			  div({ -id => 'overview_panels', -class => 'track', -style=>'padding-bottom:3px' },
  			      $scale_bar_html, $panels_html,
@@ -844,21 +868,24 @@ sub render_panels {
 						      'detail');
         my $drag_script    = $self->drag_script( 'detail_panels', 'track' );
         my $details_msg    = span({ -id => 'details_msg', },'');
+	my $clear_hilites  = $self->clear_highlights;
         $html .= div(
             $self->toggle({tight=>1},
-                'Details',
-                div({ -id => 'detail_panels', -class => 'track'},
-                    $details_msg,
-		    $scale_bar_html, 
-		    $panels_html,
-		    div({-align=>'left'},$self->html_frag('html4',$self->state))
-                )
+			  'Details',
+			  div({ -id => 'detail_panels', -class => 'track'},
+			      $details_msg,
+			      $scale_bar_html, 
+			      $panels_html
+			  ),
+			  div({-style=>'text-align:right'},$clear_hilites),
+			  div($self->html_frag('html4',$self->state))
             )
-        ) . $drag_script;
+	    ) . $drag_script;
     }
-
     return $html;
 }
+
+sub clear_highlights { croak 'implement in subclass' }
 
 sub scale_bar {
     my $self         = shift;
@@ -980,12 +1007,16 @@ sub region {
 
     return $self->{region} if exists $self->{region};
 
-    my $db = $self->data_source->open_database();
+    my $source = $self->data_source;
+    my $db     = $source->open_database();
+    my $dbid   = $source->db2id($db);
 
     my $region   = Bio::Graphics::Browser2::Region->new(
- 	{ source => $self->data_source,
- 	  state  => $self->state,
- 	  db     => $db }
+ 	{ source     => $self->data_source,
+ 	  state      => $self->state,
+ 	  db         => $db,
+	  searchopts => $source->search_options($dbid),
+	}
  	) or die;
 
     # run any "find" plugins
@@ -1088,7 +1119,7 @@ sub get_search_object {
 	  state  => $self->state,
 	});
     $search->init_databases(
-	$self->state->{dbid} ? [$self->state->{dbid}]
+	param('dbid') ? [param('dbid')]
 	:()
 	);
     return $self->{searchobj} = $search;
@@ -1222,17 +1253,20 @@ sub handle_gff_dump {
     my $dumper = Bio::Graphics::Browser2::GFFPrinter->new(
         -data_source => $self->data_source(),
         -stylesheet  => $actions{trackdef}   ||  'no',
-        -id          => param('id')          || undef,         
         '-dump'      => param('d')           || undef,
         -labels      => [ param('type'), param('t') ],
         -mimetype    => param('m')           || undef,
     ) or return 1;
+
+    # so that another user's tracks are added if requested
+    $self->add_user_tracks($self->data_source,param('uuid')) if param('uuid');
 
     if ($actions{scan}) {
 	print header('text/plain');
 	$dumper->print_scan();
     }
     else {
+	$dumper->state($self->state);
 	$dumper->get_segment($segment) or return 1;
 	if ($actions{save} && $actions{gff3}) {
 	    print header( -type                => $dumper->get_mime_type,
@@ -1392,6 +1426,7 @@ sub do_plugin_dump {
 #======================== remote sources ====================
 sub init_remote_sources {
   my $self = shift;
+  warn "init_remote_sources()" if DEBUG;
   my $remote_sources   = Bio::Graphics::Browser2::RemoteSet->new($self->data_source,
                                                                 $self->state,
                                                                 $self->language);
@@ -1414,15 +1449,14 @@ sub galaxy_form { }
 
 sub delete_uploads {
     my $self = shift;
-    my $userdata = Bio::Graphics::Browser2::UserTracks->new($self->data_source,
-							    $self->state,
-							    $self->language);
+    my $userdata = $self->user_tracks;
     my @files  = $userdata->tracks();
     for my $file (@files) {
 	my @tracks = $userdata->labels($file);
 	$userdata->delete_file($file);
 	$self->remove_track_from_state($_) foreach @tracks;
     }
+    $self->data_source->clear_usertracks();
 }
 
 sub cleanup {
@@ -1442,6 +1476,22 @@ sub fatal_error {
 sub zoomBar {
     my $self = shift;
     croak 'Please define zoomBar() in a subclass of Bio::Graphics::Browser2::Render';
+}
+
+sub add_remote_tracks {
+    my $self        = shift;
+    my $urls        = shift;
+    my $user_tracks = $self->user_tracks;
+    my %tracks;
+    for my $url (@$urls) {
+	my ($result,$msg,$tracks) 
+	    = $user_tracks->import_url($url,1);
+	next unless $result;
+	$tracks{$_}++ foreach @$tracks;
+    }
+    $self->add_user_tracks($self->data_source);
+    $self->add_track_to_state($_) foreach keys %tracks;
+    $self->init_remote_sources();
 }
 
 sub write_auto {
@@ -1482,10 +1532,9 @@ sub write_auto {
     }
 
     my ($result,$msg,$tracks) 
-	= $user_tracks->upload_data('My Track',$feature_file,'overwrite');
+	= $user_tracks->upload_data('My Track',$feature_file,'text/plain','overwrite');
     warn $msg unless $result;
 
-    local $self->data_source->{_user_tracks} = {};
     $self->add_user_tracks($self->data_source);
     $self->add_track_to_state($_) foreach @$tracks;
 }
@@ -1498,18 +1547,44 @@ sub handle_download_userdata {
     my $userdata = $self->user_tracks;
     my $file = $ftype eq 'conf' ? $userdata->track_conf($track)
 	                        : $userdata->data_path($track,$ftype);
+
     my $fname = basename($file);
+    my $is_text = -T $file;
 
     print CGI::header(-attachment   => $fname,
-		      -charset      => $self->tr('CHARSET'),
-		      -type         => -T $file ? 'text/plain' : 'application/octet-stream');
+		      -charset      => $self->tr('CHARSET'), # 'US-ASCII' ?
+		      -type         => $is_text ? 'text/plain' : 'application/octet-stream');
 
     my $f = $ftype eq 'conf' ? $userdata->conf_fh($track)
 	                     : IO::File->new($file);
     $f or croak "$file: $!";
-    print $_ while <$f>;
+
+    if ($is_text) {
+	# try to make the file match the native line endings
+	# not necessary?
+	# my $eol = $self->guess_eol();
+	while (<$f>) {
+	    print;
+         #	chomp;
+	 #      print $_,$eol;
+	}
+    } else {
+	my $buffer;
+	while (read($f,$buffer,1024)) {
+	    print $buffer;
+	}
+    }
     close $f;
     return 1;
+}
+
+sub guess_eol {
+    my $self = shift;
+    my $agent = CGI->user_agent;
+    return "\012"     if $agent =~ /linux/i;
+    return "\015"     if $agent =~ /macintosh/i;
+    return "\015\012" if $agent =~ /windows/i;
+    return "\n"; # default
 }
 
 sub handle_quickie {
@@ -1558,7 +1633,7 @@ sub parse_feature_str {
     }
     return unless $reference;
 
-    $type = 'Your Features' unless defined $type;
+    $type = 'region' unless defined $type;
     $name = "Feature " . ++$self->{added_features} unless defined $name;
 
     my @segments
@@ -1774,9 +1849,7 @@ sub cleanup_dangling_uploads {
     }
 
 
-    my $usertracks = Bio::Graphics::Browser2::UserTracks->new($self->data_source,
-							      $state,
-							      $self->language);
+    my $usertracks = $self->user_tracks;
     my %tracks = map {$_=>1} $usertracks->tracks();
 
     for my $k (keys %name_to_id) {
@@ -1865,6 +1938,7 @@ sub filter_subtrack {
 
     my %filters     = map {$_=>1} @$subtracks;
     my ($method,@values) = shellwords $self->data_source->setting($label=>'select');
+    foreach (@values) {s/#.+$//}  # get rid of comments
     $state->{features}{$label}{filter}{values} = {map {$_=>$filters{$_}} @values};
     $state->{features}{$label}{filter}{method} = $method;
 }
@@ -1962,6 +2036,17 @@ sub update_options {
 sub update_tracks {
   my $self  = shift;
   my $state = shift;
+
+  if (my @add = param('add')) {
+      my @style = param('style');
+      $self->handle_quickie(\@add,\@style);
+  }
+
+  if (my @url = param('eurl')) {
+      my $group_separator = GROUP_SEPARATOR;
+      my @unescaped = map {s/$group_separator/;/g;$_} @url;
+      $self->add_remote_tracks(\@unescaped);
+  }
 
   # selected tracks can be set by the 'label' parameter
   if (my @l = param('label')) {
@@ -2072,7 +2157,7 @@ sub update_coordinates {
       undef $state->{start};
       undef $state->{stop};
       $state->{name} = param('name');
-      $state->{dbid} = param('dbid') if param('dbid'); # get rid of this
+      $state->{dbid} = param('dbid'); # get rid of this
   }
 }
 
@@ -2515,10 +2600,10 @@ sub update_section_visibility {
   }
 }
 
-sub update_external_sources {
-  my $self = shift;
-  $self->remote_sources->set_sources([param('eurl')]) if param('eurl');
-}
+#sub update_external_sources {
+#  my $self = shift;
+#  $self->remote_sources->set_sources([param('eurl')]) if param('eurl');
+#}
 
 sub update_galaxy_url {
     my $self  = shift;
@@ -2725,7 +2810,8 @@ sub set_tracks {
     for my $label (@labels) {
 	my ($main,$subtracks) = split '/',$label;
 	$subtracks ||= '';
-	my @subtracks         = split ' ',$subtracks;
+	my @subtracks         = shellwords($subtracks);
+	foreach (@subtracks) {s/#.+$//}  # get rid of comments
 	push @main,$main;
 	if (@subtracks) {
 	    $self->filter_subtrack($main,\@subtracks);
@@ -3290,11 +3376,14 @@ sub external_data {
 # Supplement data source with user uploads
 sub add_user_tracks {
     my $self        = shift;
-    my $data_source = shift;
-    my $userdata = Bio::Graphics::Browser2::UserTracks->new($data_source,
-							    $self->state,
-							    $self->language);
+    my ($data_source,$uuid) = @_;
+
+    return if $self->is_admin;  # admin user's tracks are already in main config file.
+
+    my $userdata = $self->user_tracks($uuid);
     my @user_tracks = $userdata->tracks;
+
+#    warn "adding usertracks for $uuid, getting @user_tracks";
     for my $track (@user_tracks) {
 	my $config_path = $userdata->track_conf($track);
 	eval {$data_source->parse_user_file($config_path)};
@@ -3361,9 +3450,6 @@ sub bookmark_link {
   $q->param(-name=>'id',   -value=>$settings->{userid});  # slight inconsistency here
   $q->param(-name=>'label',-value=>$self->join_selected_tracks);
 
-  # handle external urls
-  my @url = grep {/^(ftp|http):/} @{$settings->{tracks}};
-  $q->param(-name=>'eurl',    -value=>\@url);
   $q->param(-name=>'h_region',-value=>$settings->{h_region}) if $settings->{h_region};
   my @h_feat= map {"$_\@$settings->{h_feat}{$_}"} keys %{$settings->{h_feat}};
   $q->param(-name=>'h_feat',  -value=>\@h_feat) if @h_feat;

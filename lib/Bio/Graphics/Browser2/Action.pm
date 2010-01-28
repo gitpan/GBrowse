@@ -1,6 +1,6 @@
 package Bio::Graphics::Browser2::Action;
 
-#$Id: Action.pm 22444 2009-12-21 18:35:28Z lstein $
+#$Id: Action.pm 22614 2010-01-26 17:06:23Z lstein $
 # dispatch
 
 use strict;
@@ -53,6 +53,7 @@ sub ACTION_navigate {
     my $q      = shift;
 
     my $render   = $self->render;
+    my $source   = $self->data_source;
     my $settings = $self->settings;
 
     my $action = $q->param('navigate') 
@@ -65,14 +66,14 @@ sub ACTION_navigate {
 	= $render->background_track_render();
 
     my $overview_scale_return_object
-	= $render->asynchronous_update_overview_scale_bar();
+	= $render->asynchronous_update_overview_scale_bar() if $source->show_section('overview');
 
     my $region_scale_return_object
 	= $render->asynchronous_update_region_scale_bar()
-            if ( $settings->{region_size} );
+            if ( $settings->{region_size} && $source->show_section('region'));
 
     my $detail_scale_return_object
-	= $render->asynchronous_update_detail_scale_bar();
+	= $render->asynchronous_update_detail_scale_bar() if $source->show_section('detail');
 
     my $segment_info_object = $render->segment_info_object();
 
@@ -245,6 +246,7 @@ sub ACTION_rerender_track {
 
     $render->init_database();
     $render->init_plugins();
+    $render->init_remote_sources if $track_id =~ /http|ftp|das/;
 
     my ( $track_keys, $display_details, $details_msg )
 	= $render->background_individual_track_render($track_id,$nocache);
@@ -289,7 +291,7 @@ sub ACTION_change_track_order {
     my $self = shift;
     my $q    = shift;
 
-    warn "change_track_order()";
+    warn "change_track_order()" if DEBUG;
 
     my $settings = $self->state;
     my @labels   = $q->param('label[]') or return;
@@ -333,7 +335,6 @@ sub ACTION_autocomplete {
 
 sub ACTION_reset_dsn {
     my $self = shift;
-    warn "here I am";
     $self->data_source->clear_cached_config();
     return (204,'text/plain',undef);
 }
@@ -341,11 +342,12 @@ sub ACTION_reset_dsn {
 sub ACTION_authorize_login {
     my $self = shift;
     my $q    = shift;
-    my $username = $q->param('username') or croak;
-    my $session  = $q->param('session')  or croak;
-    my $openid   = $q->param('openid')   or croak;
+    my $username = $q->param('username') or croak "no username provided";
+    my $session  = $q->param('session')  or croak "no session ID provided";
+    my $openid   = $q->param('openid');   # or croak;
+    my $remember = $q->param('remember'); # or croak;
 
-    my ($id,$nonce) = $self->render->authorize_user($username,$session,$openid);
+    my ($id,$nonce) = $self->render->authorize_user($username,$session,$remember,$openid);
     return (200,'application/json',{id=>$id,authority=>$nonce});
 }
 
@@ -380,10 +382,7 @@ sub ACTION_upload_file {
     my $state    = $self->state;
     my $session  = $render->session;
 
-    my $usertracks = Bio::Graphics::Browser2::UserTracks->new($render->data_source,
-							      $render->state,
-							      $render->language);
-
+    my $usertracks = $render->user_tracks;
     my $name = $fh ? File::Basename::basename($fh) : $q->param('name');
     $name ||= 'New track definition';
 
@@ -403,6 +402,8 @@ sub ACTION_upload_file {
 
     # simplify the message if it is coming from BioPerl
     $msg = $1 if $msg =~ /MSG:\s+(.+?)\nSTACK/s;
+    $msg =~ s/\n.+\Z//s;
+    $msg =~ s/[\n"]/ /g;
 
     my $return_object        = { success   => $result||0,
 				 error_msg => CGI::escapeHTML($msg),
@@ -425,10 +426,7 @@ sub ACTION_import_track {
     my $state    = $self->state;
     my $session  = $render->session;
 
-    my $usertracks = Bio::Graphics::Browser2::UserTracks->new($render->data_source,
-							      $render->state,
-							      $render->language);
-
+    my $usertracks = $render->user_tracks;
     $state->{current_upload} = $url;
     $session->flush();
     $session->unlock();
@@ -454,9 +452,7 @@ sub ACTION_delete_upload {
     my $file   = $q->param('file') or croak;
     my $render = $self->render;
 
-    my $usertracks = Bio::Graphics::Browser2::UserTracks->new($render->data_source,
-							    $render->state,
-							    $render->language);
+    my $usertracks = $render->user_tracks;
     my @tracks     = $usertracks->labels($file);
     
     foreach (@tracks) {
@@ -482,9 +478,7 @@ sub ACTION_upload_status {
     my $render     = $self->render;
 
     if ($file_name = $state->{uploads}{$upload_id}[0]) {
-	my $usertracks = Bio::Graphics::Browser2::UserTracks->new($render->data_source,
-								  $render->state,
-								  $render->language);
+	my $usertracks = $render->user_tracks;
 	$status      = $usertracks->status($file_name);
 	return (200,'text/html',"<b>$file_name:</b> <i>$status</i>");
     } else {
@@ -501,15 +495,12 @@ sub ACTION_cancel_upload {
     my $render     = $self->render;
 
     if ($state->{uploads}{$upload_id} && (my ($file_name,$pid) = @{$state->{uploads}{$upload_id}})) {
-	my $usertracks = Bio::Graphics::Browser2::UserTracks->new($render->data_source,
-								  $render->state,
-								  $render->language);
+	my $usertracks = $render->user_tracks;
 	kill TERM=>$pid;
 	$usertracks->delete_file($file_name);
 	delete $state->{uploads}{$upload_id};
 	return (200,'text/html',"<div class='error'><b>$file_name:</b> <i>Cancelling</i></div>");
     } else {
-	warn "here I am";
 	return (200,'text/html','<div class="error"><i>Not found</i></div>');
     }
     
@@ -524,9 +515,7 @@ sub ACTION_set_upload_description {
     my $upload_name = $q->param('upload_name') or croak;
     my $upload_desc = $q->param('description') or croak;
 
-    my $usertracks = Bio::Graphics::Browser2::UserTracks->new($render->data_source,
-							      $render->state,
-							      $render->language);
+    my $usertracks = $render->user_tracks;
     $usertracks->description($upload_name,$upload_desc);
     return (204,'text/plain',undef);
 }
@@ -553,6 +542,117 @@ sub ACTION_modifyUserData {
     my @tracks     = $userdata->labels($track);
     $self->render->track_config($_,'revert') foreach @tracks;
     return (200,'application/json',{tracks=>\@tracks});
+}
+
+sub ACTION_about_gbrowse {
+    my $self = shift;
+    my $q    = shift;
+
+    my $html = $q->div(
+	$q->img({-src=>'http://phenomics.cs.ucla.edu/GObase/images/gmod.gif',
+		 -align=>'right',
+		 -width=>'100',
+		}),
+	$q->p(
+	    $q->b(
+		"This is the Generic Genome Browser version $Bio::Graphics::Browser2::VERSION"
+	    )
+	    ),
+	$q->p(
+	    'It is part of the',$q->a({-href=>'http://www.gmod.org'},'Generic Model Organism (GMOD)'),
+	    'suite of genome analysis software tools.'),
+	$q->p(
+	    'The software is copyright 2002-2010 Cold Spring Harbor Laboratory,',
+	    'Ontario Institute for Cancer Research,',
+	    'and the University of California, Berkeley.')
+	);
+    return (200,'text/html',$html)
+}
+
+sub ACTION_about_dsn {
+    my $self = shift;
+    my $q    = shift;
+
+    my $source = $self->data_source;
+    my $html;
+
+    if (my $metadata = $source->metadata) {
+	my $taxid    = $metadata->{taxid} || $metadata->{species};
+	$taxid    =~ tr/ /+/;
+
+	my $coordinates = $metadata->{coordinates};
+	my $build       = $metadata->{authority} . '_' . $metadata->{coordinates_version};
+	my $build_link  = $coordinates  ? $q->a({-href=>$coordinates},$build)
+	                 :$build ne '_' ? $q->b($build)
+			 :'';
+
+	$html     = $q->h1($self->render->tr('ABOUT_NAME',$source->description));
+	$html    .= $q->p({-style=>'margin-left:1em'},$metadata->{description});
+	my @lines;
+	push @lines,(
+	    $q->dt($q->b('Species:')),
+	    $q->dd($q->a({-href=>"http://www.ncbi.nlm.nih.gov/Taxonomy/Browser/wwwtax.cgi?name=$taxid"},
+			 $q->i($metadata->{species})))
+	) if $metadata->{species};
+
+	push @lines,(
+	    $q->dt($q->b('Build:')),
+	    $q->dd($build_link)
+	) if $build_link;
+
+	$html    .= $q->h1('Species and Build Information').
+	    $q->div({-style=>'margin-left:1em'},$q->dl(@lines)) if @lines;
+
+	my $attribution = '';
+
+	if (my $maintainer = $metadata->{maintainer}) {
+	    $maintainer    =~ s!<(.+)>!&lt;<a href="$1">$1</a>&gt;!;
+	    $attribution         .= $q->div({-style=>'margin-left:1em'},"Maintained by $maintainer");
+	}
+        if (my $created    = $metadata->{created}) {
+	    $attribution         .= $q->div({-style=>'margin-left:1em'},"Created $created");
+        }
+	
+        if (my $modified   = $metadata->{modified}) {
+	    $attribution         .= $q->div({-style=>'margin-left:1em'},"Modified $modified");
+        }
+	$html .= "<hr>$attribution" if $attribution;
+	
+    } else {
+	$html = $q->i('No further information on',$q->b($source->name),'is available.');
+    }
+    return (200,'text/html',$html)
+}
+
+sub ACTION_list {
+    my $self = shift;
+    my $q    = shift;
+    my $globals = $self->render->globals;
+    my @sources = grep {$globals->data_source_show($_)} $globals->data_sources;
+    my $text = '# '.join ("\t",
+			  'Name',
+			  'Description',
+			  'Species',
+			  'TaxID',
+			  'CoordinateType',
+			  'BuildAuthority',
+			  'BuildVersion',
+			  'BuildURL')."\n";
+    for my $src (@sources) {
+	my $dsn = $globals->create_data_source($src) or next;
+	my $description = $globals->data_source_description($src);
+	my $meta        = $dsn->metadata || {};
+	$text .= join ("\t",
+		       $src,
+		       $description,
+		       $meta->{species},
+		       $meta->{taxid},
+		       $meta->{source},
+		       $meta->{authority},
+		       $meta->{coordinates_version},
+		       $meta->{coordinates})."\n";
+    }
+    return (200,'text/plain',$text);
 }
 
 1;
