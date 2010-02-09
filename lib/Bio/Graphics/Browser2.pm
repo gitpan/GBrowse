@@ -1,5 +1,5 @@
 package Bio::Graphics::Browser2;
-# $Id: Browser2.pm 22606 2010-01-25 00:00:13Z lstein $
+# $Id: Browser2.pm 22637 2010-01-29 16:10:14Z lstein $
 # Globals and utilities for GBrowse and friends
 
 use strict;
@@ -19,7 +19,7 @@ use Carp 'croak','carp';
 use constant DEFAULT_MASTER => 'GBrowse.conf';
 
 my (%CONFIG_CACHE,$HAS_DBFILE,$HAS_STORABLE);
-our $VERSION = '2.00';
+our $VERSION = '2.01';
 
 sub open_globals {
     my $self = shift;
