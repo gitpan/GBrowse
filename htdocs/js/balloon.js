@@ -1,7 +1,7 @@
 /*
  balloon.js -- a DHTML library for balloon tooltips
 
- $Id: balloon.js 22257 2009-11-16 15:11:04Z lstein $
+ $Id: balloon.js 22706 2010-02-17 09:53:20Z sheldon_mckay $
 
  See http://www.gmod.org/wiki/index.php/Popup_Balloons
  for documentation.
@@ -337,7 +337,7 @@ Balloon.prototype.doShowTooltip = function() {
   
   // get the preloaded balloon contents
   var helpText = self.container.innerHTML;
-  self.actualWidth = self.getLoc(self.container,'width') + 10;
+  self.actualWidth = self.getLoc(self.container,'width') + 20;
   self.parent.removeChild(self.container);
   var wrapper = document.createElement('div');
   wrapper.id = 'contentWrapper';

@@ -7,17 +7,17 @@ package Bio::Graphics::Browser2::GFFPrinter;
 #
 ###################################################################
 
-# $Id: GFFPrinter.pm 22614 2010-01-26 17:06:23Z lstein $
+# $Id: GFFPrinter.pm 22706 2010-02-17 09:53:20Z sheldon_mckay $
 
 # Dirt simple GFF3 dumper, suitable for a lightweight replacement to DAS.
 # Call this way:
-#    http://my.host/cgi-bin/gbrowse/volvox?gbgff=1;q=ctgA:1..2000;t=Genes+ExampleFeatures
+#    http://my.host/cgi-bin/gb2/gbrowse/volvox?gbgff=1;q=ctgA:1..2000;t=Genes+ExampleFeatures
 #
 # From within the "Add Remote Annotations" section, you can say:
-#     http://my.host/cgi-bin/gbrowse/volvox?gbgff=1;q=$segment;t=Genes+ExampleFeatures
+#     http://my.host/cgi-bin/gb2/gbrowse/volvox?gbgff=1;q=$segment;t=Genes+ExampleFeatures
 #
 # To share uploads, do this:
-#     http://my.host/cgi-bin/gbrowse/volvox?gbgff=1;q=ctgA:1..2000;\
+#     http://my.host/cgi-bin/gb2/gbrowse/volvox?gbgff=1;q=ctgA:1..2000;\
 #           t=Genes+ExampleFeatures+file:my_upload.txt;id=session_id
 
 use strict;

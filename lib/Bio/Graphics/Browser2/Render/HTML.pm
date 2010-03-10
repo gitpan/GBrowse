@@ -12,7 +12,7 @@ use Carp 'croak';
 use CGI qw(:standard escape start_table end_table);
 use Text::Tabs;
 
-use constant JS    => '/gbrowse/js';
+use constant JS    => '/gbrowse2/js';
 use constant ANNOTATION_EDIT_ROWS => 25;
 use constant ANNOTATION_EDIT_COLS => 100;
 use constant MAXIMUM_EDITABLE_UPLOAD => 1_000_000; # bytes
@@ -295,7 +295,7 @@ sub render_html_head {
 
   # pick stylesheets;
   my @extra_headers;
-  my @style = shellwords($self->setting('stylesheet') || '/gbrowse/gbrowse.css');
+  my @style = shellwords($self->setting('stylesheet') || '/gbrowse2/css/gbrowse.css');
   for my $s (@style) {
       my ($url,$media) = $s =~ /^([^(]+)(?:\((.+)\))?/;
       $media ||= 'all';
@@ -308,7 +308,7 @@ sub render_html_head {
 
   my @stylesheets;
   my $titlebar   = 'css/titlebar-default.css';
-  my $stylesheet = $self->setting('stylesheet')||'/gbrowse/gbrowse.css';
+  my $stylesheet = $self->setting('stylesheet')||'/gbrowse2/css/gbrowse.css';
   push @stylesheets,{src => $self->globals->resolve_path('css/tracks.css','url')};
   push @stylesheets,{src => $self->globals->resolve_path('css/karyotype.css','url')};
   push @stylesheets,{src => $self->globals->resolve_path('css/dropdown/dropdown.css','url')};
@@ -346,7 +346,7 @@ sub render_balloon_settings {
 
     my $default_style   = $source->setting('balloon style') || 'GBubble';;
     my $custom_balloons = $source->setting('custom balloons') || "";
-    my $balloon_images  = $self->globals->balloon_url() || '/gbrowse/images/balloons';
+    my $balloon_images  = $self->globals->balloon_url() || '/gbrowse2/images/balloons';
     my %config_values   = $custom_balloons =~ /\[([^\]]+)\]([^\[]+)/g;
 
     # default image path is for the default balloon set
@@ -575,6 +575,14 @@ sub render_instructions {
   : '';
 }
 
+sub render_busy_signal {
+    my $self = shift;
+    return img({-id=>'busy_indicator',
+		-src=>'/gbrowse2/images/spinner.gif',
+		-style=>'position:absolute;top:5px;left:5px;display:none',
+		-alt=>"Working..."});
+}
+
 sub render_actionmenu {
     my $self  = shift;
     my $settings = $self->state;
@@ -606,6 +614,11 @@ sub render_actionmenu {
 			       -style       => 'cursor:pointer'
 			      },
 			      $self->tr('ABOUT_DSN'));
+    my $about_me_link    = a({-onMouseDown => "GBox.showTooltip(event,'url:?action=about_me')",
+			       -href        => 'javascript:void(0)',
+			       -style       => 'cursor:pointer'
+			      },
+			      $self->tr('ABOUT_ME'));
     my $plugin_link   = $self->plugin_links($self->plugins);
     my $reset_link    = a({-href=>'?reset=1',-class=>'reset_button'},    $self->tr('RESET'));
 
@@ -628,6 +641,7 @@ sub render_actionmenu {
 			     li({-class=>'divider'},''),
 			     li($about_gb_link),
 			     li($about_dsn_link),
+			     li($about_me_link),
 			  )),
 	);
     return div({-class=>'datatitle'},$file_menu.$login.br({-clear=>'all'}));
@@ -1363,10 +1377,11 @@ sub segment2link {
 
 sub tableize {
   my $self              = shift;
-  my ($array,$category) = @_;
+  my ($array,$category,$cols) = @_;
   return unless @$array;
 
-  my $columns = $self->data_source->global_setting('config table columns') || 3;
+  my $columns = $cols || 
+       $self->data_source->global_setting('config table columns') || 3;
   my $rows    = int( @$array/$columns + 0.99 );
 
   # gets the data for the defined 'category table(s)'
@@ -1983,6 +1998,7 @@ sub select_subtracks {
     my $select_options = $data_source->setting($label=>'select');
     my ($method,@values) = shellwords($select_options);
     foreach (@values) {s/#.+$//}  # get rid of comments
+    @values = sort @values;
 
     my $filter = $state->{features}{$label}{filter};
 
@@ -1993,20 +2009,33 @@ sub select_subtracks {
 
     my @turned_on = grep {$filter->{values}{$_}} @values;
 
+    my $change_button = button(-name    => 
+			   $self->tr('Change'),
+			   -onClick => 
+			   "Controller.filter_subtrack('$label',\$('subtrack_select_form'))"
+	);
+
     my $return_html = start_html();
     $return_html   .= start_form(-name => 'subtrack_select_form',
 				 -id   => 'subtrack_select_form');
     $return_html   .= p($self->language->tr('SHOW_SUBTRACKS')
 			||'Show subtracks');
-    $return_html   .= checkbox_group(-name      => "select",
+    $return_html   .= div(a({-href=>'javascript:void(0)',
+			     -onClick=>'$$(\'input.subtrack_checkbox\').each(function(t){t.checked=false})',
+			    },$self->tr('All_off')),
+			  a({-href=>'javascript:void(0)',
+			     -onClick=>'$$(\'input.subtrack_checkbox\').each(function(t){t.checked=true})',
+			    },$self->tr('All_on')),
+			  $change_button
+	);
+
+    my @checkboxes =  checkbox_group(-name      => "select",
 				     -values    => \@values,
 				     -linebreak => 1,
+				     -class     => 'subtrack_checkbox',
 				     -defaults  => \@turned_on);
-    $return_html .= button(-name    => 
-			      $self->tr('Change'),
-			   -onClick => 
-			      "Controller.filter_subtrack('$label',\$('subtrack_select_form'))"
-	);
+    $return_html   .= $self->tableize(\@checkboxes,undef,int sqrt(@values));
+    $return_html .= $change_button;
     $return_html .= end_form();
     $return_html .= end_html();
     return $return_html;

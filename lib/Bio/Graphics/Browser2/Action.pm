@@ -1,6 +1,6 @@
 package Bio::Graphics::Browser2::Action;
 
-#$Id: Action.pm 22614 2010-01-26 17:06:23Z lstein $
+#$Id: Action.pm 22787 2010-03-10 05:51:58Z lstein $
 # dispatch
 
 use strict;
@@ -142,7 +142,7 @@ sub ACTION_filter_subtrack {
     my $q    = shift;
 
     my $track_name = $q->param('track')  or croak;
-    my @subtracks  = $q->param('select') or croak;
+    my @subtracks  = $q->param('select');
     my $html = $self->render->filter_subtrack($track_name,\@subtracks);
     return ( 200, 'application/json', {} );
 }
@@ -606,7 +606,7 @@ sub ACTION_about_dsn {
 	my $attribution = '';
 
 	if (my $maintainer = $metadata->{maintainer}) {
-	    $maintainer    =~ s!<(.+)>!&lt;<a href="$1">$1</a>&gt;!;
+            $maintainer    =~ s!<(.+)>!&lt;<a href="mailto:$1">$1</a>&gt;!;
 	    $attribution         .= $q->div({-style=>'margin-left:1em'},"Maintained by $maintainer");
 	}
         if (my $created    = $metadata->{created}) {
@@ -622,6 +622,20 @@ sub ACTION_about_dsn {
 	$html = $q->i('No further information on',$q->b($source->name),'is available.');
     }
     return (200,'text/html',$html)
+}
+
+sub ACTION_about_me {
+    my $self = shift;
+    my $q    = shift;
+    my $state = $self->state;
+
+    my $html = $q->div(
+	$q->h2('Session IDs'),
+	$q->p('If you wish to use a script to upload or download browser data from this session',
+	      'you will need the user and/or upload IDs for the currently active session.'),
+	$q->p("Your   userID is",$q->b($state->{userid})),
+	$q->p("Your uploadID is",$q->b($state->{uploadid})));
+    return (200,'text/html',$html);
 }
 
 sub ACTION_list {
