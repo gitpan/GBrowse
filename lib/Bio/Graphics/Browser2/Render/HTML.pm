@@ -324,7 +324,7 @@ sub render_html_head {
       $set_dragcolors = "set_dragcolors('$fill')";
   }
 
-  push @extra_headers,$self->setting('head')  if $self->setting('head');
+  push @extra_headers, $self->render_user_head;
 
   # put them all together
   my @args = (-title    => $title,
@@ -1262,17 +1262,19 @@ sub list_userdata {
 		  ),
 	    );
 
-
 	my $go_there = join(' ',
 			    map {
 				my $label = $_;
 				my $key   = $self->data_source->setting($label=>'key');
-				'['
+				$key ? (
+				    '['
 				    .a({-href    => 'javascript:void(0)',
 					-onClick => 
 					    qq(Controller.select_tab('main_page');Controller.scroll_to_matching_track("$label"))},
 				       b($key))
 				    .']'
+				    )
+				    : ''
 			    } @track_labels);
 	
 	my $color         = $count++%2 ? 'paleturquoise': 'lightblue';
@@ -1668,8 +1670,8 @@ sub slidertable {
 
   my $buttonsDir    = $self->globals->button_url;
 
-  my $half_title = $self->unit_label(int $span/2);
-  my $full_title = $self->unit_label($span);
+  my $half_title = $self->data_source->unit_label(int $span/2);
+  my $full_title = $self->data_source->unit_label($span);
   my $half       = int $span/2;
   my $full       = $span;
   my $fine_zoom  = $self->get_zoomincrement();
@@ -1730,7 +1732,7 @@ sub zoomBar {
   my @r         = sort {$a<=>$b} $self->data_source->get_ranges();
   my @ranges	= grep {!$seen{$_}++ && $_<=$max} sort {$b<=>$a} @r,$length;
 
-  my %labels    = map {$_=>$show.' '.$self->unit_label($_)} @ranges;
+  my %labels    = map {$_=>$show.' '.$self->data_source->unit_label($_)} @ranges;
   return popup_menu(-class   => 'searchtitle',
 		    -name    => 'span',
 		    -values  => \@ranges,

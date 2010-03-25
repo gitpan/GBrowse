@@ -1,6 +1,6 @@
 package Bio::Graphics::Browser2::CachedTrack;
 
-# $Id: CachedTrack.pm 22489 2010-01-04 23:38:52Z lstein $
+# $Id: CachedTrack.pm 22837 2010-03-19 05:45:33Z lstein $
 # This package defines a Bio::Graphics::Browser2::Track option that manages
 # the caching of track images and imagemaps.
 
@@ -61,7 +61,7 @@ sub extra_args { shift->{extra_args} }
 sub max_time {
     my $self = shift;
     $self->{max_time} = shift if @_;
-    return $self->{max_time}   || DEFAULT_REQUEST_TIME;
+    return $self->{max_time} || DEFAULT_REQUEST_TIME;
 }
 sub cache_time {
     my $self = shift;
@@ -230,7 +230,8 @@ sub status {
 	$f->close;
 	return 'DEFUNCT' unless $timestamp;
 	return 'PENDING' if time()-$timestamp < $self->max_time;
-	return 'DEFUNCT';
+	$self->flag_error('timeout; try viewing a smaller region');
+	return 'ERROR';
     } elsif (-e $datafile) {
 	return $self->expired($datafile) ? 'EXPIRED' : 'AVAILABLE';
     } elsif (-e $errorfile) {

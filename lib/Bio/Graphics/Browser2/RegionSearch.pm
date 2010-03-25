@@ -130,7 +130,7 @@ sub init_databases {
 
     # try to spread the work out as much as possible among the remote renderers
     my %remotes;
-    for my $dbid (keys %dbs) {
+    for my $dbid ($default_dbid,keys %dbs) {
 
 	my $can_remote  = keys %{$dbs{$dbid}{remotes}} && ($dbid ne $default_dbid);
 
@@ -278,12 +278,24 @@ sub search_features {
 
 Search only the local databases for the term.
 
+$Args is a hashref:
+
+   Key             Value
+   ---             -----
+   -search_term    term to search for
+   -shortcircuit   stop searching if term is found in default db
+
+If -shortcircuit is not provided, it defaults to true.
+
 =cut
 
 sub search_features_locally {
     my $self        = shift;
     my $args        = shift;
     ref $args && %$args or return;
+
+    my $shortcircuit = $args->{-shortcircuit};
+    $shortcircuit    = 1 unless defined $shortcircuit;
 
     my $state       = $self->state;
     my $source      = $self->source;
@@ -327,10 +339,9 @@ sub search_features_locally {
 	$self->add_dbid_to_features($dbid,$features);
 	push @found,@$features;
 
-	if ($dbid eq $default_dbid) {
+	if ($dbid eq $default_dbid && $shortcircuit) {
 	    warn "hit @found in the default database, so short-circuiting" if DEBUG;
-	    $self->{shortcircuit}++;
-#	    last;
+	    last;
 	}
     }
 

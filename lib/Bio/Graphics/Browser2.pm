@@ -1,5 +1,5 @@
 package Bio::Graphics::Browser2;
-# $Id: Browser2.pm 22688 2010-02-09 21:04:25Z lstein $
+# $Id: Browser2.pm 22793 2010-03-10 22:35:40Z lstein $
 # Globals and utilities for GBrowse and friends
 
 use strict;
@@ -19,7 +19,7 @@ use Carp 'croak','carp';
 use constant DEFAULT_MASTER => 'GBrowse.conf';
 
 my (%CONFIG_CACHE,$HAS_DBFILE,$HAS_STORABLE);
-our $VERSION = '2.02';
+our $VERSION = '2.03';
 
 sub open_globals {
     my $self = shift;
@@ -370,6 +370,7 @@ sub authorized_session {
 
   $id       ||= undef;
   my $session = $self->session($id);
+
   return $session unless $session->private;
 
   if ($session->match_nonce($authority,CGI::remote_addr())) {

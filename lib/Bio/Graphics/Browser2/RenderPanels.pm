@@ -18,6 +18,7 @@ use CGI qw(:standard param escape unescape);
 
 use constant TRUE  => 1;
 use constant DEBUG => 0;
+use constant BENCHMARK => 0;
 
 use constant DEFAULT_EMPTYTRACKS => 0;
 use constant PAD_DETAIL_SIDES    => 10;
@@ -814,6 +815,8 @@ sub render_scale_bar {
         %add_track_extra_args = (
             -bgcolor => $source->global_setting('detail bgcolor') || 'wheat',
             -pad_bottom => 0,
+            -label_font => $image_class->gdMediumBoldFont,
+	    -label      => $segment->seq_id.': '.$self->source->unit_label($segment->length),
         );
     }
 
@@ -845,6 +848,17 @@ sub render_scale_bar {
         my $units = $source->global_setting('units') || '';
         my $no_tick_units = $source->global_setting('no tick units');
 
+	if ($args{section} eq 'detail') {
+	    my $scale_feature = $self->make_scale_feature($wide_segment,
+							  $state->{width});
+	    $panel->add_track(
+		$scale_feature,
+		-glyph    => 'span',
+		-label    => 1,
+		-height   => 6,
+		-label_position => 'left'
+		);
+	}
         $panel->add_track(
              $wide_segment,
             -glyph          => 'arrow',
@@ -919,6 +933,39 @@ sub label_density {
       || $conf->setting('TRACK DEFAULTS' =>'label density')
       || 10;
 }
+
+sub make_scale_feature {
+    my $self      = shift;
+    my ($segment,$width) = @_;
+    my $length = $segment->length;
+
+    # how long is 1/5 of the width?
+    my $scale        = $length/$width;
+    my $guesstimate  = $scale * ($width/5);
+
+    # turn into multiples of 10
+    my $exp  = 10 ** int log10($guesstimate);
+    my $base = ($guesstimate/$exp);
+    if    ($base < 1) { $base = 1 }
+    elsif ($base < 2) { $base = 2 }
+    elsif ($base < 5) { $base = 5 }
+    else              { $base = 10};
+    $guesstimate = $base * $exp;
+
+    my $label    = $self->source->unit_label($guesstimate);
+    $label       .= ' '; # more attractive
+    my $size     = $guesstimate/$scale;
+    my $left     = ($width-$size)/2;
+    my $start    = int ($segment->start + $left * $scale);
+    my $end      = $start + $guesstimate - 1;
+
+    return Bio::Graphics::Feature->new(-display_name => $label,
+				       -start        => $start,
+				       -end          => $end,
+				       -seq_id       => $segment->seq_id);
+}
+
+sub log10 { log(shift)/log(10) }
 
 sub make_map {
   my $self = shift;
@@ -1172,9 +1219,20 @@ sub run_local_requests {
         my %trackmap;
 
 	my $timeout         = $source->global_setting('global_timeout');
+	
+	my $has_sigset = $] >= 5.008;
+	my $oldaction;
+	if ($has_sigset) {
+	    eval "use POSIX ':signal_h'" unless defined &SIGALRM;
+	    my $mask = POSIX::SigSet->new(SIGALRM());
+	    my $action = POSIX::SigAction->new(sub {die "timeout"},$mask);
+	    $oldaction = POSIX::SigAction->new();
+	    sigaction(SIGALRM(),$action,$oldaction);
+	}
 
+	my $time = time();
 	eval {
-	    local $SIG{ALRM}    = sub { warn "alarm clock"; die "timeout" };
+	    local $SIG{ALRM}    = sub { warn "alarm clock"; die "timeout" } unless $has_sigset;
 	    alarm($timeout);
 
 	    my ($gd,$map);
@@ -1227,10 +1285,14 @@ sub run_local_requests {
 	    }
 
 	    $requests->{$label}->put_data($gd, $map );
-	    
+	    alarm(0);
 	};
-
 	alarm(0);
+	sigaction(SIGALRM(),$oldaction) if $has_sigset;
+
+	my $elapsed = time()-$time;
+	warn "render($label): $elapsed seconds ", ($@ ? "(error)" : "(ok)") if BENCHMARK;
+
 	if ($@) {
 	    warn $@;
 	    if ($@ =~ /timeout/) {
@@ -2011,7 +2073,7 @@ sub make_link {
     my $id    = eval {CGI::escape($feature->primary_id)};
     my $dbid  = eval {$feature->gbrowse_dbid} || ($data_source->db_settings($label))[0];
     $dbid     = CGI::escape($dbid);
-    $url      =~ s!/gbrowse.*!!;
+    $url      =~ s! /gbrowse[^/]* / [^/]+ /? [^/]*  $!!x;
     $url      .= "/gbrowse_details/$ds_name?ref=$ref;start=$start;end=$end";
     $url      .= ";name=$name"     if defined $name;
     $url      .= ";class=$class"   if defined $class;

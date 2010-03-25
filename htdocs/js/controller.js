@@ -3,7 +3,7 @@
 
  Lincoln Stein <lincoln.stein@gmail.com>
  Ben Faga <ben.faga@gmail.com>
- $Id: controller.js 22787 2010-03-10 05:51:58Z lstein $
+ $Id: controller.js 22792 2010-03-10 22:05:12Z lstein $
 
 Indentation courtesy of Emacs javascript-mode 
 (http://mihai.bazon.net/projects/emacs-javascript-mode/javascript.el)
@@ -772,7 +772,7 @@ var GBrowseController = Class.create({
               method:    'post',
               parameters: {
                               action: 'cancel_upload',
-                           upload_id: upload_id
+			      upload_id: upload_id
                           }
         });
   },

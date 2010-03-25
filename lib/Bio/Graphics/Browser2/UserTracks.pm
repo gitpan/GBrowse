@@ -1,6 +1,6 @@
 package Bio::Graphics::Browser2::UserTracks;
 
-# $Id: UserTracks.pm 22612 2010-01-25 22:28:22Z lstein $
+# $Id: UserTracks.pm 22850 2010-03-19 20:52:01Z lstein $
 use strict;
 use Bio::Graphics::Browser2::DataSource;
 use Bio::Graphics::Browser2::DataLoader;
@@ -9,6 +9,7 @@ use File::Basename 'basename';
 use File::Path 'mkpath','rmtree';
 use IO::File;
 use IO::String;
+use POSIX ();
 use Carp 'croak';
 
 use constant DEBUG => 0;
@@ -176,6 +177,10 @@ sub trackname_from_url {
     my $uniquefy = shift;
     (my $track_name=$url) =~ tr!a-zA-Z0-9_%^@.!_!cs;
 
+    if (length $track_name > $self->max_filename) {
+	$track_name = substr($track_name,0,$self->max_filename);
+    }
+
     my $unique = 0;
     while ($uniquefy && !$unique) {
 	my $path = $self->track_path($track_name);
@@ -193,6 +198,12 @@ sub trackname_from_url {
     return $track_name;
 }
 
+sub max_filename {
+    my $self = shift;
+    my $length = POSIX::pathconf($self->path,&POSIX::_PC_NAME_MAX) || 255;
+    return $length - 4; # give enough room for the suffix
+}
+
 sub import_url {
     my $self = shift;
 
@@ -207,20 +218,26 @@ sub import_url {
     else {$key  = "Shared track from $url";}
 
     my $track_name = $self->trackname_from_url($url,!$overwrite);
+    my $loader = Bio::Graphics::Browser2::DataLoader->new($track_name,
+							  $self->track_path($track_name),
+							  $self->track_conf($track_name),
+							  $self->config,
+							  $self->state->{uploadid});
+    $loader->set_status('starting import');
 
     my $conf = $self->track_conf($track_name);
     open my $f,">",$conf or croak "Couldn't open $conf: $!";
-    print $f <<END;
->>>>>>>>>>>>>> cut here <<<<<<<<<<<<
-[$track_name]
-remote feature = $url
-category = My Tracks:Remote Tracks
-key      = $key
-END
-    ;
+
+    if ($url =~ /\.bam$/) {
+	print $f $self->remote_bam_conf($track_name,$url,$key);
+    } else {
+	print $f $self->remote_mirror_conf($track_name,$url,$key);
+    }
     close $f;
     open my $i,">",$self->import_flag($track_name);
     close $i;
+
+    $loader->set_processing_complete;
 
     return (1,'',[$track_name]);
 }
@@ -334,12 +351,21 @@ sub merge_conf {
     while (<$fh>) {
 	if (/^\[/) {
 	    (my $stanza = $_) =~ s/\[(\w+?)_.+_(\d+)(:\d+)?\]\s*\n/$1_$2$3/;
+	    $stanza =~ s/^\[//; # just in case
+	    $stanza =~ s/\]\n//;
 	    if (my $body = $stanzas{$stanza}) {
 		$merged .= $_;
 		$merged .= "database = $database\n";
 		$merged .= $body;
+		delete $stanzas{$stanza};
 	    }
 	}
+    }
+
+    # anything that's left (new stuff)
+    for my $stanza (keys %stanzas) {
+	$merged .= "\n[$stanza]\n";
+	$merged .= $stanzas{$stanza};
     }
 
     open $fh,'>',$path or croak "Can't open $path for writing: $!";
@@ -357,6 +383,7 @@ sub labels {
 sub status {
     my $self     = shift;
     my $filename = shift;
+
     my $loader   = 'Bio::Graphics::Browser2::DataLoader';
     my $load   = $loader->new($filename,
 			      $self->track_path($filename),
@@ -464,8 +491,75 @@ sub install_filter {
     exit 0;
 }
 
+sub remote_mirror_conf {
+    my $self = shift;
+    my ($track_name,$url,$key) = @_;
+
+    return <<END;
+>>>>>>>>>>>>>> cut here <<<<<<<<<<<<
+[$track_name]
+remote feature = $url
+category = My Tracks:Remote Tracks
+key      = $key
+END
+    ;
+}
+
+sub remote_bam_conf {
+    my $self = shift;
+    my ($track_name,$url,$key) = @_;
+
+    my $id = rand(1000);
+    my $dbname = "remotebam_$id";
+    my $track_id = $track_name;# . "_1";
+
+    eval "require Bio::Graphics::Browser2::DataLoader::bam"
+	unless Bio::Graphics::Browser2::DataLoader::bam->can('new');
+    my $loader = Bio::Graphics::Browser2::DataLoader::bam->new(
+	$track_name,
+	$self->track_path($track_name),
+	$self->track_conf($track_name),
+	$self->config,
+	$self->state->{uploadid});
+    my $fasta  = $loader->get_fasta_file;
+
+    return <<END;
+[$dbname:database]
+db_adaptor = Bio::DB::Sam
+db_args    = -bam           $url
+             -split_splices 1
+             -fasta         $fasta
+search options = none
+
+>>>>>>>>>>>>>> cut here <<<<<<<<<<<<
+
+[$track_id:2001]
+feature   = coverage:2000
+min_score    = 0
+glyph        = wiggle_xyplot
+height       = 50
+fgcolor      = black
+bgcolor      = black
+autoscale    = local
 
 
+[$track_id]
+database     = $dbname
+feature      = read_pair
+glyph        = segments
+draw_target  = 1
+show_mismatch = 1
+mismatch_color = red
+bgcolor      = blue
+fgcolor      = blue
+height       = 3
+label        = 1
+label density = 50
+bump         = fast
+key          = $key
+END
+    ;
+}
 
 package Bio::Graphics::Browser2::UserConf;
 

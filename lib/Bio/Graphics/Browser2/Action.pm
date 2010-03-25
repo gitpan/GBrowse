@@ -1,6 +1,6 @@
 package Bio::Graphics::Browser2::Action;
 
-#$Id: Action.pm 22787 2010-03-10 05:51:58Z lstein $
+#$Id: Action.pm 22804 2010-03-13 19:08:46Z lstein $
 # dispatch
 
 use strict;
@@ -327,6 +327,10 @@ sub ACTION_autocomplete {
 
     my $match  = $q->param('prefix') or croak;
 
+    if ($match =~ /^\w+:\d+/) { # region search, give up
+	return(200,'text/html',$render->format_autocomplete([],''));
+    }
+
     my $search = $render->get_search_object;
     my $matches= $search->features_by_prefix($match,100);
     my $autocomplete = $render->format_autocomplete($matches,$match);
@@ -422,18 +426,21 @@ sub ACTION_import_track {
 					      error_msg=>'no URL provided'}
 	       ));
 
+    my $upload_id = $q->param('upload_id');
+
     my $render   = $self->render;
     my $state    = $self->state;
     my $session  = $render->session;
 
     my $usertracks = $render->user_tracks;
-    $state->{current_upload} = $url;
+    (my $track_name = $url) =~ tr!a-zA-Z0-9_%^@.!_!cs;
+    $state->{uploads}{$upload_id} = [$track_name,$$];
     $session->flush();
     $session->unlock();
     
     my ($result,$msg,$tracks) = $usertracks->import_url($url);
     $session->lock('exclusive');
-    $state->{current_upload} = '';
+    delete $state->{uploads}{$upload_id};
     $session->flush();
     $session->unlock();
 
