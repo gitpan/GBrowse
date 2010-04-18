@@ -341,7 +341,7 @@ sub authorize_user {
 
     $session->using_openid($using_openid);
 
-    warn "id=$id, username =",$session->username;
+    # warn "id=$id, username =",$session->username;
 
     $session->flush();
     return ($id,$nonce);
@@ -1814,6 +1814,13 @@ sub default_tracks {
 	                                      or $visibility eq 'collapse';
       $state->{features}{$label}{visible} = 0 if $visibility eq 'hide';
       $state->{track_collapsed}{$label}   = 1 if $visibility eq 'collapse';
+
+      if (my ($method,@values) = $source->subtrack_select_list($label)) {
+	  my @defaults         = $source->subtrack_select_default($label);
+	  my %turnon           = map {$_=>1} @defaults ? @defaults : @values;
+	  $state->{features}{$label}{filter}{method} = $method;
+	  $state->{features}{$label}{filter}{values} = {map {$_=>$turnon{$_}} @defaults};
+      }
   }
 }
 
@@ -1933,17 +1940,13 @@ sub filter_subtrack {
 
     my $state       = $self->state;
 
-    # if undef passed, then turn off all filters
-    unless ($subtracks) {
-	undef $state->{features}{$label}{filter};
-	return;
-    }
-
-    my %filters     = map {$_=>1} @$subtracks;
-    my ($method,@values) = shellwords $self->data_source->setting($label=>'select');
-    foreach (@values) {s/#.+$//}  # get rid of comments
-    $state->{features}{$label}{filter}{values} = {map {$_=>$filters{$_}} @values};
+    my ($method,$values) = $self->data_source->subtrack_select_list($label);
     $state->{features}{$label}{filter}{method} = $method;
+    $state->{features}{$label}{filter}{values}{$_} = 0 foreach @$values;
+
+    # if undef passed, then turn off all filters
+    return unless $subtracks && @$subtracks;
+    $state->{features}{$label}{filter}{values}{$_} = 1 foreach @$subtracks;
 }
 
 # Handle returns from the track configuration form
@@ -2528,8 +2531,17 @@ sub zoom {
   my $range	    = int($span * (1-$zoom_distance)/2);
   $range            = 1 if $range < 1;
 
-  $state->{start}   = $center - $range;
-  $state->{stop}    = $center + $range - 1;
+  my $newstart      = $center - $range;
+  my $newstop       = $center + $range - 1;
+  
+  if ($newstart==$state->{start} && $newstop==$state->{stop}) {
+      if ($zoom_distance < 0) {$newstart--;$newstop++};
+      if ($zoom_distance > 0) {$newstart++;$newstop--};
+  }
+  if ($newstop-$newstart <=2) {$newstop++}  # don't go down to 2 bp level!
+
+  $state->{start}   = $newstart;
+  $state->{stop}    = $newstop;
 }
 
 sub position_from_overview {

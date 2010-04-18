@@ -1,6 +1,6 @@
 package Bio::Graphics::Browser2::DataLoader::generic;
 
-# $Id: generic.pm 22687 2010-02-09 21:01:08Z lstein $
+# $Id: generic.pm 23028 2010-04-12 21:16:01Z lstein $
 use strict;
 use Bio::DB::SeqFeature::Store;
 use Carp 'croak';
@@ -68,7 +68,6 @@ END
 	my $category = $self->category;
 	for my $line (@lines) {
 	    chomp $line;
-	    warn $line;
 	    if ($line =~ /^\s*database/) {
 		next;   # disallowed
 	    }

@@ -148,7 +148,7 @@ sub render_navbar {
   return $self->toggle('Search',
 		       div({-class=>'searchbody'},
 			   table({-border=>0,-width=>'100%'},
-				 TR(td($search),td($plugin_form)),
+				 TR(td({-width=>'50%'},$search),td($plugin_form)),
 				 TR(td({-align=>'left'},
 				       $source_form,
 				    ),
@@ -294,18 +294,6 @@ sub render_html_head {
     );
 
   # pick stylesheets;
-  my @extra_headers;
-  my @style = shellwords($self->setting('stylesheet') || '/gbrowse2/css/gbrowse.css');
-  for my $s (@style) {
-      my ($url,$media) = $s =~ /^([^(]+)(?:\((.+)\))?/;
-      $media ||= 'all';
-      push @extra_headers,CGI::Link({-rel=>'stylesheet',
-				     -type=>'text/css',
-				     -href=>$self->globals->resolve_path($url,'url'),
-				     -media=>$media});
-  }
-
-
   my @stylesheets;
   my $titlebar   = 'css/titlebar-default.css';
   my $stylesheet = $self->setting('stylesheet')||'/gbrowse2/css/gbrowse.css';
@@ -314,6 +302,16 @@ sub render_html_head {
   push @stylesheets,{src => $self->globals->resolve_path('css/dropdown/dropdown.css','url')};
   push @stylesheets,{src => $self->globals->resolve_path('css/dropdown/default_theme.css','url')};
   push @stylesheets,{src => $self->globals->resolve_path($titlebar,'url')};
+
+  my @theme_stylesheets = shellwords($self->setting('stylesheet') || '/gbrowse2/css/gbrowse.css');
+  for my $s ( @theme_stylesheets ) {
+      my ($url,$media) = $s =~ /^([^(]+)(?:\((.+)\))?/;
+      $media ||= 'all';
+      push @stylesheets, {
+          src   => $self->globals->resolve_path($url,'url'),
+          media => $media,
+      };
+  }
 
   # colors for "rubberband" selection 
   my $set_dragcolors = '';
@@ -324,6 +322,7 @@ sub render_html_head {
       $set_dragcolors = "set_dragcolors('$fill')";
   }
 
+  my @extra_headers;
   push @extra_headers, $self->render_user_head;
 
   # put them all together
@@ -595,7 +594,8 @@ sub render_actionmenu {
 
     push @export_links,a({-href=>$self->gff_dump_link},                    $self->tr('DUMP_GFF'));
     push @export_links,a({-href=>$self->dna_dump_link},                           $self->tr('DUMP_SEQ'));
-    push @export_links,a({-href=>'javascript:'.$self->galaxy_link},        $self->tr('SEND_TO_GALAXY'));
+    push @export_links,a({-href=>'javascript:'.$self->galaxy_link},        $self->tr('SEND_TO_GALAXY'))
+	if $self->data_source->global_setting('galaxy outgoing');
 
     my $bookmark_link = a({-href=>'?action=bookmark'},$self->tr('BOOKMARK')),;
     my $share_link    = a({-href        => '#',
@@ -702,7 +702,7 @@ sub galaxy_form {
     $html .= hidden(-name=>'id',   -value=>$settings->{userid});
     $html .= hidden(-name=>'q',-value=>$seg);
     $html .= hidden(-name=>'t',-value=>$labels);
-    $html .= hidden(-name=>'s',-value=>'off');
+    $html .= hidden(-name=>'s',-value=>0);
     $html .= hidden(-name=>'d',-value=>'edit');
     $html .= hidden(-name=>'m',-value=>'application/x-gff3');
     $html .= endform();
@@ -727,7 +727,7 @@ sub render_track_filter {
 	  $form,
 	  button(
 	      -name    => 'plugin_button',
-	      -value   => $self->tr('Configure_plugin'),
+	      -value   => $self->tr('search'),
 	      -onClick => 'doPluginUpdate()',
 	  ),
 	  end_form(),
@@ -743,7 +743,7 @@ sub render_toggle_track_table {
 
   if (my $filter = $self->track_filter_plugin) {
       $html .= $self->toggle({tight=>1},'track_select',div({class=>'searchtitle',
-							    style=>"text-indent:2em"},$self->render_track_filter($filter)));
+							    style=>"text-indent:2em;padding-top:8px"},$self->render_track_filter($filter)));
   }
   $html .= $self->toggle('Tracks',$self->render_track_table);
 
@@ -790,7 +790,8 @@ sub render_track_table {
    	$cit_txt =~ s/\"/\&\#34;/g;
         $cit_txt .= '... <i>Click for more</i>';
         }
-        $mouseover = "<b>$key</b>: $cit_txt";
+        $mouseover = "<b>$key</b>";
+        $mouseover .= ": $cit_txt"                           if $cit_txt;
         }
    
   my $balloon = $source->setting('balloon style') || 'GBubble';
@@ -1997,18 +1998,12 @@ sub select_subtracks {
     my $state       = $self->state();
     my $data_source = $self->data_source();
 
-    my $select_options = $data_source->setting($label=>'select');
-    my ($method,@values) = shellwords($select_options);
-    foreach (@values) {s/#.+$//}  # get rid of comments
-    @values = sort @values;
+    my ($method,$values,$labels)   = $data_source->subtrack_select_list($label);
+    my @values = sort @$values;
+    my %labels;
+    @labels{@$values} = @$labels;
 
     my $filter = $state->{features}{$label}{filter};
-
-    unless (exists $filter->{method} && $filter->{method} eq $method) {
-	$filter->{method} = $method;
-	$filter->{values} = { map {$_=>1} @values }; # all on
-    }
-
     my @turned_on = grep {$filter->{values}{$_}} @values;
 
     my $change_button = button(-name    => 
@@ -2035,6 +2030,7 @@ sub select_subtracks {
 				     -values    => \@values,
 				     -linebreak => 1,
 				     -class     => 'subtrack_checkbox',
+				     -labels    => \%labels,
 				     -defaults  => \@turned_on);
     $return_html   .= $self->tableize(\@checkboxes,undef,int sqrt(@values));
     $return_html .= $change_button;
@@ -2335,7 +2331,7 @@ sub display_citation {
    if (my ($lim) = $slabel =~ /\:(\d+)$/) {
         $key .= " (at >$lim bp)";
    }
-     
+
    my $citation = div({-class => 'searchbody', -style => 'padding:10px;width:70%'}, h4($key), $cit_txt);
      
  
