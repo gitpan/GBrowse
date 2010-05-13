@@ -43,18 +43,15 @@ sub new {
   my $config_file_path = shift;
   my ($name,$description,$globals) = @_;
 
-  # we expire what's in the config file path if a global timer
-  # has gone off OR the modification time of the path has changed
+  # we expire what's in the config file path if the global
+  # modification time of the path has changed
 
-  my $expire_time = $globals->time2sec($globals->datasources_expire);
   my $cache_age   = time() - ($CONFIG_CACHE{$config_file_path}{ctime}||0);
-  my $expired     = $expire_time < $cache_age;
 
   # this code caches the config info so that we don't need to 
   # reparse in persistent (e.g. modperl) environment
-  my $mtime            = (stat($config_file_path))[9] || 0;
-  if (!$expired
-      && exists $CONFIG_CACHE{$config_file_path}{mtime}
+  my $mtime            = $class->file_mtime($config_file_path);
+  if (exists $CONFIG_CACHE{$config_file_path}{mtime}
       && $CONFIG_CACHE{$config_file_path}{mtime} >= $mtime) {
       my $object = $CONFIG_CACHE{$config_file_path}{object};
       $object->clear_cached_dbids;
@@ -62,8 +59,8 @@ sub new {
       return $object;
   }
 
-  my $self = $class->SUPER::new(-file=>$config_file_path,
-				-safe=>1);
+  my $self = $class->new_from_cache(-file=>$config_file_path,
+				    -safe=>1);
   $self->name($name);
   $self->description($description);
   $self->globals($globals);
@@ -357,6 +354,21 @@ sub i18n_style {
 		/^(-[^:]+)(:(\w+))?$/; [$_ => $option, $priority{$lang||''}||99] }
 	keys %options;
   %lang_options;
+}
+
+# return true if we should show a coverage summary for this
+# track at the current length
+sub show_summary {
+    my $self = shift;
+    my ($label,$length) = @_;
+    my $c  = $self->semantic_fallback_setting($label=>'show_summary',$length);
+    my $g  = $self->semantic_fallback_setting($label=>'glyph',$length);
+    return 0 if $g =~ /wiggle|xyplot|density/;  # don't summarize wiggles or xyplots
+    return 0 unless defined $c;
+    return 0 unless $c <= $length;
+    my $db = $self->open_database($label,$length) or return;
+    return 0 unless $db->can('feature_summary');
+    return 1;
 }
 
 sub clear_usertracks {
@@ -774,7 +786,6 @@ sub open_database {
       $db->strict_bounds_checking(1) if $db->can('strict_bounds_checking');
       $db->absolute(1)               if $db->can('absolute');
   }
-
 
   # remember mapping of this database to this track
   $self->{db2track}{$db}{$dbid}++;

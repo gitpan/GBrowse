@@ -1,3 +1,20 @@
+2.05	* Implemented a new caching scheme for communicating with renderfarm slaves. 
+	  This will improve performance, but requires Bio::Graphics version 1.05.
+        * Experimental local rendering code -- each track is rendered in a separate process.
+	* Reverted to older versions of prototype and scriptaculous due to Google
+	  Chrome incompatibilities.
+	* Preferred way to separate labels is now to use the "l" option and separate
+	  labels with "%1E", as in "l=mdc-1%1Esma-23%1Eunknown genes"
+	* Work around race conditions in the 05.deferredrendering regression tests.
+	  May still fail if system is under lots of load during test.
+	* Fixed bug in change_track_order javascript that prevented track order change from
+	  "sticking" when track labels contained underscores.
+	* Download icons now selectively download GFF3, SAM or WIG data.
+	* Early support for a "show_summary" option in [TRACK DEFAULTS] and [TRACK] stanzas. If this
+	  is present and set to a length in bases, then when the user tries to display a region
+	  larger than the length the track will display feature density instead. For this to
+	  work, the database adaptor must support a feature_summary() method. This is being actively
+	  worked on in bioperl, but is not currently available.
 2.04    * Can set the subtracks to be displayed by default using the new "select default" option.
 	* New syntax for select option:
           select   = type ;

@@ -38,6 +38,8 @@ sub parse_searchopts {
 
     my %opts;
     my @tokens    = split /[\s,]+/,lc $optstring;
+    @tokens = ('default') unless @tokens;
+
     for my $t (@tokens) {
 	my ($sign,$token) = $t =~ /([+-]?)(\w+)/;
 
@@ -61,6 +63,7 @@ sub parse_searchopts {
 
 	delete $opts{$token} if $sign eq '-';
     }
+
     return \%opts;
 }
 
@@ -194,15 +197,17 @@ sub get_whole_segment {
 sub search_db {
   my $self = shift;
   my $args = shift;
-
+  my ($features);
   if (my $name = $args->{-search_term}) {
+      $name =~ tr/a-zA-Z0-9.'"_*?: ;+-//cd;  # remove rude characters
       my ($ref,$start,$stop,$class,$id) = $self->parse_feature_name($name);
-      return $self->lookup_features($ref,$start,$stop,$class,$name,$id);
+      $features =  $self->lookup_features($ref,$start,$stop,$class,$name,$id);
   }
   else {
       my @features = $self->db->features(%$args);
-      return wantarray ? @features : \@features;
+      $features    = \@features;
   }
+  return wantarray ? @$features : $features;
 }
 
 sub lookup_features {
@@ -210,11 +215,12 @@ sub lookup_features {
   my ($name,$start,$stop,$class,$literal_name,$id) = @_;
   my $source = $self->source;
 
-  warn "lookup_features($name)" if DEBUG;
+  warn "lookup_features(@_)" if DEBUG;
 
   my $refclass = $source->global_setting('reference class') || 'Sequence';
 
   my $db      = $self->db;
+
   my $divisor = $source->global_setting('unit_divider') || 1;
   $start *= $divisor if defined $start;
   $stop  *= $divisor if defined $stop;
@@ -313,7 +319,6 @@ sub _feature_get {
 
   warn "name => @features" if DEBUG;
 
-
   @features  = grep {$_->length} $db->get_features_by_alias(@argv) 
       if !@features
       && !defined($start) 
@@ -371,7 +376,7 @@ sub _feature_keyword_search {
 
   # Need to untaint the searchterm.  We are very lenient about
   # what is accepted here because we wil be quote-metaing it later.
-  $searchterm =~ /([\w .,~!@\#$%^&*()-+=<>?\/]+)/;
+  $searchterm =~ /([\w .,~!@\#$%^&*()-+=<>?:;\/]+)/;
   $searchterm = $1;
 
   my $db = $self->db;
@@ -500,9 +505,11 @@ sub region_segment {
 
     my ($region_segment) = $db ? $db->segment(-class => $class,
 					      -name  => $segment->seq_id,
+					      -seq_id=>$segment->seq_id,
 					      -start => $regionview_start,
 					      -end   => $regionview_end)
                               :Bio::Graphics::Feature->new(-name  => $segment->seq_id,
+							   -seq_id => $segment->seq_id,
 							   -start => $regionview_start,
 							   -end   => $regionview_end);
     return $region_segment;

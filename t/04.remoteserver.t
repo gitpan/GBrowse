@@ -38,6 +38,7 @@ $SIG{INT} = sub {exit 0};
 
 %ENV = ();
 $ENV{GBROWSE_DOCS} = $Bin;
+$ENV{TMPDIR}       = '/tmp/gbrowse_testing';
 
 chdir $Bin;
 use lib "$Bin/../lib";
@@ -81,7 +82,7 @@ sleep 1; # give slave renderers a chance to settle down
 $ENV{REQUEST_URI}    = 'http://localhost/cgi-bin/gbrowse/volvox';
 $ENV{PATH_INFO}      = '/volvox';
 $ENV{REQUEST_METHOD} = 'GET';
-$CGI::Q    = new CGI('name=ctgA:1..20000;label=Clones-Motifs-Transcripts');
+$CGI::Q    = new CGI('name=ctgA:1..20000;label=Clones-Motifs-Transcripts;cache=1');
 
 # this is the standard initialization, ok?
 my $globals = Bio::Graphics::Browser2->new(CONF_FILE);
@@ -107,6 +108,8 @@ my $request  = POST("http://localhost:$port/",
 		     tracks     => nfreeze(\@labels),
 		     settings   => nfreeze($settings),
 		     datasource => nfreeze($source),
+		     data_name  => $source->name,
+		     data_mtime => $source->mtime,
 		     language   => nfreeze($lang),
 		     panel_args => nfreeze({}),
 		     operation  => 'render_tracks',
@@ -152,6 +155,7 @@ exit 0;
 
 END {
     if ($PID == $$) {
+	$SIG{CHLD} = 'IGNORE'; # prevent error codes from children propagating to Test::Harness
 	foreach ($server,$alignment_server,$cleavage_server) { 
 	    kill TERM=>$_->pid if $_
 	}

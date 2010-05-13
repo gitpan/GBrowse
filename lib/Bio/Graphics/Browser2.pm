@@ -1,8 +1,8 @@
 package Bio::Graphics::Browser2;
-# $Id: Browser2.pm 23060 2010-04-18 21:41:25Z lstein $
+# $Id: Browser2.pm 23087 2010-04-22 19:30:24Z rbuels $
 # Globals and utilities for GBrowse and friends
 
-our $VERSION = '2.04';
+our $VERSION = '2.05';
 
 use strict;
 use warnings;
@@ -16,7 +16,7 @@ use File::Path 'mkpath';
 use Bio::Graphics::Browser2::DataSource;
 use Bio::Graphics::Browser2::Session;
 use GBrowse::ConfigData;
-use Carp 'croak','carp';
+use Carp 'croak','carp','confess';
 
 use constant DEFAULT_MASTER => 'GBrowse.conf';
 
@@ -67,7 +67,7 @@ sub resolve_path {
   return $path if $path =~ m!\|\s*$!;       # a pipe
   return $path if $path =~ m!^(http|ftp):!; # an URL
   my $method = ${path_type}."_base";
-  $self->can($method) or croak "path_type must be one of 'config','htdocs', or 'url'";
+  $self->can($method) or confess "path_type must be one of 'config','htdocs', or 'url'";
   my $base   = $self->$method or return $path;
   return File::Spec->catfile($base,$path);
 }
@@ -88,7 +88,7 @@ sub htdocs_path {
 sub url_path {
   my $self    = shift;
   my $option  = shift;
-  $self->resolve_path($self->setting(general => $option),'url');
+  $self->resolve_path( scalar($self->setting(general => $option)),'url');
 }
 
 sub config_base {$ENV{GBROWSE_CONF} 

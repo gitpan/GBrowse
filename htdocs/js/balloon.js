@@ -1,7 +1,7 @@
 /*
  balloon.js -- a DHTML library for balloon tooltips
 
- $Id: balloon.js 22706 2010-02-17 09:53:20Z sheldon_mckay $
+ $Id: balloon.js 23181 2010-05-11 21:19:55Z lstein $
 
  See http://www.gmod.org/wiki/index.php/Popup_Balloons
  for documentation.
@@ -82,7 +82,9 @@ var Balloon = function () {
 // delay time to avoid balloons popping up on rapid mouseover events    //
 //////////////////////////////////////////////////////////////////////////
 Balloon.prototype.showTooltip = function(evt,caption,sticky,width,height) {
-  // If the objext is not configured by now, fall back to default
+			      
+	
+  // If the object is not configured by now, fall back to default
   if (!this.configured) {
     BalloonConfig(this,'GBubble');
   }

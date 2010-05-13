@@ -1,6 +1,6 @@
 package Bio::Graphics::Browser2::UserTracks;
 
-# $Id: UserTracks.pm 22850 2010-03-19 20:52:01Z lstein $
+# $Id: UserTracks.pm 23170 2010-05-10 10:57:41Z lstein $
 use strict;
 use Bio::Graphics::Browser2::DataSource;
 use Bio::Graphics::Browser2::DataLoader;
@@ -488,7 +488,7 @@ sub install_filter {
 	$unzip->print($buffer);
     }
     close $unzip;
-    exit 0;
+    CORE::exit 0;
 }
 
 sub remote_mirror_conf {

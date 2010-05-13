@@ -18,9 +18,10 @@ use Bio::Graphics::Browser2::Region;
 use Bio::Graphics::Browser2::RegionSearch;
 use Bio::Graphics::Browser2::RenderPanels;
 use Bio::Graphics::Browser2::RemoteSet;
-use Bio::Graphics::Browser2::GFFPrinter;
+use Bio::Graphics::Browser2::TrackDumper;
 use Bio::Graphics::Browser2::Util qw[modperl_request url_label];
 use Bio::Graphics::Browser2::UserTracks;
+use POSIX ":sys_wait_h";
 
 use constant VERSION              => 2.0;
 use constant DEBUG                => 0;
@@ -33,6 +34,7 @@ use constant MAX_SEGMENT          => 1_000_000;
 use constant TOO_MANY_SEGMENTS    => 5_000;
 use constant OVERVIEW_RATIO       => 1.0;
 use constant GROUP_SEPARATOR      => "\x1d";
+use constant LABEL_SEPARATOR      => "\x1e";
 
 my %PLUGINS;       # cache initialized plugins
 my $FCGI_REQUEST;  # stash fastCGI request handle
@@ -67,7 +69,18 @@ sub new {
   $self->session($session);
   $self->state($session->page_settings);
   $self->set_language();
+  $self->set_signal_handlers();
   $self;
+}
+
+sub set_signal_handlers {
+    my $self = shift;
+    $SIG{CHLD} = sub{    my $kid; 
+			 do { 
+			     $kid = waitpid(-1, WNOHANG); 
+			 } 
+			 while $kid > 0;
+    };
 }
 
 sub data_source {
@@ -89,6 +102,13 @@ sub state {
   my $d = $self->{state};
   $self->{state} = shift if @_;
   $d;
+}
+
+sub error_message {
+    my $self = shift;
+    my $d = $self->{error_message};
+    $self->{error_message} = shift if @_;
+    $d;
 }
 
 sub is_admin {
@@ -756,7 +776,7 @@ sub generate_title {
 					     $features->[0]->seq_id,
 					     $dsn->commas($features->[0]->start),
 					     $dsn->commas($features->[0]->end))
-	 : "$description: ".$self->tr('HIT_COUNT',scalar @$features);
+	 : $description;
 }
 
 # never called, method in HTML.pm with same name is run instead
@@ -1039,11 +1059,15 @@ sub region {
     else { # a feature search
 	my $search   = $self->get_search_object();
 	my $features = $search->search_features();
+	if ($@) {
+	    (my $msg = $@) =~ s/\sat.+line \d+//;
+	    $self->error_message($msg);
+	    $self->state->{name} = ''; # to avoid the error again
+	}
 	$region->features($features);
     }
 
     $self->plugins->set_segments($region->segments) if $self->plugins;
-
     $self->state->{valid_region} = $region->feature_count > 0;
     return $self->{region} = $region;
 }
@@ -1179,8 +1203,9 @@ sub plugin_auto_find {
     my $self = shift;
     my $search_string = shift;
     my (@results,$found_one);
+    my $plugins = $self->plugins or return;
 
-    for my $plugin ($self->plugins->plugins) {  # not a typo
+    for my $plugin ($plugins->plugins) {  # not a typo
 	next unless $plugin->type eq 'finder' && $plugin->can('auto_find');
 	my $f = $plugin->auto_find($search_string);
 	next unless $f;
@@ -1230,35 +1255,35 @@ sub handle_gff_dump {
     # new API
     if (my $action = param ('f') || param('fetch')) {
 	$gff_action = $action;
-    } elsif ($action = param('gbgff')) {
-	$gff_action = 'scan'       if $action eq 'scan';
-	$gff_action = 'gff3'       if $action eq '1';
-	$gff_action = 'save gff3'  if $action =~ /save/i;
-	$gff_action = 'save fasta' if $action =~ /fasta/i;
-	$gff_action .= " trackdef" if param('s') or param('stylesheet');
+    } elsif ($action = param('gbgff')||param('download_track')) {
+	$gff_action = 'scan'           if $action eq 'scan';
+	$gff_action = 'datafile'       if $action eq '1';
+	$gff_action = 'save datafile'  if $action =~ /save/i;
+	$gff_action = 'save fasta'     if $action =~ /fasta/i;
+	$gff_action .= " trackdef"     if param('s') or param('stylesheet');
     }
     return unless $gff_action;
 
     my %actions = map {$_=>1} split /\s+/,$gff_action;
 
     my $segment    = param('q') || param('segment') || undef;
-    my @labels     = (param('type'),param('t'));
 
-    unless ($segment) {
-	my $s    = $self->segment;
-	$segment = $s->seq_id.':'.$s->start.'..'.$s->end;
-    }
+    my @labels     = $self->split_labels_correctly(param('l'));
+    @labels        = $self->split_labels((param('type'),param('t'))) unless @labels;
+    @labels        = $self->visible_tracks                           unless @labels;
 
-    unless (@labels) {
-	@labels    = $self->visible_tracks;
-    }
+    my $title      = join('+',@labels);
+    $title        .= ":$segment" if $segment;
+    $title         =~ s/\s/_/;
 
-    my $dumper = Bio::Graphics::Browser2::GFFPrinter->new(
+    my $dumper = Bio::Graphics::Browser2::TrackDumper->new(
         -data_source => $self->data_source(),
         -stylesheet  => $actions{trackdef}   ||  'no',
         '-dump'      => param('d')           || undef,
-        -labels      => [ param('type'), param('t') ],
+        -labels      => \@labels,
+	-segment     => $segment             || undef,
         -mimetype    => param('m')           || undef,
+	-format      => param('format')      || undef,
     ) or return 1;
 
     # so that another user's tracks are added if requested
@@ -1270,20 +1295,23 @@ sub handle_gff_dump {
     }
     else {
 	$dumper->state($self->state);
-	$dumper->get_segment($segment) or return 1;
-	if ($actions{save} && $actions{gff3}) {
-	    print header( -type                => $dumper->get_mime_type,
-			  -content_disposition => "attachment; filename=$segment.gff3");
-	    $dumper->print_gff3();
+	my $mime = $dumper->get_file_mime_type;
+	my $ext  = $dumper->get_file_extension;
+	warn "title = $title";
+
+	if ($actions{save} && ($actions{datafile}||$actions{gff3})) {
+	    print header( -type                => $mime,
+			  -content_disposition => "attachment; filename=$title.$ext");
+	    $dumper->print_datafile() ;
 	}
 	elsif ($actions{fasta}) {
-	    print header( -type                => $dumper->get_mime_type,
-			  -content_disposition => "attachment; filename=$segment.fa");
+	    print header( -type                => $mime =~ /x-/ ? 'application/x-fasta' : $mime,
+			  -content_disposition => "attachment; filename=$title.fa");
 	    $dumper->print_fasta();
 	}
-	elsif ($actions{gff3}) {
-	    print header( -type                => $dumper->get_mime_type);
-	    $dumper->print_gff3();
+	elsif ($actions{datafile}) {
+	    print header( -type                => $mime);
+	    $dumper->print_datafile();
 	} elsif ($actions{trackdef}) {
 	    print header( -type                => 'text/plain');
 	    $dumper->print_stylesheet();
@@ -2054,8 +2082,13 @@ sub update_tracks {
       $self->add_remote_tracks(\@unescaped);
   }
 
-  # selected tracks can be set by the 'label' parameter
-  if (my @l = param('label')) {
+  # selected tracks can be set by the 'l', 'label' or 't' parameter
+  # the preferred parameter is 'l', because it implements correct
+  # semantics for the label separator
+  if (my @l = param('l')) {
+      $self->set_tracks($self->split_labels_correctly(@l));
+  }
+  elsif (@l = param('label')) {
       $self->set_tracks($self->split_labels(@l));
   } #... the 't' parameter
   elsif (my @t = param('t')) {
@@ -2068,11 +2101,11 @@ sub update_tracks {
       $self->set_tracks($self->data_source->track_source_to_label(@ts));
   }
 
-  if (my @selected = $self->split_labels(param('enable'))) {
+  if (my @selected = $self->split_labels_correctly(param('enable'))) {
     $state->{features}{$_}{visible} = 1 foreach @selected;
   }
 
-  if (my @selected = $self->split_labels(param('disable'))) {
+  if (my @selected = $self->split_labels_correctly(param('disable'))) {
     $state->{features}{$_}{visible} = 0 foreach @selected;
   }
 
@@ -2624,7 +2657,7 @@ sub update_galaxy_url {
     my $self  = shift;
     my $state = shift;
     if (my $url = param('GALAXY_URL')) {
-	warn "setting galaxy" if DEBUG;
+	warn "[$$] setting galaxy" if DEBUG;
 	$state->{GALAXY_URL} = $url;
     } elsif (param('clear_galaxy')) {
 	warn "clearing galaxy" if DEBUG;
@@ -2762,14 +2795,34 @@ sub regionview_bounds {
   return ($regionview_start, $regionview_end);
 }
 
+# this version handles labels with embedded hyphens correctly
+sub split_labels_correctly {
+  my $self = shift;
+  return map {split LABEL_SEPARATOR,$_} @_;
+}
+
+# this version does not handle labels with embedded "+" or "-"
+# unless the hyphen is escaped with %01d
 sub split_labels {
   my $self = shift;
-  my @results = map {/^(http|ftp|das)/ ? $_ : split /[+-]/} @_;
+  my @results;
+
+  for (@_) {
+
+      # pass URLs through unmodified
+      if (/^(http|ftp|das)/) {
+	  push @results,$_;
+	  next;
+      }
+      push @results, split /[+-]/;
+  }
+
   my $group_separator = GROUP_SEPARATOR;
   foreach (@results) {
       s/$group_separator/-/g;  # unescape hyphens
       s/$;/-/g;                # unescape hyphens -backward compatibility
   }
+
   @results;
 }
 
@@ -3393,20 +3446,6 @@ sub delete_stored_segments {
     delete $self->{whole_segment};
 }
 
-# I know there must be a more elegant way to insert commas into a long number...
-sub commas {
-    my $self = shift;
-    my $i    = shift;
-    return $i if $i=~ /\D/;
-
-    $i = reverse $i;
-    $i =~ s/(\d{3})/$1,/g;
-    chop $i if $i=~/,$/;
-
-    $i = reverse $i;
-    return $i;
-}
-
 ###################### link generation ##############
 sub annotation_help {
   return shift->globals->url_base."/annotation_help.html";
@@ -3419,7 +3458,6 @@ sub general_help {
 sub join_selected_tracks {
     my $self = shift;
     my $state = $self->state;
-    my $group_separator = GROUP_SEPARATOR;
 
     my @selected = $self->visible_tracks;
     for (@selected) { # escape hyphens
@@ -3427,9 +3465,8 @@ sub join_selected_tracks {
 	    my @subtracks = grep {$filter->{$_}} keys %{$filter};
 	    $_ .= "/@subtracks";
 	}
-	s/-/$group_separator/g;
     }
-    return join '-',@selected;
+    return join LABEL_SEPARATOR,@selected;
 }
 
 sub bookmark_link {
@@ -3442,7 +3479,7 @@ sub bookmark_link {
     $q->param(-name=>$_,   -value=>$settings->{$_});
   }
   $q->param(-name=>'id',   -value=>$settings->{userid});  # slight inconsistency here
-  $q->param(-name=>'label',-value=>$self->join_selected_tracks);
+  $q->param(-name=>'l',    -value=>$self->join_selected_tracks);
 
   $q->param(-name=>'h_region',-value=>$settings->{h_region}) if $settings->{h_region};
   my @h_feat= map {"$_\@$settings->{h_feat}{$_}"} keys %{$settings->{h_feat}};
@@ -3481,10 +3518,12 @@ sub dna_dump_link {
 
 sub galaxy_link {
     my $self = shift;
+    my $settings   = shift || $self->state;
 
-    my $settings   = shift;
     my $galaxy_url = $settings->{GALAXY_URL} 
                      || $self->data_source->global_setting('galaxy outgoing');
+
+    warn "[$$] galaxy_link = $galaxy_url" if DEBUG;
     return '' unless $galaxy_url;
     my $clear_it  = $self->galaxy_clear;
     my $submit_it = q(document.galaxyform.submit());
@@ -3520,7 +3559,7 @@ sub image_link {
 	$settings->{features}{$_}{options}
     } @$tracks;
     $id        ||= ''; # to prevent uninit variable warnings
-    my $img_url  = "$url/?name=$name;label=$selected;width=$width;id=$id";
+    my $img_url  = "$url/?name=$name;l=$selected;width=$width;id=$id";
     $img_url    .= ";flip=$flip"         if $flip;
     $img_url    .= ";options=$options"   if $options;
     $img_url    .= ";format=$format"     if $format;

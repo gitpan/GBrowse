@@ -1,8 +1,7 @@
 #!/usr/bin/perl -w
 
-eval 'exec /usr/bin/perl  -S $0 ${1+"$@"}'
+eval 'exec /usr/bin/perl -w -S $0 ${1+"$@"}'
     if 0; # not running under some shell
-
 
 our $CONF_DIR  = "$ENV{GBROWSE_CONF}/synteny";
 our $VERSION   = '$Id: gbrowse_details,v 1.7 2009-08-27 19:13:18 idavies Exp $';
@@ -1229,7 +1228,7 @@ sub overview_panel {
   my ($whole_segment,$segment) = @_;
   return '' if $SCONF->section_setting('overview') eq 'hide';
   my $image = overview($whole_segment,$segment);
-  my $ref = $segment->ref;
+  my $ref = $MAP->{$CONF->page_settings("search_src")}->{desc};
   return toggle('Overview',
                 table({-border=>0,-width=>'100%'},
 		      TR(th("<center>Reference genome: <i>$ref</i></center>")),

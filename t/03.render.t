@@ -11,6 +11,7 @@ use File::Path 'rmtree';
 use IO::String;
 use CGI;
 use FindBin '$Bin';
+use POSIX ":sys_wait_h";
 
 use lib "$Bin/testdata";
 use TemplateCopy; # for the template_copy() function
@@ -25,13 +26,15 @@ BEGIN {
   # we include the t dir (where a copy of Test.pm is located)
   # as a fallback
   eval { require Test; };
+  use Bio::Graphics::FeatureFile;
   if( $@ ) {
     use lib 't';
   }
   use Test;
   plan test => TEST_COUNT;
   $PID = $$;
-  rmtree '/tmp/gbrowse_testing';
+  rmtree('/tmp/gbrowse_testing');
+  rmtree(Bio::Graphics::FeatureFile->cachedir);
 }
 END {
   rmtree '/tmp/gbrowse_testing' if $$ == $PID;
@@ -40,10 +43,8 @@ END {
 $SIG{SEGV} = $SIG{HUP} = $SIG{INT} = $SIG{TERM} = \&cleanup;
 
 %ENV = ();
-$ENV{GBROWSE_DOCS} = $Bin;
-
-chdir $Bin;
 use lib "$Bin/../lib";
+
 use Bio::Graphics::Browser2;
 use Bio::Graphics::Browser2::Render::HTML;
 use Bio::Graphics::Browser2::Render::Slave;
@@ -55,6 +56,10 @@ my @servers = (Bio::Graphics::Browser2::Render::Slave->new(LocalPort=>'dynamic')
 	       Bio::Graphics::Browser2::Render::Slave->new(LocalPort=>'dynamic'), # cleavage sites
     );
 
+chdir $Bin;
+$ENV{GBROWSE_DOCS} = $Bin;
+$ENV{TMPDIR}       = '/tmp/gbrowse_testing';
+
 # rewrite the template config files
 for ('volvox_final.conf','yeast_chr1.conf') {
     template_copy("testdata/conf/templates/$_",
@@ -64,7 +69,7 @@ for ('volvox_final.conf','yeast_chr1.conf') {
 }
 
 for my $s (@servers) {
-    $s->debug(0);
+    $s->debug(1);
     ok($s->run);
 }
 
@@ -413,11 +418,12 @@ $render      = Bio::Graphics::Browser2::Render::HTML->new($source,$session);
 }
 
 ok($data =~ /Set-Cookie/);
-ok($data =~ /the following 4 regions/i);
+ok($data =~ /m11/ && $data =~ /m14/ && $data =~ /m12/ && $data =~ /EDEN/);
 
 # try rendering a segment
 $CGI::Q = new CGI('name=ctgA:1..20000;label=Clones-Transcripts-Motifs');
 $render->update_state;
+
 $r = $render->region;
 $s = $r->segments;
 ok($s && @$s==1);
@@ -449,10 +455,14 @@ ok ($png);
 $png =~ s!/gbrowse/i!/tmp/gbrowse_testing/images!;
 ok (-e $png);
 
-($png)          = grep m!/gbrowse/i/!,$panels->{TransChip} =~ /src="([^"]+\.png)"/g;
-ok ($png);
-$png =~ s!/gbrowse/i!/tmp/gbrowse_testing/images!;
-ok (-e $png);
+# test different ways of splitting labels
+$CGI::Q         = new CGI('name=ctgA:1..20000;l=Clones%1EMotifs%1EBindingSites%1ETransChip');
+$render->update_state;
+ok(join(' ',sort $render->detail_tracks),"BindingSites Clones Motifs TransChip");
+
+$CGI::Q         = new CGI('name=ctgA:1..20000;label=Clones-Motifs-BindingSites');
+$render->update_state;
+ok(join(' ',sort $render->detail_tracks),"BindingSites Clones Motifs");
 
 ### check user tracks
 my $usertracks = $render->user_tracks;
@@ -491,14 +501,16 @@ sub check_multiple_renders {
 }
 
 sub cleanup {
-    if ($PID == $$) {
-	foreach (@servers) { $_->kill }
-	unlink 'testdata/conf/volvox_final.conf',
-     	       'testdata/conf/yeast_chr1.conf';
-    }
+    return unless $PID == $$;
+    foreach (@servers) { $_->kill }
+    unlink 'testdata/conf/volvox_final.conf',
+    'testdata/conf/yeast_chr1.conf';
 }
 
 END {
-    cleanup();
+    if ($PID == $$) {
+	$SIG{CHLD} = 'IGNORE'; # prevent error codes from children propagating to Test::Harness
+	cleanup();
+    }
 }
 

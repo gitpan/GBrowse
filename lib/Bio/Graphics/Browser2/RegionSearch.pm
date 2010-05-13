@@ -14,8 +14,6 @@ use Storable 'nfreeze','thaw';
 
 use constant DEBUG => 0;
 
-#local $SIG{CHLD} = 'IGNORE';
-
 # search multiple databases using crazy heuristics
 
 =head1 NAME
@@ -264,7 +262,8 @@ sub search_features {
     @found = grep {
 	defined $_ 
 	    && !$seenit{
-		((lc $_->seq_id eq $state->{name}) # this hack gives special privileges to matches to seq_ids
+		(($state->{name} && 
+		  lc $_->seq_id eq $state->{name}) # this hack gives special privileges to matches to seq_ids
 		 ? 'region' 
 		 : $_->primary_tag),
 		 $_->seq_id,
@@ -290,6 +289,32 @@ If -shortcircuit is not provided, it defaults to true.
 =cut
 
 sub search_features_locally {
+    my $self = shift;
+    
+    my $timeout         = $self->source->global_setting('search_timeout') || 10;
+
+    my $result;
+
+    warn "[$$] searching..." if DEBUG;
+
+    # My oh my. block eval is not working as expected here. Sometimes the die is not caught.
+    my $status = eval <<'END';
+	local $SIG{ALRM} = sub { warn "alarm clock" ; die "The search timed out; try a more specific search\n"; die; };
+	alarm($timeout);
+	$result = $self->_search_features_locally(@_);
+	1;
+END
+    alarm(0);
+    warn "[$$] search done..." if DEBUG;
+
+    unless ($status) {
+	warn $@;
+	return;
+    }
+    return $result;
+}
+
+sub _search_features_locally {
     my $self        = shift;
     my $args        = shift;
     ref $args && %$args or return;
@@ -371,8 +396,6 @@ sub search_features_remotely {
     eval "require IO::Pipe;1;"   unless IO::Pipe->can('new');
     eval "require IO::Select;1;" unless IO::Select->can('new');
 
-    $SIG{CHLD} = 'IGNORE';  # for some reason local() does not work!
-
     my $select = IO::Select->new();
 
     for my $url (keys %$remote_dbs) {
@@ -398,9 +421,8 @@ sub search_features_remotely {
 
     my @found;
     while ($select->count > 0) {
-	my @ready = $select->can_read(5);
 
-	unless (@ready) { warn "timeout\n"; next; }
+	my @ready = $select->can_read(5) or next;
 
       HANDLE:
 	for my $r (@ready) {
@@ -433,7 +455,7 @@ sub search_features_remotely {
 	}
     }
 
-    eval {Bio::Graphics::Browser->fcgi_request()->Flush};
+    eval {Bio::Graphics::Browser2::Render->fcgi_request()->Flush};
 
     return \@found;
 }

@@ -482,9 +482,13 @@ END
 
  SHOW_OR_HIDE_TRACK => '<b>Show or hide this track</b>',
 
- KILL_THIS_TRACK    => '<b>Turn off this track.</b>',
+ KILL_THIS_TRACK    => '<b>Turn off this track</b>',
 
- CONFIGURE_THIS_TRACK   => '<b>Click to configure this track.</b>',
+ CONFIGURE_THIS_TRACK   => '<b>Configure this track</b>',
+
+ DOWNLOAD_THIS_TRACK   => '<b>Download this track</b>',
+
+ ABOUT_THIS_TRACK   => '<b>About this track</b>',
 
  SUBTRACKS_SHOWN    => 'This track contains selectable subtracks:',
 
@@ -537,5 +541,9 @@ END
     MAIN_PAGE          => 'Browser',
     CUSTOM_TRACKS_PAGE => 'Upload and Share Tracks',
     SETTINGS_PAGE      => 'Preferences',
+
+    DOWNLOAD_TRACK_DATA_REGION => 'Download track data across region %s',
+    DOWNLOAD_TRACK_DATA_CHROM => 'Download track data across ENTIRE chromosome %s',
+    DOWNLOAD_TRACK_DATA_ALL => 'Download ALL DATA for this track',
 
 };

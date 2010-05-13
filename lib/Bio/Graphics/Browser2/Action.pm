@@ -1,6 +1,6 @@
 package Bio::Graphics::Browser2::Action;
 
-#$Id: Action.pm 22804 2010-03-13 19:08:46Z lstein $
+#$Id: Action.pm 23083 2010-04-22 17:31:03Z lstein $
 # dispatch
 
 use strict;
@@ -114,6 +114,24 @@ sub ACTION_configure_track {
     my $revert     = $q->param('track_defaults');
 
     my $html = $self->render->track_config($track_name,$revert);
+    return ( 200, 'text/html', $html );
+}
+
+sub ACTION_cite_track {
+    my $self = shift;
+    my $q    = shift;
+
+    my $track_name = $q->param('track') or croak;
+
+    my $html = $self->render->track_citation($track_name);
+    return ( 200, 'text/html', $html );
+}
+
+sub ACTION_download_track_menu {
+    my $self = shift;
+    my $q    = shift;
+    my $track_name = $q->param('track') or croak;
+    my $html       = $self->render->download_track_menu($track_name);
     return ( 200, 'text/html', $html );
 }
 

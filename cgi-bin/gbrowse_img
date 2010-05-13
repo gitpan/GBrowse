@@ -3,6 +3,9 @@
 eval 'exec /usr/bin/perl -w -S $0 ${1+"$@"}'
     if 0; # not running under some shell
 
+eval 'exec /usr/bin/perl -w -S $0 ${1+"$@"}'
+    if 0; # not running under some shell
+
 # $Id: gbrowse_img,v 1.7 2009-08-31 19:46:38 lstein Exp $
 
 use strict;
@@ -12,11 +15,6 @@ use Bio::Graphics::Browser2::Render::HTML;
 use Bio::Graphics::Browser2::Util;
 use Bio::Graphics::Karyotype;
 use Digest::MD5 'md5_hex';
-use POSIX ":sys_wait_h";
-
-# something is generating zombies. This fixes the problem.
-$SIG{CHLD} = sub {my $kid; do {	$kid = waitpid(-1, WNOHANG) } while $kid > 0 };
-
 
 # call with following arguments:
 # source    database source
@@ -45,14 +43,15 @@ if ($fcgi) {
     };
 
     my %sys_env = %ENV;
-    while (!$FCGI_DONE && ($fcgi->Accept >= 0)) {
+    while (!$FCGI_DONE) {
+	my $status = $fcgi->Accept;
+	next unless $status >= 0;
         %ENV = ( %sys_env, %ENV );
 	my $globals = Bio::Graphics::Browser2->open_globals;
 	CGI->initialize_globals();
 	GBrowse_img->new($globals)->run();
 	$fcgi->Finish();
     }
-
 }
 
 else {

@@ -1,6 +1,6 @@
 package Bio::Graphics::Karyotype;
 
-# $Id: Karyotype.pm 22566 2010-01-17 23:59:49Z lstein $
+# $Id: Karyotype.pm 23143 2010-05-07 04:59:55Z lstein $
 # Utility class to create a display of a karyotype and a series of "hits" on the individual chromosomes
 # Used for searching
 
@@ -66,8 +66,12 @@ sub add_hits {
   for my $f (@$features) {
     my $ref = $f->seq_id;
     push @{$self->{hits}{$ref}},$f;
+    $self->{hit_count}++;
   }
+
 }
+
+sub hit_count { shift->{hit_count} }
 
 sub seqid_order {
     my $self = shift;
@@ -111,6 +115,11 @@ sub to_html {
   my $panels     = $self->{panels} ||= $self->generate_panels or return;
 
   my $html;
+
+  my $hit_count = $self->hit_count;
+  my $message   = $self->language->tr('HIT_COUNT',$hit_count);
+  $html        .= CGI::h2($message);
+
   for my $seqid (
       sort {$sort_order->{$a} <=> $sort_order->{$b}} keys %$panels
       ) {
@@ -138,6 +147,7 @@ sub to_html {
   }
 
   my $table = $self->hits_table($terms2hilite);
+
   return $html.br({-clear=>'all'}).$table;
 }
 
@@ -178,7 +188,7 @@ sub image_map {
 sub feature2link {
     my $self    = shift;
     my $feature = shift;
-    my $url      = url(-path_info=>1)."?name=";
+    my $url      = url(-absolute=>1,-path_info=>1)."?name=";
     my $match_id = eval {$feature->primary_id};
     my $class    = eval {$feature->class};
     my $name     = $feature->display_name || '';

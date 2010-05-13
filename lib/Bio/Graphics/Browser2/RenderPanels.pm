@@ -11,7 +11,7 @@ use Bio::Graphics::Browser2::CachedTrack;
 use Bio::Graphics::Browser2::Util qw[shellwords url_label];
 use Bio::Graphics::Browser2::Render::Slave::Status;
 use IO::File;
-use Time::HiRes 'sleep';
+use Time::HiRes 'sleep','time';
 use POSIX 'WNOHANG','setsid';
 
 use CGI qw(:standard param escape unescape);
@@ -24,6 +24,8 @@ use constant DEFAULT_EMPTYTRACKS => 0;
 use constant PAD_DETAIL_SIDES    => 10;
 use constant RULER_INTERVALS     => 20;
 use constant PAD_OVERVIEW_BOTTOM => 5;
+use constant TRY_CACHING_CONFIG  => 1;
+use constant MAX_PROCESSES       => 4;
 
 # when we load, we set a global indicating the LWP::UserAgent is available
 my $LPU_AVAILABLE;
@@ -137,7 +139,13 @@ sub request_panels {
   # If both local and remote requests are needed, then we
   # fork a second time and process them in parallel.
   if ($args->{deferred}) {
-      $SIG{CHLD} = 'IGNORE';
+
+      # precache local databases into cache
+      my $length = $self->segment->length;
+      my $source = $self->source;
+      for my $l (@$local_labels) {
+	  my $db = eval { $source->open_database($l,$length)};
+      }
 
       my $child = Bio::Graphics::Browser2::Render->fork();
 
@@ -162,12 +170,10 @@ sub request_panels {
           }
       }
       elsif ($do_local) {
-          $self->run_local_requests( $data_destinations, $args,
-              $local_labels );
+          $self->run_local_requests( $data_destinations, $args,$local_labels );
       }
       elsif ($do_remote) {
-          $self->run_remote_requests( $data_destinations, $args,
-              $remote_labels );
+          $self->run_remote_requests( $data_destinations, $args,$remote_labels );
       }
       CORE::exit 0;
   }
@@ -242,11 +248,13 @@ sub make_requests {
     my @panel_args  = $self->create_panel_args($args);
     my @cache_extra = @{ $args->{cache_extra} || [] };
     my %d;
+
     foreach my $label ( @{ $labels || [] } ) {
 
 	$self->set_subtrack_defaults($label);
 
         my @track_args = $self->create_track_args( $label, $args );
+
 	my (@filter_args,@featurefile_args,@segment_args);
 
 	my $filter     = $settings->{features}{$label}{filter};
@@ -280,8 +288,8 @@ sub make_requests {
 	}
 
 	warn "[$$] creating CachedTrack for $label, nocache = $args->{nocache}" if DEBUG;
-	my $cache_time = $args->{nocache}    ? -1
-	                :$settings->{cache}  ? $source->cache_time
+	my $cache_time =  $args->{nocache}    ? -1
+	                : $settings->{cache}  ? $source->cache_time
                         : -1;
 
         my $cache_object = Bio::Graphics::Browser2::CachedTrack->new(
@@ -291,8 +299,10 @@ sub make_requests {
             -extra_args => [ @cache_extra, @filter_args, @featurefile_args, $label ],
 	    -cache_time => $cache_time
         );
+
         $d{$label} = $cache_object;
     }
+
     return \%d;
 }
 
@@ -328,9 +338,9 @@ sub render_tracks {
     my $self     = shift;
     my $requests = shift;
     my $args     = shift;
-
+    
     my %result;
-
+    
     for my $label ( keys %$requests ) {
         my $data   = $requests->{$label};
         my $gd     = eval{$data->gd} or next;
@@ -357,7 +367,6 @@ sub render_tracks {
 }
 
 sub wrap_rendered_track {
-
     my $self   = shift;
     my %args   = @_;
     my $label  = $args{'label'};
@@ -370,12 +379,14 @@ sub wrap_rendered_track {
     my $track_type = $args{'track_type'} || 'standard';
     my $status = $args{'status'};    # for debugging
 
-    my $buttons = $self->source->globals->button_url;
-    my $plus    = "$buttons/plus.png";
-    my $minus   = "$buttons/minus.png";
-    my $kill    = "$buttons/ex.png";
-    my $share   = "$buttons/share.png";
-    my $help    = "$buttons/query.png";
+    my $buttons  = $self->source->globals->button_url;
+    my $plus     = "$buttons/plus.png";
+    my $minus    = "$buttons/minus.png";
+    my $kill     = "$buttons/ex.png";
+    my $share    = "$buttons/share.png";
+    my $help     = "$buttons/query.png";
+    my $download = "$buttons/download.png";
+    my $configure= "$buttons/tools.png";
 
     my $settings = $self->settings;
     my $source   = $self->source;
@@ -409,11 +420,19 @@ sub wrap_rendered_track {
     my $kill_this_track = $self->language->tr('KILL_THIS_TRACK')
 	|| "Turn off this track.";
     my $share_this_track = $self->language->tr('SHARE_THIS_TRACK')
-        || "Share This Track";
+        || "Share this track";
 
     my $configure_this_track = '';
     $configure_this_track .= $self->language->tr('CONFIGURE_THIS_TRACK')
-        || "Click to configure this Track";
+        || "Configure this track";
+
+    my $download_this_track = '';
+    $download_this_track .= $self->language->tr('DOWNLOAD_THIS_TRACK')
+        || "<b>Download this track</b>";
+
+    my $about_this_track = '';
+    $about_this_track .= $self->language->tr('ABOUT_THIS_TRACK')
+        || "<b>About this track</b>";
 
     my $escaped_label = CGI::escape($label);
 
@@ -422,9 +441,9 @@ sub wrap_rendered_track {
     # to fit if the contents are smaller than 500 x 500
     my $config_click;
     if ( $label =~ /^plugin:/ ) {
-        my $help_url = "url:?plugin=$escaped_label;plugin_do=Configure";
+        my $config_url = "url:?plugin=$escaped_label;plugin_do=Configure";
         $config_click
-            = "GBox.showTooltip(event,'$help_url',1,500,500)";
+            = "GBox.showTooltip(event,'$config_url',1,500,500)";
     }
 
     elsif ( $label =~ /^file:/ ) {
@@ -433,10 +452,15 @@ sub wrap_rendered_track {
     }
 
     else {
-        my $help_url = "url:?action=configure_track;track=$escaped_label";
+        my $config_url = "url:?action=configure_track;track=$escaped_label";
         $config_click
-            = "GBox.showTooltip(event,'$help_url',1,500,500)";
+            = "GBox.showTooltip(event,'$config_url',1,500,500)";
     }
+
+    my $help_url       = "url:?action=cite_track;track=$escaped_label";
+    my $help_click     = "GBox.showTooltip(event,'$help_url',1)";
+
+    my $download_click = "GBox.showTooltip(event,'url:?action=download_track_menu;track=$escaped_label',1)";
 
     my $title;
     if ($label =~ /^file:/) {
@@ -477,12 +501,28 @@ sub wrap_rendered_track {
             }
         ),
 
-        img({   -src         => $help,
+        img({   -src         => $configure,
                 -style       => 'cursor:pointer',
                 -onmousedown => $config_click,
                 -onMouseOver =>
 	    "$balloon_style.showTooltip(event,'$configure_this_track')",
-		    
+            }
+        ),
+
+        img({   -src         => $download,
+                -style       => 'cursor:pointer',
+                -onmousedown => $download_click,
+                -onMouseOver =>
+	    "$balloon_style.showTooltip(event,'$download_this_track')",
+            }
+        ),
+
+
+        img({   -src         => $help,
+                -style       => 'cursor:pointer',
+                -onmousedown => $help_click,
+                -onMouseOver =>
+	    "$balloon_style.showTooltip(event,'$about_this_track')",
             }
         )
 	);
@@ -560,7 +600,7 @@ sub wrap_rendered_track {
 	$img = $pan_left2 . $pan_left . $img . $pan_right . $pan_right2;
     }
      return div({-class=>'centered_block',
- 		-style=>"width:${width}px;position:relative"
+		 -style=>"width:${width}px;position:relative"
 		},
  	       ( $show_titlebar ? $titlebar : '' ) . $img . $pad_img )
          . ( $map_html || '' );
@@ -607,11 +647,21 @@ sub run_remote_requests {
   $args{$_}  = $args->{$_} foreach ('section','image_class','cache_extra');
 
   # serialize the data source and settings
-  my $s_dsn	= Storable::nfreeze($source);
   my $s_set	= Storable::nfreeze($settings);
   my $s_lang	= Storable::nfreeze($lang);
   my $s_env	= Storable::nfreeze(\%env);
   my $s_args    = Storable::nfreeze(\%args);
+  my $s_mtime   = 0;
+
+  my $frozen_source = Storable::nfreeze($source);
+  my $s_dsn;
+
+  if (TRY_CACHING_CONFIG) {
+      $s_dsn   = undef;
+      $s_mtime = $source->mtime;
+  } else {
+      $s_dsn = Storage::nfreeze($source);
+  }
 
   # sort requests by their renderers
   my $slave_status = Bio::Graphics::Browser2::Render::Slave::Status->new(
@@ -645,6 +695,8 @@ sub run_remote_requests {
       my $child   = Bio::Graphics::Browser2::Render->fork();
       next if $child;
 
+      my $total_time = time();
+
       # THIS PART IS IN THE CHILD
       my @labels   = keys %{$renderers{$url}};
       my $s_track  = Storable::nfreeze(\@labels);
@@ -657,14 +709,18 @@ sub run_remote_requests {
 				panel_args => $s_args,
 				tracks     => $s_track,
 				settings   => $s_set,
-				datasource => $s_dsn,
+				datasource => $s_dsn||'',
+				data_name  => $source->name,
+				data_mtime => $s_mtime,
 				language   => $s_lang,
 				env        => $s_env,
 			    ]);
 
+	my $time = time();
 	my $response = $ua->request($request);
+	my $elapsed = time() - $time;
 
-	warn "$url=>@labels: ",$response->status_line if DEBUG;
+	warn "$url=>@labels: ",$response->status_line," ($elapsed s)" if DEBUG;
 
 	if ($response->is_success) {
 	    my $contents = Storable::thaw($response->content);
@@ -676,6 +732,11 @@ sub run_remote_requests {
 		$requests->{$label}->put_data($gd2,$map);
 	    }
 	    $slave_status->mark_up($url);
+	}
+	elsif ($response->status_line =~ /REQUEST DATASOURCE/) {
+	    $s_dsn	= Storable::nfreeze($source);
+	    $s_mtime    = 0;
+	    redo FETCH;
 	}
 	else {
 	    my $uri = $request->uri;
@@ -699,6 +760,10 @@ sub run_remote_requests {
 	    $requests->{$_}->flag_error($response_line) foreach keys %{$renderers{$uri}};
 	}
       }
+
+      my  $elapsed = time() - $total_time;
+      warn "[$$] total_time = $elapsed s" if DEBUG;
+
       CORE::exit(0);  # from CHILD
   }
 }
@@ -818,7 +883,10 @@ sub render_scale_bar {
             -bgcolor => $source->global_setting('detail bgcolor') || 'wheat',
             -pad_bottom => 0,
             -label_font => $image_class->gdMediumBoldFont,
-	    -label      => $segment->seq_id.': '.$self->source->unit_label($segment->length),
+	    -label      => eval{$segment->seq_id.
+				    ': '
+				    .$self->source->unit_label($segment->length)
+	    }||'', # intermittent bug here with undefined $segment
         );
     }
 
@@ -1147,6 +1215,8 @@ sub run_local_requests {
     my $args     = shift;
     my $labels   = shift;
 
+    my $time     = time();
+
     warn "[$$] run_local_requests" if DEBUG;
 
     $labels    ||= [keys %$requests];
@@ -1192,11 +1262,38 @@ sub run_local_requests {
     # create all the feature filters for each track
     my $filters = $self->generate_filters($settings,$source,\@labels_to_generate);
 
-    # == create whichever panels are not already cached ==
+    my (%children,%reaped);
+
+    local $SIG{CHLD} = sub {
+	while ((my $pid = waitpid(-1, WNOHANG)) > 0) {
+	    warn "[$$] reaped child $pid" if DEBUG;
+	    $reaped{$pid}++;
+	    delete $children{$pid} if $children{$pid};
+	}
+    };
+
+    my $max_processes = $self->source->global_setting('max_render_processes')
+	|| MAX_PROCESSES;
+
     for my $label (@labels_to_generate) {
 
         # this shouldn't happen, but let's be paranoid
         next if $seenit{$label}++;
+
+	# don't let there be more than this many processes 
+	# running simultaneously
+	while ((my $c = keys %children) >= $max_processes) {
+	    warn "[$$] too many processes ($c), sleeping" if DEBUG;
+	    sleep 1;
+	}
+
+	my $child = Bio::Graphics::Browser2::Render->fork();
+	croak "Can't fork: $!" unless defined $child;
+	if ($child) {
+	    warn "Launched rendering process $child for $label" if DEBUG;
+	    $children{$child}++ unless $reaped{$child}; # in case child was reaped before it was sown
+	    next;
+	}
 
 	(my $base = $label) =~ s/:(overview|region|details?)$//;
 	warn "label=$label, base=$base, file=$feature_files->{$base}" if DEBUG;
@@ -1222,7 +1319,9 @@ sub run_local_requests {
 
 	my $timeout         = $source->global_setting('global_timeout');
 	
-	my $has_sigset = $] >= 5.008;
+# this was causing more problems than it was worth
+#	my $has_sigset = $] >= 5.008;
+	my $has_sigset = undef;
 	my $oldaction;
 	if ($has_sigset) {
 	    eval "use POSIX ':signal_h'" unless defined &SIGALRM;
@@ -1279,7 +1378,7 @@ sub run_local_requests {
 
 		}
 
-		# == generate the maps ==
+		# == generate the images and maps in background==
 		$gd  = $panel->gd;
 		$map = $self->make_map( scalar $panel->boxes,
 					$panel, $label,
@@ -1302,9 +1401,18 @@ sub run_local_requests {
 	    } else {
 		$requests->{$label}->flag_error($@);
 	    }
-	    next;
 	}
+	CORE::exit 0; # in child;
     }
+    warn "waiting for children" if DEBUG;
+    sleep while %children;
+    warn "done waiting" if DEBUG;
+    my $elapsed = time() - $time;
+    warn "[$$] run_local_requests (@$labels): $elapsed seconds" if DEBUG;
+
+    # make sure requests are populated
+    # the "1" argument turns off expiration checking
+    $requests->{$_}->get_data(1) foreach keys %$requests;  
 }
 
 sub render_hidden_track {
@@ -1399,8 +1507,11 @@ sub set_subtrack_defaults {
 
     if (my @defaults = $source->subtrack_select_default($label)) {
 	my ($method) = $source->subtrack_select_list($label);
-	$settings->{features}{$label}{filter}{values} ||= {map {$_=>1} @defaults};
+        $settings->{features}{$label}{filter}{values} ||= {map {$_=>1} @defaults};
 	$settings->{features}{$label}{filter}{method} ||= $method;
+    } elsif (my ($method,$values,$labels) = $source->subtrack_select_list($label)) {
+        $settings->{features}{$label}{filter}{values} ||= {map {$_=>1} @$values};
+        $settings->{features}{$label}{filter}{method} ||= $method;
     }
 }
 
@@ -1411,7 +1522,7 @@ sub subtrack_select_filter {
     my $filter   = $settings->{features}{$label}{filter} or return;
     my $method   = $filter->{method};
     return unless $method;
-
+    
     my $code;
     my @values = grep {$filter->{values}{$_}} keys %{$filter->{values}};
     if (@values) {
@@ -1463,16 +1574,28 @@ sub add_features_to_track {
   my (%iterators,%iterator2dbid);
   for my $db (keys %db2db) {
       my @labels           = keys %{$db2label{$db}};
-      my @types_in_this_db = map { $source->label2type($_,$length) } @labels;
-      next unless @types_in_this_db;
 
-      warn "[$$] RenderPanels->get_iterator(@types_in_this_db)" if DEBUG;
-      my $iterator  = $self->get_iterator($db2db{$db},
-					  $segment,
-					  \@types_in_this_db)
-	  or next;
-      $iterators{$iterator}     = $iterator;
-      $iterator2dbid{$iterator} = $source->db2id($db);
+      my (@full_types,@summary_types);
+      for my $l (@labels) {
+	  my @types = $source->label2type($l,$length) or next;
+	  if ($source->show_summary($l,$length)) {
+	      push @summary_types,@types;
+	  } else {
+	      push @full_types,@types;
+	  }
+      }
+	  
+      warn "[$$] RenderPanels->get_iterator(@full_types)"  if DEBUG;
+      warn "[$$] RenderPanels->get_summary_iterator(@summary_types)" if DEBUG;
+      if (@summary_types && (my $iterator = $self->get_summary_iterator($db2db{$db},$segment,\@summary_types))) {
+	  $iterators{$iterator}     = $iterator;
+	  $iterator2dbid{$iterator} = $source->db2id($db);
+      }
+
+      if (@full_types && (my $iterator = $self->get_iterator($db2db{$db},$segment,\@full_types))) {
+	  $iterators{$iterator}     = $iterator;
+	  $iterator2dbid{$iterator} = $source->db2id($db);
+      }
   }
 
   my (%groups,%feature_count,%group_pattern,%group_field);
@@ -1677,6 +1800,25 @@ sub get_iterator {
   return $db_segment->get_feature_stream(-type=>$feature_types);
 }
 
+sub get_summary_iterator {
+  my $self = shift;
+  my ($db,$segment,$feature_types) = @_;
+
+  if (eval {$db->can_summarize}) {
+      my @args = (-type   => $feature_types,
+		  -seq_id => $segment->seq_id,
+		  -start  => $segment->start,
+		  -end    => $segment->end,
+		  -bins   => $self->settings->{width},
+		  -iterator=>1,
+	  );
+      return $db->feature_summary(@args);
+  } else {
+      return;
+  }
+}
+
+
 =head2 add_feature_file
 
 Internal use: render a feature file into a panel
@@ -1855,8 +1997,15 @@ sub create_track_args {
                         || {};   # user-set override settings for tracks
 
   my @override        = map {'-'.$_ => $override->{$_}} keys %$override;
-
   push @override,(-feature_limit => $override->{limit}) if $override->{limit};
+
+  if ($source->show_summary($label,$length)) {
+      push @override,(-glyph     => 'wiggle_density',
+		      -height    => 14,
+		      -bgcolor => 'black',
+		      -autoscale => 'local'
+      );
+  }
 
   my $hilite_callback = $args->{hilite_callback};
 
@@ -2082,6 +2231,7 @@ sub make_link {
     my $id    = eval {CGI::escape($feature->primary_id)};
     my $dbid  = eval {$feature->gbrowse_dbid} || ($data_source->db_settings($label))[0];
     $dbid     = CGI::escape($dbid);
+    $url      =~ s/\?.+//;
     $url      =~ s! /gbrowse[^/]* / [^/]+ /? [^/]*  $!!x;
     $url      .= "/gbrowse_details/$ds_name?ref=$ref;start=$start;end=$end";
     $url      .= ";name=$name"     if defined $name;

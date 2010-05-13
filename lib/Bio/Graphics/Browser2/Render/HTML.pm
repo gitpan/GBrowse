@@ -5,7 +5,7 @@ use warnings;
 use base 'Bio::Graphics::Browser2::Render';
 use Bio::Graphics::Browser2::Shellwords;
 use Bio::Graphics::Karyotype;
-use Bio::Graphics::Browser2::Util qw[citation url_label];
+use Bio::Graphics::Browser2::Util qw[citation url_label segment_str];
 use JSON;
 use Digest::MD5 'md5_hex';
 use Carp 'croak';
@@ -26,6 +26,7 @@ sub render_html_start {
   my $title = shift;
   my $dsn   = $self->data_source;
   my $html  = $self->render_html_head($dsn,$title);
+  $html    .= $self->render_js_controller_settings();
   $html    .= $self->render_balloon_settings();
   $html    .= $self->render_select_menus();
   return $html;
@@ -46,22 +47,28 @@ sub render_top {
 
 sub render_error_div {
     my $self   = shift;
+
+    my $error   = $self->error_message;
+    my $display = $error ? 'block' : 'none';
+
     my $button = button({-onClick=>'Controller.hide_error()',
 			 -name=>'Ok'});
-    return div({-class=>'errorpanel',
-		-style=>'display:none',
-		-id=>'errordiv'},
-	       table(
-		   TR(
-		       td(span({-id=>'errormsg'},'no error')),
-		       td({-align=>'right'},$button)
-		   ),
-	       ),
-	       div({-class=>'errorpanel',
-		    -style=>'display:none;margin: 6px 6px 6px 6px',
-		    -id   =>'errordetails'},
-		   'no details'
-	       )
+    return p(
+	div({-class=>'errorpanel',
+	     -style=>"display:${display}",
+	     -id=>'errordiv'},
+	    table(
+		TR(
+		    td(span({-class=>'error',-id=>'errormsg'},$error || 'no error')),
+		    td({-align=>'right'},$button)
+		),
+	    ),
+	    div({-class=>'errorpanel',
+		 -style=>"display:none;margin: 6px 6px 6px 6px",
+		 -id   =>'errordetails'},
+		       'no details'
+	    )
+	)
 	);
 }
 
@@ -235,9 +242,10 @@ sub render_search_form_objects {
 	-override=>1,
     );
     if ($self->setting('autocomplete')) {
+        my $spinner_url = $self->globals->button_url.'/spinner.gif';
 	$html .= <<END
 <span id="indicator1" style="display: none">
-  <img src="/gbrowse2/images/spinner.gif" alt="Working..." />
+  <img src="$spinner_url" alt="Working..." />
 </span>
 <div id="autocomplete_choices" class="autocomplete"></div>
 END
@@ -251,6 +259,8 @@ sub render_html_head {
   my ($dsn,$title) = @_;
 
   return if $self->{started_html}++;
+
+  $title =~ s/<[^>]+>//g; # no markup in the head
 
   # pick scripts
   my $js       = $dsn->globals->js_url;
@@ -337,6 +347,30 @@ sub render_html_head {
   push @args,(-onLoad=>"initialize_page();$set_dragcolors;$autocomplete");
 
   return start_html(@args);
+}
+
+# renders a block of javascript that loads some of our global config
+# settings into the main controller object for use in client-side code
+sub render_js_controller_settings {
+    my ( $self ) = @_;
+
+    my @export_keys = qw(
+                         buttons
+                         balloons
+                         openid
+                         js
+                         gbrowse_help
+                         stylesheet
+                        );
+
+    my $controller_globals = JSON::to_json({
+        map { $_ => ( $self->globals->url_path($_) || undef ) } @export_keys
+       });
+
+    return script({-type=>'text/javascript'}, <<EOS );
+  Controller.set_globals( $controller_globals );
+EOS
+
 }
 
 sub render_balloon_settings {
@@ -576,10 +610,12 @@ sub render_instructions {
 
 sub render_busy_signal {
     my $self = shift;
-    return img({-id=>'busy_indicator',
-		-src=>'/gbrowse2/images/spinner.gif',
-		-style=>'position:absolute;top:5px;left:5px;display:none',
-		-alt=>"Working..."});
+    return img({
+        -id    => 'busy_indicator',
+        -src   => $self->globals->button_url.'/spinner.gif',
+        -style => 'position: fixed; top: 5px; left: 5px; display: none',
+        -alt   => "Working..."
+       });
 }
 
 sub render_actionmenu {
@@ -684,30 +720,30 @@ sub galaxy_form {
       $URL .= "/".$source->name;
     }
 
-    my $action = $galaxy_url =~ /\?/ ? "$galaxy_url&URL=$URL" : "$galaxy_url?URL=$URL";
+    
+    # Make sure to include all necessary parameters in URL to ensure that gbrowse will retrieve the data
+    # when Galaxy posts the URL.
+    my $dbkey  = $source->global_setting('galaxy build name') || $source->name;
+    my $labels = $self->join_selected_tracks;
 
+    my $seg = $segment->seq_id.':'.$segment->start.'..'.$segment->end;
+		      
+    my $action = $galaxy_url =~ /\?/ ? "$galaxy_url&URL=$URL" : "$galaxy_url?URL=$URL";
     my $html = start_multipart_form(-name  => 'galaxyform',
 				    -action => $action,
 				    -method => 'POST');
 
-    # Make sure to include all necessary parameters in URL to ensure that gbrowse will retrieve the data
-    # when Galaxy posts the URL.
-    my $dbkey  = $source->global_setting('galaxy build name') || $source->name;
-    my $labels = join('+',map {escape($_)} $self->detail_tracks);
-
-    my $seg = $segment->seq_id.':'.$segment->start.'..'.$segment->end;
-		      
     $html .= hidden(-name=>'dbkey',-value=>$dbkey);
-    $html .= hidden(-name=>'gbgff',-value=>1);
+    $html .= hidden(-name=>'gbgff',-value=>'save gff3');
     $html .= hidden(-name=>'id',   -value=>$settings->{userid});
     $html .= hidden(-name=>'q',-value=>$seg);
-    $html .= hidden(-name=>'t',-value=>$labels);
+    $html .= hidden(-name=>'l',-value=>$labels);
     $html .= hidden(-name=>'s',-value=>0);
     $html .= hidden(-name=>'d',-value=>'edit');
     $html .= hidden(-name=>'m',-value=>'application/x-gff3');
     $html .= endform();
 
-  return $html;
+    return $html;
 }
 
 sub render_track_filter {
@@ -870,7 +906,7 @@ sub render_track_table {
 
       my %ids        = map {$_=>{id=>"${_}_check"}} @track_labels;
 
-      my @checkboxes = checkbox_group(-name       => 'label',
+      my @checkboxes = checkbox_group(-name       => 'l',
 				      -values     => \@track_labels,
 				      -labels     => \%labels,
 				      -defaults   => \@defaults,
@@ -1368,12 +1404,10 @@ sub segment2link {
     my $source = $self->data_source;
     return  a({-href=>"?name=$segment"},$segment) unless ref $segment;
 
-    my ($start,$stop) = ($segment->start,$segment->end);
     my $ref = $segment->seq_id;
+    my ($start,$stop) = ($segment->start,$segment->end);
     my $bp = $stop - $start;
-    my $s  = $self->commas($start) || '';
-    my $e  = $self->commas($stop)  || '';
-    $label ||= "$ref:$s..$e";
+    $label ||= segment_str($segment);
     $ref||='';  # get rid of uninit warnings
     return a({-href=>"?ref=$ref;start=$start;stop=$stop"},$label);
 }
@@ -1755,11 +1789,14 @@ sub source_menu {
   @sources         = grep {$globals->data_source_show($_)} @sources;
   my $sources = $show_sources && @sources > 1;
 
+  my %descriptions = map {$_=>$globals->data_source_description($_)} @sources;
+  @sources         = sort {$descriptions{$a} cmp $descriptions{$b}} @sources;
+
   return b($self->tr('DATA_SOURCE')).br.
     ( $sources ?
       popup_menu(-name   => 'source',
 		 -values => \@sources,
-		 -labels => { map {$_ => $globals->data_source_description($_)} @sources},
+		 -labels => \%descriptions,
 		 -default => $self->session->source,
 		 -onChange => 'this.form.submit()',
 		)
@@ -1793,32 +1830,7 @@ sub track_config {
     my $override = $state->{features}{$slabel}{override_settings}||{};
     my $return_html = start_html();
 
-    # citation info:
-    my $cit_txt = citation( $data_source, $slabel, $self->language ) || '';
-    my $cit_html;
-    my $cit_link = '';
-     
-    # For verbose citations, add a link to a new window
-    if (length $cit_txt > 512) {
-       $cit_link = "?display_citation=$label";
-       $cit_link =~ s!gbrowse\?!gbrowse/$state->{source}/\?!;
-       $cit_link = a(
-    	    {
-    	      -href    => $cit_link, 
-    	      -target  => "citation", #'_NEW',
-    	      -onclick => 'GBox.hideTooltip(1)'
-    		},
-    	    'Click here to display in new window...');    
-       $cit_link = p($cit_link);
-                               }
-    if ( length $cit_txt > 70 ) {
-       $cit_html = $self->toggle_section({on => undef},'citation_text','Track Information',$cit_link||br,$cit_txt);
-                                }
-    else {
-      $cit_html = $cit_txt;
-    }
-
-    $cit_html = div({-style => 'background:gainsboro;padding:5px'},$cit_html);
+    my $title   = div({-style => 'background:gainsboro;padding:5px;font-weight:bold'},$key);
 
     my $height   = $data_source->semantic_fallback_setting( $label => 'height' ,        $length)    || 5;
     my $width    = $data_source->semantic_fallback_setting( $label => 'linewidth',      $length )   || 1;
@@ -1864,7 +1876,7 @@ END
 
     $form .= table(
         { -border => 0 },
-        TR( td( {-colspan => 2}, $cit_html)),
+        TR( td( {-colspan => 2}, $title)),
         TR( th( { -align => 'right' }, $self->tr('Show') ),
             td( checkbox(
                     -name     => 'show_track',
@@ -1989,6 +2001,81 @@ END
     return $return_html;
 }
 
+sub track_citation {
+    my $self        = shift;
+    my $label       = shift;
+
+    my $state       = $self->state();
+    my $data_source = $self->data_source();
+
+    my $length      = $self->thin_segment->length;
+    my $slabel      = $data_source->semantic_label($label,$length);
+    my $key         = $self->label2key($slabel);
+
+    # citation info:
+    my $cit_txt = citation( $data_source, $label, $self->language ) 
+	|| 'There is no additional information about this track.';
+    my $cit_html;
+    my $cit_link = '';
+     
+    # For verbose citations, add a link to a new window
+    if (length $cit_txt > 512) {
+       $cit_link = "?display_citation=$label";
+       $cit_link =~ s!gbrowse\?!gbrowse/$state->{source}/\?!;
+       $cit_link = a(
+    	    {
+    	      -href    => $cit_link, 
+    	      -target  => "citation", #'_NEW',
+    	      -onclick => 'GBox.hideTooltip(1)'
+    		},
+    	    'Click here to display in new window...');    
+       $cit_link = p($cit_link);
+    }
+    $cit_html = p($cit_link||br,$cit_txt);
+    my $title   = div({-style => 'background:gainsboro;padding:5px;font-weight:bold'},$key);
+    return  p($title,$cit_html);
+}
+
+sub download_track_menu {
+    my $self  = shift;
+    my $track = shift;
+
+    my $state       = $self->state();
+    my $data_source = $self->data_source();
+    my $segment     = $track =~ /:overview$/ ? $self->thin_whole_segment
+                     :$track =~ /:region$/   ? $self->thin_region_segment
+                                             : $self->thin_segment;
+    my $seqid       = $segment->seq_id;
+    my $start       = $segment->start;
+    my $end         = $segment->end;
+    my $key         = $self->label2key($track);
+
+    my $unload      = 'window.onbeforeunload=void(0)';
+    my $byebye      = 'Balloon.prototype.hideTooltip(1)';
+
+    my $segment_str = segment_str($segment);
+
+    my $html = '';
+    $html   .= div({-align=>'center'},
+		   div({-style => 'background:gainsboro;padding:5px;font-weight:bold'},$key),br(),
+
+		   button(-value   => $self->tr('DOWNLOAD_TRACK_DATA_REGION',$segment_str),
+			  -onClick => "$unload;window.location='?gbgff=1;q=$seqid:$start..$end;l=$track;s=0;f=save+gff3';$byebye",
+		   ),
+
+		   button(-value   => $self->tr('DOWNLOAD_TRACK_DATA_CHROM',$seqid),
+			  -onClick => "$unload;window.location='?gbgff=1;q=$seqid;l=$track;s=0;f=save+gff3';$byebye",
+		   ),
+
+		   button(-value=> $self->tr('DOWNLOAD_TRACK_DATA_ALL'),
+			  -onClick => "$unload;location.href='?gbgff=1;l=$track;s=0;f=save+gff3';$byebye",
+		   )).
+
+		   a({-href=>'javascript:void(0)',-onClick=>$byebye},
+		     $self->tr('CLOSE_WINDOW'));
+    return $html;
+}
+
 # this is the content of the popup balloon that allows the user to select
 # individual features by source or name
 sub select_subtracks {
@@ -2085,7 +2172,7 @@ sub share_track {
     }
     else {
         $gbgff  = $base;
-        $gbgff .= "?gbgff=1;q=$segment;t=$labels;s=1";
+        $gbgff .= "?gbgff=1;q=$segment;t=$labels;s=1;format=gff3";
         $gbgff .= ";uuid=$upload_id" if $usertracks_present;
     }
 
@@ -2303,13 +2390,14 @@ sub format_autocomplete {
     return $html;
 }
 
-## Truncated version (of track_config) to for displaying citation only:
+## Truncated version (of track_config) for displaying citation only:
 sub display_citation {
     my $self        = shift;
     my $label       = shift;
     my $state       = $self->state();
     my $data_source = $self->data_source();
-    my $length      = $self->thin_segment->length;
+    my $segment     = $self->thin_segment;
+    my $length      = $segment ? $segment->length : 0;
     my $slabel      = $data_source->semantic_label($label,$length);
  
     my $key = $self->label2key($slabel);

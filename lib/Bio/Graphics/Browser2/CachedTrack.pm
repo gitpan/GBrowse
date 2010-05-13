@@ -1,6 +1,6 @@
 package Bio::Graphics::Browser2::CachedTrack;
 
-# $Id: CachedTrack.pm 22837 2010-03-19 05:45:33Z lstein $
+# $Id: CachedTrack.pm 23163 2010-05-09 14:05:19Z lstein $
 # This package defines a Bio::Graphics::Browser2::Track option that manages
 # the caching of track images and imagemaps.
 
@@ -163,10 +163,21 @@ sub put_data {
 }
 
 sub get_data {
-    my $self      = shift;
+    my $self           = shift;
+    my $ignore_expires = shift;
     return $self->{data} if $self->{data};
-    return unless $self->status eq 'AVAILABLE';
 
+    my $status = $self->status;
+    if ( ($status eq 'AVAILABLE') or 
+	 ($status eq 'EXPIRED' && $ignore_expires)) {
+	return $self->_get_data();
+    } else {
+	return;
+    }
+}
+
+sub _get_data {
+    my $self = shift;
     my $datafile  = $self->datafile;
     $self->{data} = retrieve($datafile);
     return $self->{data};
