@@ -3,7 +3,7 @@
 
  Lincoln Stein <lincoln.stein@gmail.com>
  Ben Faga <ben.faga@gmail.com>
- $Id: controller.js 23191 2010-05-13 03:20:48Z lstein $
+ $Id: controller.js 23211 2010-05-14 20:36:59Z cnvandev $
 
 Indentation courtesy of Emacs javascript-mode 
 (http://mihai.bazon.net/projects/emacs-javascript-mode/javascript.el)
@@ -481,7 +481,7 @@ var GBrowseController = Class.create({
   function() {
     var bi = $('busy_indicator');
     var top  = document.body.scrollTop||document.documentElement.scrollTop;
-    bi.style.top  =top+5+"px";
+    bi.style.top  =5+"px";
     bi.style.left =5+"px";
     bi.show();
   },
