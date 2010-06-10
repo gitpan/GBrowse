@@ -1,7 +1,7 @@
 package Bio::Graphics::Browser2::PluginSet;
 # API for using plugins
 
-#  $Id: PluginSet.pm 22464 2009-12-23 21:00:15Z lstein $
+#  $Id: PluginSet.pm 23291 2010-05-31 14:13:55Z cnvandev $
 
 use strict;
 use Bio::Graphics::Browser2;
@@ -53,11 +53,13 @@ sub plugins       {
   my $self = shift;
   return wantarray ? values %{$self->{plugins}} : $self->{plugins};
 }
+
 sub plugin        {
   my $self = shift;
   my $plugin_base = shift;
   $self->plugins->{$plugin_base};
 }
+
 sub language {
   my $self = shift;
   my $d = $self->{language};

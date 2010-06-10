@@ -1,6 +1,6 @@
 package Bio::Graphics::Browser2::Action;
 
-#$Id: Action.pm 23200 2010-05-13 20:50:45Z lstein $
+#$Id: Action.pm 23329 2010-06-04 21:17:02Z lstein $
 # dispatch
 
 use strict;
@@ -136,16 +136,6 @@ sub ACTION_download_track_menu {
     return ( 200, 'text/html', $html );
 }
 
-
-sub ACTION_select_subtracks {
-    my $self = shift;
-    my $q    = shift;
-
-    my $track_name = $q->param('track') or croak;
-    my $html = $self->render->select_subtracks($track_name);
-    return ( 200, 'text/html', $html );
-}
-
 # return a listing of all discoverable tracks
 sub ACTION_scan {
     my $self = shift;
@@ -155,17 +145,6 @@ sub ACTION_scan {
     );
     return (200, 'text/plain', $dumper->get_scan);
 }
-
-sub ACTION_filter_subtrack {
-    my $self = shift;
-    my $q    = shift;
-
-    my $track_name = $q->param('track')  or croak;
-    my @subtracks  = $q->param('select');
-    my $html = $self->render->filter_subtrack($track_name,\@subtracks);
-    return ( 200, 'application/json', {} );
-}
-
 
 sub ACTION_reconfigure_track {
     my $self = shift;
@@ -568,6 +547,33 @@ sub ACTION_modifyUserData {
     my @tracks     = $userdata->labels($track);
     $self->render->track_config($_,'revert') foreach @tracks;
     return (200,'application/json',{tracks=>\@tracks});
+}
+
+sub ACTION_show_subtracks {
+    my $self = shift;
+    my $q    = shift;
+    my $track_name = $q->param('track') or croak 'provide "track" argument';
+    my $stt = $self->render->create_subtrack_manager($track_name)
+	or return (204,'text/plain','');
+    return ( 200, 'text/html', $stt->preview_table($self->render) );
+}
+
+sub ACTION_select_subtracks {
+    my $self = shift;
+    my $q    = shift;
+    my $label= $q->param('track') or return (200,'text/plain','Programming error');
+    my $html = $self->render->subtrack_table($label);
+    return (200,'text/html',$html);
+}
+
+sub ACTION_set_subtracks {
+    my $self = shift;
+    my $q    = shift;
+    my $label= $q->param('label');
+    my $subtracks = JSON::from_json($q->param('subtracks'));
+    my $settings  = $self->state;
+    $self->state->{subtracks}{$label} = $subtracks;
+    return (204,'text/plain',undef);
 }
 
 sub ACTION_about_gbrowse {

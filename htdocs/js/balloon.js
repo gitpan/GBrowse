@@ -1,7 +1,7 @@
 /*
  balloon.js -- a DHTML library for balloon tooltips
 
- $Id: balloon.js 23181 2010-05-11 21:19:55Z lstein $
+ $Id: balloon.js 23294 2010-05-31 21:21:01Z lstein $
 
  See http://www.gmod.org/wiki/index.php/Popup_Balloons
  for documentation.
@@ -201,7 +201,7 @@ Balloon.prototype.showTooltip = function(evt,caption,sticky,width,height) {
   this.setStyle(this.container,'font-family',this.fontFamily);
   this.setStyle(this.container,'font-size',this.fontSize);
   this.container.innerHTML = unescape(this.currentHelpText);
-  
+
   // make sure balloon image path is complete
   if (this.images) {
 
@@ -346,6 +346,11 @@ Balloon.prototype.doShowTooltip = function() {
   self.contents.appendChild(wrapper);
   wrapper.innerHTML = helpText;
 
+  // run any javascript in the thing -- sorry Sheldon
+  if (self.evalScripts) {
+     helpText.evalScripts();
+  }
+
   // how and where to draw the balloon
   self.setBalloonStyle(vOrient,hOrient,pageWidth,pageLeft);
 
@@ -472,7 +477,7 @@ Balloon.prototype.setBalloonStyle = function(vOrient,hOrient,pageWidth,pageLeft)
     self.setStyle(balloon,'width',self.minWidth);
     self.setStyle('contentWrapper','width',self.minWidth-fullPadding);
   }
-
+  
   self.setStyle('contents','z-index',2);
   self.setStyle('contents','color',self.fontColor);
   self.setStyle('contents','font-family',self.fontFamily);
@@ -870,7 +875,7 @@ Balloon.prototype.setStyle = function(el,att,val) {
   if (!el) {
     return false;
   }
-  
+
   if (val && att.match(/left|top|bottom|right|width|height|padding|margin/)) {
     val = new String(val);
     if (!val.match(/auto/)) {

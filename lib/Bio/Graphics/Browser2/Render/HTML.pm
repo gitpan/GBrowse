@@ -4,6 +4,7 @@ use strict;
 use warnings;
 use base 'Bio::Graphics::Browser2::Render';
 use Bio::Graphics::Browser2::Shellwords;
+use Bio::Graphics::Browser2::SubtrackTable;
 use Bio::Graphics::Karyotype;
 use Bio::Graphics::Browser2::Util qw[citation url_label segment_str];
 use JSON;
@@ -53,42 +54,43 @@ sub render_error_div {
 
     my $button = button({-onClick=>'Controller.hide_error()',
 			 -name=>'Ok'});
-    return p(
-	div({-class=>'errorpanel',
-	     -style=>"display:${display}",
-	     -id=>'errordiv'},
-	    table(
-		TR(
-		    td(span({-class=>'error',-id=>'errormsg'},$error || 'no error')),
-		    td({-align=>'right'},$button)
-		),
-	    ),
-	    div({-class=>'errorpanel',
-		 -style=>"display:none;margin: 6px 6px 6px 6px",
-		 -id   =>'errordetails'},
-		       'no details'
-	    )
-	)
-	);
+    return div({-class=>'errorpanel',
+		-style=>"display:${display}",
+		-id=>'errordiv'},
+	       table(
+		   TR(
+		       td(span({-class=>'error',-id=>'errormsg'},$error || 'no error')),
+		       td({-align=>'right'},$button)
+		   ),
+	       ),
+	       div({-class=>'errorpanel',
+		    -style=>"display:none;margin: 6px 6px 6px 6px",
+		    -id   =>'errordetails'},
+		   'no details'
+	       )
+	).br();
 }
 
 sub render_tabbed_pages {
     my $self = shift;
-    my ($main_html,$custom_tracks_html,$settings_html) = @_;
+    my ($main_html,$tracks_html,$custom_tracks_html,$settings_html,) = @_;
     my $main_title          = $self->tr('MAIN_PAGE');
+    my $tracks_title        = $self->tr('SELECT_TRACKS');
     my $custom_tracks_title = $self->tr('CUSTOM_TRACKS_PAGE');
     my $settings_title      = $self->tr('SETTINGS_PAGE');
 
     my $html = '';
     $html   .= div({-id=>'tabbed_section', -class=>'tabbed'},
 		   div({-id=>'tabbed_menu',-class=>'tabmenu'},
-		       span({id=>'main_page_select'},    $main_title),
+		       span({id=>'main_page_select'},         $main_title),
+		       span({id=>'track_page_select'},        $tracks_title),
 		       span({id=>'custom_tracks_page_select'},$custom_tracks_title),
-		       span({id=>'settings_page_select'},$settings_title)
+		       span({id=>'settings_page_select'},     $settings_title),
 		   ),
 		   div({-id=>'main_page',         -class=>'tabbody'}, $main_html),
+		   div({-id=>'track_page',        -class=>'tabbody'}, $tracks_html),
 		   div({-id=>'custom_tracks_page',-class=>'tabbody'}, $custom_tracks_html),
-		   div({-id=>'settings_page',     -class=>'tabbody'}, $settings_html)
+		   div({-id=>'settings_page',     -class=>'tabbody'}, $settings_html),
 	);
     return $html;
 }
@@ -208,7 +210,7 @@ sub sliderform {
 	return
 	    join '',(
 		start_form(-name=>'sliderform',-id=>'sliderform',-onSubmit=>'return false'),
-		b($self->tr('Scroll').': '),
+		b($self->tr('Scroll'). ': '),
 		$self->slidertable($segment),
 		b(
 		    checkbox(-name=>'flip',
@@ -257,6 +259,7 @@ END
 sub render_html_head {
   my $self = shift;
   my ($dsn,$title) = @_;
+  my @plugin_list = $self->plugins->plugins;
 
   return if $self->{started_html}++;
 
@@ -265,13 +268,45 @@ sub render_html_head {
   # pick scripts
   my $js       = $dsn->globals->js_url;
   my @scripts;
-
+  
+  # Set any onTabLoad functions
+  my $main_page_onLoads = "";
+  my $track_page_onLoads = "checkSummaries();";
+  my $custom_track_page_onLoads = "";
+  my $settings_page_onLoads = "";
+  
+  # Get plugin onTabLoad functions for each tab, if any
+  my %plugin_onLoads = map ($_->onLoads, @plugin_list);
+  if (defined($plugin_onLoads{'main_page'})) {
+    $main_page_onLoads .= $plugin_onLoads{'main_page'};
+  }
+  if (defined($plugin_onLoads{'track_page'})) {
+    $track_page_onLoads .= $plugin_onLoads{'track_page'};
+  }
+  if (defined($plugin_onLoads{'custom_track_page'})) {
+    $custom_track_page_onLoads .= $plugin_onLoads{'custom_track_page'};
+  }
+  if (defined($plugin_onLoads{'settings_page'})) {
+    $settings_page_onLoads .= $plugin_onLoads{'settings_page'};
+  }
+  
+  
+  
+  my $onTabScript .= "function onTabLoad(tab_id) {\n";
+  $onTabScript .= "if (tab_id == 'main_page_select') {$main_page_onLoads}\n";
+  $onTabScript .= "if (tab_id == 'track_page_select') {$track_page_onLoads}\n";
+  $onTabScript .= "if (tab_id == 'custom_track_page_select') {$custom_track_page_onLoads}\n";
+  $onTabScript .= "if (tab_id == 'settings_page_select') {$settings_page_onLoads}\n";
+  $onTabScript .= "};";
+  push (@scripts,({type=>"text/javascript"}, $onTabScript));
+  
   # drag-and-drop functions from scriptaculous
   push @scripts,{src=>"$js/$_"}
     foreach qw(
-        prototype.js 
-        scriptaculous.js 
-        yahoo-dom-event.js 
+      prototype.js 
+      scriptaculous.js 
+      yahoo-dom-event.js 
+      subtracktable.js
     );
 
   if ($self->setting('autocomplete')) {
@@ -284,34 +319,56 @@ sub render_html_head {
       foreach qw(login.js);
   }
 
-  # our own javascript
+  # our own javascript files
   push @scripts,{src=>"$js/$_"}
     foreach qw(
-               buttons.js 
-               toggle.js 
-               karyotype.js
-               rubber.js
-               overviewSelect.js
-               detailSelect.js
-               regionSelect.js
-               track.js
-               balloon.js
-               balloon.config.js
-               GBox.js
-               ajax_upload.js
-               tabs.js
-               controller.js
+      buttons.js 
+      toggle.js 
+      karyotype.js
+      rubber.js
+      overviewSelect.js
+      detailSelect.js
+      regionSelect.js
+      track.js
+      balloon.js
+      balloon.config.js
+      GBox.js
+      ajax_upload.js
+      tabs.js
+      track_configure.js
+      controller.js
     );
 
-  # pick stylesheets;
+  # add scripts needed by plugins. Looks in /js folder unless specified.
+  my @plugin_scripts = map ($_->scripts, @plugin_list);
+  # add a path if one isn't specified.
+  foreach (@plugin_scripts) {
+    if ($_ !~ /^\.{0,2}[\/\\]/) {
+      $_ = "$js/$_";
+    }
+  };
+  push @scripts,{src=>"$_"} foreach @plugin_scripts;
+  
+  # pick stylesheets.  Looks in /css folder unless specified.
   my @stylesheets;
   my $titlebar   = 'css/titlebar-default.css';
   my $stylesheet = $self->setting('stylesheet')||'/gbrowse2/css/gbrowse.css';
   push @stylesheets,{src => $self->globals->resolve_path('css/tracks.css','url')};
+  push @stylesheets,{src => $self->globals->resolve_path('css/subtracktable.css','url')};
   push @stylesheets,{src => $self->globals->resolve_path('css/karyotype.css','url')};
   push @stylesheets,{src => $self->globals->resolve_path('css/dropdown/dropdown.css','url')};
   push @stylesheets,{src => $self->globals->resolve_path('css/dropdown/default_theme.css','url')};
   push @stylesheets,{src => $self->globals->resolve_path($titlebar,'url')};
+  
+  # add stylesheets used by plugins
+  my @plugin_stylesheets = map ($_->stylesheets, @plugin_list);
+  # add a path if one isn't specified.
+  foreach (@plugin_stylesheets) {
+    if ($_ !~ /^\.{0,2}[\/\\]/) {
+      $_ = $self->globals->resolve_path("css/$_",'url');
+    }
+  };
+  push @stylesheets,{src => $_} foreach @plugin_stylesheets;
 
   my @theme_stylesheets = shellwords($self->setting('stylesheet') || '/gbrowse2/css/gbrowse.css');
   for my $s ( @theme_stylesheets ) {
@@ -331,11 +388,10 @@ sub render_html_head {
       $fill =~ s/^(\w+):[\d.]+$/$1/;
       $set_dragcolors = "set_dragcolors('$fill')";
   }
-
   my @extra_headers;
   push @extra_headers, $self->render_user_head;
 
-  # put them all together
+  # put all the html head arguments together
   my @args = (-title    => $title,
               -style    => \@stylesheets,
               -encoding => $self->tr('CHARSET'),
@@ -343,8 +399,19 @@ sub render_html_head {
 	      -head     => \@extra_headers,
 	     );
   push @args,(-lang=>($self->language_code)[0]) if $self->language_code;
+  
+  # add body's onload arguments, including ones used by plugins
   my $autocomplete = '';
-  push @args,(-onLoad=>"initialize_page();$set_dragcolors;$autocomplete");
+  my $body_onLoads = "initialize_page();$set_dragcolors;$autocomplete";
+  while(my($keys, $values) = each(%plugin_onLoads)) {
+    if ($keys eq "body") {
+      $body_onLoads .= $values;
+    }
+  }
+  push @args,(-onLoad => "$body_onLoads");
+
+  my $plugin_onloads  = join ';',map {eval{$_->body_onloads}} @plugin_list;
+  push @args,(-onLoad => "initialize_page(); $set_dragcolors; $plugin_onloads");
 
   return start_html(@args);
 }
@@ -419,8 +486,10 @@ var GBox = new Box;
 BalloonConfig(GBox,'GBox');
 GBox.images = "$balloon_images/GBubble";
 GBox.allowEventHandlers = true;
+GBox.evalScripts        = true;
 GBox.opacity = 1;
 GBox.fontFamily = 'sans-serif';
+GBox.maxWidth   = 1280;
 GBox.stemHeight = 0;
 END
 ;
@@ -756,17 +825,17 @@ sub render_track_filter {
     my $name         = 'plugin:'.$plugin->name;
 
     return
- 	p({-id=>'track select'},
-	  start_form({-id      => 'track_filterform',
-		      -name    => 'configure_plugin',
-		      -onSubmit=> 'return false'}),
-	  $form,
-	  button(
-	      -name    => 'plugin_button',
-	      -value   => $self->tr('search'),
-	      -onClick => 'doPluginUpdate()',
-	  ),
-	  end_form(),
+ 	div({-id=>'track select',-style=>'padding-top:8px'},
+		start_form({-id      => 'track_filterform',
+			    -name    => 'configure_plugin',
+			    -onSubmit=> 'return false'}),
+	    $form,
+	    button(
+		-name    => 'plugin_button',
+		-value   => $self->tr('search'),
+		-onClick => 'doPluginUpdate()',
+	    ),
+	    end_form(),
 	  script({-type=>'text/javascript'},
 		 "function doPluginUpdate() { Controller.reconfigure_plugin('$action',null,null,'$plugin_type',\$('track_filterform')) }")
 	);
@@ -777,11 +846,15 @@ sub render_toggle_track_table {
   my $self     = shift;
   my $html;
 
+  $html .= div({-style=>'font-weight:bold'},'<<',$self->render_select_browser_link('link'));
+
   if (my $filter = $self->track_filter_plugin) {
       $html .= $self->toggle({tight=>1},'track_select',div({class=>'searchtitle',
-							    style=>"text-indent:2em;padding-top:8px"},$self->render_track_filter($filter)));
+							    style=>"text-indent:2em;padding-top:8px"},
+							   $self->render_track_filter($filter)));
   }
   $html .= $self->toggle('Tracks',$self->render_track_table);
+  $html .= div({-style=>'text-align:center'},$self->render_select_browser_link('button'));
 
   return $html;
 }
@@ -803,6 +876,14 @@ sub render_track_table {
 
   warn "potential tracks = @labels" if DEBUG;
 
+  my ($filter_active,@hilite);
+  if (my $filter = $self->track_filter_plugin) {
+      $filter_active++;
+      eval {@labels    = $filter->filter_tracks(\@labels,$source)};
+      eval {@hilite    = $filter->hilite_terms};
+      warn $@ if $@;
+  }
+
   # add citation link and markup
   my %labels;
   for my $label (@labels) {
@@ -811,41 +892,48 @@ sub render_track_table {
    if ($label =~ /^plugin:/) {
        $labels{$label} = $key;
        next;
-       }
+   }
    elsif ($label =~ /^file:/){
        $link = "?Download%20File=$key";
-       }
+   }
    else {
        $link = "?display_citation=$label";#;source=" . $settings->{source};
        my $cit_txt = citation( $source, $label, $self->language ) || '';
        if ( length $cit_txt > 100) {
-   	$cit_txt =~ s/\<[^\>]+\>//g;     # truncate and strip tags for preview
-   	$cit_txt =~ s/(.{100}).+/$1/; 
-   	$cit_txt =~ s/\s+\S+$//; 
-   	$cit_txt =~ s/\'/\&\#39;/g;
-   	$cit_txt =~ s/\"/\&\#34;/g;
-        $cit_txt .= '... <i>Click for more</i>';
-        }
-        $mouseover = "<b>$key</b>";
-        $mouseover .= ": $cit_txt"                           if $cit_txt;
-        }
+	   $cit_txt =~ s/\<[^\>]+\>//g;     # truncate and strip tags for preview
+	   $cit_txt =~ s/(.{100}).+/$1/; 
+	   $cit_txt =~ s/\s+\S+$//; 
+	   $cit_txt =~ s/\'/\&\#39;/g;
+	   $cit_txt =~ s/\"/\&\#34;/g;
+	   $cit_txt .= '... <i>Click for more</i>';
+       }
+       $mouseover = "<b>$key</b>";
+       $mouseover .= ": $cit_txt"                           if $cit_txt;
+   }
    
-  my $balloon = $source->setting('balloon style') || 'GBubble';
+   my $balloon = $source->setting('balloon style') || 'GBubble';
    
-  my @args = ( -href => $link, -target => 'citation');
-      push @args, -style => 'Font-style: italic' if $label =~ /^(http|ftp|file):/;
-      push @args, -onmouseover => "$balloon.showTooltip(event,'$mouseover')" if $mouseover;
-   
-  $labels{$label} = a({@args},$key);
-  }
-   
-  #my %labels     = map {$_ => $self->label2key($_)}              @labels;
-  my @defaults   = grep {$settings->{features}{$_}{visible}  }   @labels;
+   my @args = ( -href => $link, -target => 'citation');
+   push @args, -style => 'Font-style: italic' if $label =~ /^(http|ftp|file):/;
+   push @args, -onmouseover => "$balloon.showTooltip(event,'$mouseover')" if $mouseover;
 
-  if (my $filter = $self->track_filter_plugin) {
-      eval {@labels    = $filter->filter_tracks(\@labels,$source)};
-      warn $@ if $@;
+   # add hilighting if requested
+   for my $h (@hilite) {
+       $key =~ s!($h)!<span style="background-color:yellow">$1</span>!gi;
+   }
+   
+   $labels{$label} = a({@args},$key);
+
+   if (my ($selected,$total) = $self->subtrack_counts($label)) {
+       my $escaped_label = CGI::escape($label);
+       $labels{$label} .= ' ['. span({-class       =>'clickable',
+				      -onMouseOver  => "GBubble.showTooltip(event,'Click to modify subtrack selections.')",
+				      -onClick      => "GBox.showTooltip(event,'url:?action=select_subtracks;track=$escaped_label',true)"
+				     },i($self->tr('SELECT_SUBTRACKS',$selected,$total))).']';
+   }
   }
+   
+  my @defaults   = grep {$settings->{features}{$_}{visible}  }   @labels;
 
   # Sort the tracks into categories:
   # Overview tracks
@@ -861,8 +949,10 @@ sub render_track_table {
 
   autoEscape(0);
 
-  my %exclude = map {$_=>1} map {$self->tr($_)} qw(OVERVIEW REGION ANALYSIS EXTERNAL);
 
+  my %exclude = map {$_=>1} map {$self->tr($_)} qw(OVERVIEW REGION ANALYSIS EXTERNAL);
+  my ($user_tracks) = grep {/^My tracks/i} keys %track_groups;
+  $exclude{$user_tracks}++ if $user_tracks;
   my @user_keys = grep {!$exclude{$_}} sort keys %track_groups;
 
   my $all_on  = $self->tr('ALL_ON');
@@ -874,9 +964,8 @@ sub render_track_table {
 		    $self->tr('REGION'),
 		    @user_keys,
 		    $self->tr('ANALYSIS'),
-		    $source->section_setting('upload_tracks') eq 'off' 
-		    ? () : ($self->tr('EXTERNAL')),
       );
+  push @categories,$user_tracks if $user_tracks;
 
   my $c_default = $source->category_default;
 
@@ -884,7 +973,6 @@ sub render_track_table {
 
   foreach my $category (@categories) {
     next if $seenit{$category}++;
-    my $table;
     my $id = "${category}_section";
     my $category_title   = (split m/(?<!\\):/,$category)[-1];
     $category_title      =~ s/\\//g;
@@ -900,10 +988,8 @@ sub render_track_table {
       $settings->{sk} ||= 'sorted'; # get rid of annoying warning
 
       # if these tracks are in a grid, then don't sort them
-      if (!defined $category_table_labels->{$category}) {
-	  @track_labels = sort {lc ($labels{$a}) cmp lc ($labels{$b})} @track_labels
-	      if ($settings->{sk} eq 'sorted');
-      }
+      @track_labels = sort {lc ($labels{$a}) cmp lc ($labels{$b})} @track_labels
+	  if $settings->{sk} eq 'sorted' && !defined $category_table_labels->{$category};
 
       my %ids        = map {$_=>{id=>"${_}_check"}} @track_labels;
 
@@ -915,16 +1001,18 @@ sub render_track_table {
 				      -attributes => \%ids,
 				      -override   => 1,
 				     );
-      $table = $self->tableize(\@checkboxes,$category);
-      my $visible = exists $settings->{section_visible}{$id} 
-                    ? $settings->{section_visible}{$id} : $c_default;
+      my $table      = $self->tableize(\@checkboxes,$category);
+
+      my $visible =  $filter_active ? 1
+                   : exists $settings->{section_visible}{$id} 
+                        ? $settings->{section_visible}{$id} 
+                        : $c_default;
 
       my ($control,$section)=$self->toggle_section({on=>$visible,nodiv => 1},
 						   $id,
 						   b(ucfirst $category_title),
 						   div({-style=>'padding-left:1em'},
-						       span({-id=>$id},$table))
-						  );
+						       span({-id=>$id},$table)));
       $control .= '&nbsp;'.i({-class=>'nojs'},
 			     checkbox(-id=>"${id}_a",-name=>"${id}_a",
 				      -label=>$all_on,-onClick=>"gbCheck(this,1)"),
@@ -1192,6 +1280,32 @@ sub clear_highlights {
 		 $self->tr('CLEAR_HIGHLIGHTING'));
 }
 
+sub render_select_track_link {
+    my $self  = shift;
+    my $title = $self->tr('SELECT_TRACKS');
+    return button({-name=>$title,
+		   -onClick => "Controller.select_tab('track_page')"
+		  }
+	);
+		  
+}
+sub render_select_browser_link {
+    my $self  = shift;
+    my $style  = shift || 'button';
+
+    my $title = $self->tr('BACK_TO_BROWSER');
+    if ($style eq 'button') {
+	return button({-name=>$title,
+		       -onClick => "Controller.select_tab('main_page')"
+		      }
+	    );
+    } elsif ($style eq 'link') {
+	return a({-href=>'javascript:void(0)',
+		  -onClick => "Controller.select_tab('main_page')"},
+		 $title);
+    }
+}
+
 sub render_upload_share_section {
     my $self = shift;
     return $self->is_admin
@@ -1268,7 +1382,7 @@ sub list_userdata {
 		-onClick         => "Controller.edit_upload_description('$name',this)",
 		-contentEditable => 'true',
 	    },
-	    $userdata->description($_) || 'Click to add a description'
+	    $userdata->description($_) || $self->tr('ADD_DESCRIPTION')
 	    );
 	my @track_labels        = $userdata->labels($name);
 	my $track_labels        = join '+',map {CGI::escape($_)} @track_labels;
@@ -1294,7 +1408,7 @@ sub list_userdata {
 			     )
 		      } @source_files]),
 		  TR(th({-align=>'left'},
-			(a({-href=>"?userdata_download=conf;track=$name"},'Configuration'))),
+			(a({-href=>"?userdata_download=conf;track=$name"},$self->tr('CONFIGURATION')))),
 		     td(scalar localtime $conf_modified),
 		     td("$conf_size bytes"),
 		     td(a({-href    => "javascript:void(0)",
@@ -1461,6 +1575,20 @@ sub tableize {
     $html .= "</tr>\n";
   }
   $html .= end_table();
+}
+
+sub subtrack_counts {
+    my $self  = shift;
+    my $label = shift;
+    my $stt   = $self->create_subtrack_manager($label) or return;
+    return $stt->counts;
+}
+
+sub subtrack_table {
+    my $self          = shift;
+    my $label         = shift;
+    my $stt           = $self->create_subtrack_manager($label);
+    return $stt->selection_table($self);
 }
 
 #### generate the fragment of HTML for printing out the examples
@@ -1807,7 +1935,11 @@ sub source_menu {
       );
 }
 
-# this is the content of the popup balloon that describes the track and gives configuration settings
+# This is the content of the popup balloon that describes the track and gives configuration settings
+
+# This is currently somewhat hacky, hard to extend and needs to be generalized.
+# NOTE: to add new configuration rows, the name of the form element must begin with "conf_" and
+# the rest must correspond to a valid glyph option.
 sub track_config {
     my $self        = shift;
     my $label       = shift;
@@ -1816,54 +1948,112 @@ sub track_config {
     my $state       = $self->state();
     my $data_source = $self->data_source();
 
-    my $length      = $self->thin_segment->length;
-    my $slabel      = $data_source->semantic_label($label,$length);
+    my $seg      = $label =~ /:overview$/ ? $self->thin_whole_segment
+	          :$label =~ /:region$/   ? $self->thin_region_segment
+                  :$self->thin_segment;
+    my $length = eval{$seg->length}||0;
 
     eval 'require Bio::Graphics::Browser2::OptionPick; 1'
         unless Bio::Graphics::Browser2::OptionPick->can('new');
 
     my $picker = Bio::Graphics::Browser2::OptionPick->new($self);
 
-    my $key = $self->label2key($slabel);
+    # summary options
+    my $can_summarize = $data_source->can_summarize($label);
+    my $summary_mode  = $data_source->show_summary($label,$length);
 
-    if ( $revert_to_defaults ) {
-        $state->{features}{$slabel}{override_settings} = {};
+    my $slabel           = $summary_mode ? $label : $data_source->semantic_label($label,$length);
+
+    if ($revert_to_defaults) {
+	$state->{features}{$label}{summary_override}  = {} if $summary_mode;
+	$state->{features}{$label}{semantic_override} = {} unless $summary_mode;
+	delete $state->{features}{$label}{summary_mode_len};
     }
 
-    my $override = $state->{features}{$slabel}{override_settings}||{};
+    my ($semantic_override) = sort {$b<=>$a} grep {$_ < $length} 
+                  keys %{$state->{features}{$label}{semantic_override}};
+    $semantic_override   ||= 0;
+
+    my ($semantic_level)   = $slabel =~ /(\d+)$/;
+    $semantic_level      ||= 0;
+    my $level              = $semantic_override || $semantic_level;
+
+    my $key = $self->label2key($label);
+    $key .= $summary_mode      ? " (Feature Density Summary)" 
+           :$level             ? " (>=$level bp)"
+	   :'';
+
+    my $override = $summary_mode 
+	? $state->{features}{$label}{summary_override}                      ||= {}
+        : $state->{features}{$label}{semantic_override}{$semantic_override} ||= {};
+
     my $return_html = start_html();
 
-    my $title   = div({-style => 'background:gainsboro;padding:5px;font-weight:bold'},$key);
+    my $title   = div({-class=>'config-title'},$key);
+    my $dynamic = $self->tr('DYNAMIC_VALUE');
 
-    my $height   = $data_source->semantic_fallback_setting( $label => 'height' ,        $length)    || 5;
+    my $height   = $data_source->semantic_fallback_setting( $label => 'height' ,        $length)    || 10;
     my $width    = $data_source->semantic_fallback_setting( $label => 'linewidth',      $length )   || 1;
     my $glyph    = $data_source->semantic_fallback_setting( $label => 'glyph',          $length )   || 'box';
     my $stranded = $data_source->semantic_fallback_setting( $label => 'stranded',       $length);
+    my $variance_band = $data_source->semantic_fallback_setting( $label => 'variance_band',$length);
     my $limit    = $data_source->semantic_fallback_setting( $label => 'feature_limit' , $length)    || 0;
-    my $dynamic = $self->tr('DYNAMIC_VALUE');
+    my $summary_length  = $data_source->semantic_fallback_setting( $label => 'show summary' , $length) || 0;
 
-    my @glyph_select = shellwords(
-        $data_source->semantic_fallback_setting( $label => 'glyph select', $length )
-	);
+    # options for wiggle & xy plots
+    my $min_score= $data_source->semantic_fallback_setting( $label => 'min_score' ,     $length);
+    my $max_score= $data_source->semantic_fallback_setting( $label => 'max_score' ,     $length);
+    $min_score = $dynamic unless defined $min_score;
+    $max_score = $dynamic unless defined $max_score;
 
-    @glyph_select = $glyph =~ /wiggle/ ? qw(wiggle_xyplot wiggle_density wiggle_box)
-                                       : qw(arrow anchored_arrow box crossbox dashed_line diamond 
-                                         dna dot dumbbell ellipse
-                                         ex gene line primers saw_teeth segments 
-                                         span splice_site translation transcript triangle
-                                         two_bolts wave) unless @glyph_select;
-    unshift @glyph_select,$dynamic if ref $data_source->fallback_setting($label=>'glyph') eq 'CODE';
+    my $bicolor_pivot= $data_source->semantic_fallback_setting( $label => 'bicolor_pivot' ,     $length);
+    my $graph_type = $data_source->semantic_fallback_setting( $label => 'graph_type' ,     $length);
+
+    # options for wiggle_whiskers
+    my $max_color   = $data_source->semantic_fallback_setting( $label => 'max_color' ,   $length);
+    my $mean_color  = $data_source->semantic_fallback_setting( $label => 'mean_color' ,  $length);
+    my $stdev_color = $data_source->semantic_fallback_setting( $label => 'stdev_color' , $length);
+
+    my @glyph_select;
+
+    if ($summary_mode) {
+	$glyph        = $override->{glyph} || 'wiggle_density';
+	@glyph_select = qw(wiggle_xyplot wiggle_density);
+    } else {
+	@glyph_select = shellwords(
+	    $data_source->semantic_fallback_setting( $label => 'glyph select', $length )
+	    );
+	unshift @glyph_select,$dynamic if ref $data_source->fallback_setting($label=>'glyph') eq 'CODE';
+    }
+
+    my $db           = $data_source->open_database($label,$length);
+    my $quantitative = $glyph =~ /wiggle/ || ref($db) =~ /bigwig/i;
+    my $can_whisker  = $quantitative && ref($db) =~ /bigwig/i;
+
+    unless (@glyph_select) { # reasonable defaults
+	@glyph_select = $can_whisker  ? qw(wiggle_xyplot wiggle_density wiggle_whiskers)
+                       :$quantitative ? qw(wiggle_xyplot wiggle_density)
+	                              : qw(arrow anchored_arrow box crossbox dashed_line diamond 
+                                         dna dot dumbbell ellipse gene line primers saw_teeth segments 
+                                         span site transcript triangle
+                                         two_bolts wave);
+    }
+
 
     my %glyphs       = map { $_ => 1 } ( $glyph, @glyph_select );
     my @all_glyphs   = sort keys %glyphs;
+    my $g = $override->{'glyph'} || $glyph;
 
     my $url = url( -absolute => 1, -path => 1 );
+    my $mode = $summary_mode ? 'summary' : 'normal';
     my $reset_js = <<END;
 new Ajax.Request('$url',
                   { method: 'get',
                     asynchronous: false,
-                    parameters: 'action=configure_track&track=$label&track_defaults=1',
-                    onSuccess: function(t) { document.getElementById('contents').innerHTML=t.responseText },
+                    parameters: 'action=configure_track&track=$label&track_defaults=1;mode=$mode',
+                    onSuccess: function(t) { document.getElementById('contents').innerHTML=t.responseText;
+					     t.responseText.evalScripts();
+		                           },
                     onFailure: function(t) { alert('AJAX Failure! '+t.statusText)}
                   }
                 );
@@ -1876,132 +2066,325 @@ END
         -id   => $form_name,
     );
 
+    my @rows;
+    push @rows, TR({-class=>'general'},
+		   td( {-colspan => 2}, $title));
 
-    $form .= table(
-        { -border => 0 },
-        TR( td( {-colspan => 2}, $title)),
-        TR( th( { -align => 'right' }, $self->tr('Show') ),
-            td( checkbox(
-                    -name     => 'show_track',
-                    -value    => $label,
-                    -override => 1,
-                    -checked  => $state->{features}{$label}{visible},
-                    -label    => ''
-                )
-            ),
-        ),
-        TR( th( { -align => 'right' }, $self->tr('Packing') ),
-            td( popup_menu(
-                    -name     => 'format_option',
-                    -values   => [ 0 .. 3 ],
-                    -override => 1,
-                    -default  => $state->{features}{$label}{options},
-                    -labels   => {
-                        0 => $self->tr('Auto'),
-                        1 => $self->tr('Compact'),
-                        2 => $self->tr('Expand'),
-                        3 => $self->tr('Expand_Label'),
-                    }
-                )
-            )
-        ),
-        TR( th( { -align => 'right' }, $self->tr('GLYPH') ),
-            td( $picker->popup_menu(
-                    -name    => 'glyph',
-                    -values  => \@all_glyphs,
-                    -default => ref $glyph eq 'CODE' ? $dynamic : $glyph,
-                    -current => $override->{'glyph'},
-                )
-            )
-        ),
-        TR( th( { -align => 'right' }, $self->tr('BACKGROUND_COLOR') ),
-            td( $picker->color_pick(
-                    'bgcolor',
-                    $data_source->semantic_fallback_setting( $slabel => 'bgcolor', $length ),
-                    $override->{'bgcolor'}
-                )
-            )
-        ),
-        TR( th( { -align => 'right' }, $self->tr('FG_COLOR') ),
-            td( $picker->color_pick(
-                    'fgcolor',
-                    $data_source->semantic_fallback_setting( $label => 'fgcolor', $length ),
-                    $override->{'fgcolor'}
-                )
-            )
-        ),
-        TR( th( { -align => 'right' }, $self->tr('LINEWIDTH') ),
-            td( $picker->popup_menu(
-                    -name    => 'linewidth',
-                    -current => $override->{'linewidth'},
-                    -default => $width || 1,
-                    -values  => [ sort { $a <=> $b } ( $width, 1 .. 5 ) ]
-                )
-            )
-        ),
-        TR( th( { -align => 'right' }, $self->tr('HEIGHT') ),
-            td( $picker->popup_menu(
-                    -name    => 'height',
-                    -current => $override->{'height'},
-                    -default => $height,
-                    -values  => [
-                        sort { $a <=> $b }
-                            ( $height, map { $_ * 5 } ( 1 .. 20 ) )
-                    ],
-                )
-            )
-        ),
-        TR( th( { -align => 'right' }, $self->tr('Limit') ),
-            td( $picker->popup_menu(
-                    -name     => 'feature_limit',
-                    -values   => [ 0, 5, 10, 25, 50, 100, 200, 500, 1000 ],
-                    -labels   => { 0 => $self->tr('NO_LIMIT') },
-		    -current  => $override->{feature_limit},
-                    -override => 1,
-                    -default  => $limit,
-                )
-            )
-        ),
-        TR( th( { -align => 'right' }, $self->tr('STRANDED') ),
-            td(checkbox(
-                    -name    => 'stranded',
-		    -override=> 1,
-		    -value   => 1,
-                    -checked => defined $override->{'stranded'} 
-		                  ? $override->{'stranded'} 
-                                  : $stranded,
-		    -label   => '',
-                )
-            )
-        ),
-        TR(td({-colspan=>2},
-	      button(
-                    -style   => 'background:pink',
-                    -name    => $self->tr('Revert'),
-                    -onClick => $reset_js
-	      ), br, 
-	      button(
-		  -name    => $self->tr('Cancel'),
-		  -onClick => 'Balloon.prototype.hideTooltip(1)'
-	      ),
-	      button(
-		  -name => $self->tr('Change'),
-		  -onClick =><<END
-	    Element.extend(this);
-	    var ancestors    = this.ancestors();
-	    var form_element = ancestors.find(function(el) {return el.nodeName=='FORM'; });
-	    Controller.reconfigure_track('$label',form_element,'$slabel')
+    push @rows, TR({-class=>'general'},
+		   th( { -align => 'right' }, $self->tr('Show') ),
+		   td( checkbox(
+			   -name     => 'show_track',
+			   -value    => $label,
+			   -override => 1,
+			   -checked  => $state->{features}{$label}{visible},
+			   -label    => ''
+		       )
+		   ),
+        );
+
+    push @rows,TR( {-class=>'general'},
+		   th( { -align => 'right' }, $self->tr('GLYPH') ),
+		   td( $picker->popup_menu(
+			   -name    => 'conf_glyph',
+			   -values  => \@all_glyphs,
+			   -default => ref $glyph eq 'CODE' ? $dynamic : $glyph,
+			   -current => $override->{'glyph'},
+			   -scripts => {-id=>'glyph_picker_id',-onChange => 'track_configure.glyph_select($(\'config_table\'),this)'}
+		       )
+		   )
+        );
+
+    push @rows,TR( {-class => 'features',
+		    -id    => 'packing'},
+		   th( { -align => 'right' }, $self->tr('Packing') ),
+		   td( popup_menu(
+			   -name     => 'format_option',
+			   -values   => [ 0 .. 3 ],
+			   -override => 1,
+			   -default  => $state->{features}{$label}{options},
+			   -labels   => {
+			       0 => $self->tr('Auto'),
+			       1 => $self->tr('Compact'),
+			       2 => $self->tr('Expand'),
+			       3 => $self->tr('Expand_Label'),
+			   }
+		       )
+		   )
+        );
+
+    push @rows,TR({-class=>'xyplot',
+		   -style=>$g=~/xyplot/ ? 'display:table-row' : 'display:none'},
+		  th( { -align => 'right' }, $self->tr('XYPLOT_TYPE')),
+		  td( $picker->popup_menu(
+			  -name    => 'conf_graph_type',
+			  -values  => [qw(histogram line points linepoints)],
+			  -default => ref $graph_type eq 'CODE' ? $dynamic : $graph_type,
+			  -current => $override->{'graph_type'},
+		      )
+		  )
+        );
+
+    push @rows,TR({-class=>'whiskers'},
+		  th( { -align => 'right' }, $self->tr('WHISKERS_TYPE')),
+		  td( $picker->popup_menu(
+			  -name    => 'conf_graph_type_whiskers',
+			  -values  => [qw(whiskers boxes)],
+			  -default => ref $graph_type eq 'CODE' ? $dynamic : $graph_type,
+			  -current => $override->{'graph_type'},
+		      )
+		  )
+        );
+
+    push @rows,TR( {-class=>'xyplot features'},
+		   th( { -align => 'right' }, $self->tr('FG_COLOR') ),
+		   td( $picker->color_pick(
+			   'conf_fgcolor',
+			   $data_source->semantic_fallback_setting( $label => 'fgcolor', $length ),
+			   $override->{'fgcolor'}
+		       )
+		   )
+        );
+
+    #######################
+    # bicolor pivot stuff
+    #######################
+    my $p = $override->{bicolor_pivot} || $bicolor_pivot || 'none';
+    my $has_pivot = $g =~ /wiggle_xyplot|wiggle_density|xyplot/;
+
+    push @rows,TR( {-class=>'xyplot density',
+		     -id   =>'bicolor_pivot_id'},
+                   th( { -align => 'right'}, $self->tr('BICOLOR_PIVOT')),
+		   td( $picker->popup_menu(
+			   -name    => 'conf_bicolor_pivot',
+			   -values  => [qw(none zero mean value)],
+			   -labels  => {value => 'value entered below'},
+			   -default => $bicolor_pivot,
+			   -current => $p =~ /^[\d.-eE]+$/ ? 'value' : $p,
+			   -scripts => {-onChange => 'track_configure.pivot_select(this)',
+					-id       => 'conf_bicolor_pivot'}
+		       )
+		   )
+        );
+
+    my $pv    = $p =~ /^[\d.-eE]+$/ ? $p : 0.0;
+    push @rows,TR({-class =>'xyplot density',
+		   -id=>'switch_point_other'},
+		  th( {-align => 'right' },$self->tr('BICOLOR_PIVOT_VALUE')),
+                  td( textfield(-name  => 'bicolor_pivot_value',
+				-value => $pv)));
+    
+
+    push @rows,TR({-class=>'switch_point_color xyplot density'}, 
+		  th( { -align => 'right' }, $self->tr('BICOLOR_PIVOT_POS_COLOR')),
+		   td( $picker->color_pick(
+			   'conf_pos_color',
+			   $data_source->semantic_fallback_setting( $label => 'pos_color', $length ),
+			   $override->{'pos_color'}
+		       )
+		   )
+        );
+
+    push @rows,TR( {-class=>'switch_point_color xyplot density'}, 
+		   th( { -align => 'right' }, $self->tr('BICOLOR_PIVOT_NEG_COLOR') ),
+		   td( $picker->color_pick(
+			   'conf_neg_color',
+			   $data_source->semantic_fallback_setting( $label => 'neg_color', $length ),
+			   $override->{'neg_color'}
+		       )
+		   )
+        );
+
+    push @rows,TR( { -id    => 'bgcolor_picker',
+		     -class => 'xyplot density features',
+		   },
+		   th( { -align => 'right' }, $self->tr('BACKGROUND_COLOR') ),
+		   td( $picker->color_pick(
+			   'conf_bgcolor',
+			   $summary_mode ? 'black'
+                                         :
+			      $data_source->semantic_fallback_setting( $label => 'bgcolor', $length ),
+			   $override->{'bgcolor'}
+		       )
+		   )
+        );
+
+
+
+    #######################
+    # wiggle colors
+    #######################
+    push @rows,TR( {-class=>'whiskers'}, 
+		   th( { -align => 'right' }, $self->tr('WHISKER_MEAN_COLOR')),
+		   td( $picker->color_pick(
+			   'conf_mean_color',
+			   $mean_color || 'black',
+			   $override->{'mean_color'}
+		       )
+		   )
+        );
+
+    push @rows,TR( {-class=>'whiskers'}, 
+		   th( { -align => 'right' }, $self->tr('WHISKER_STDEV_COLOR') ),
+		   td( $picker->color_pick(
+			   'conf_stdev_color',
+			   $stdev_color || 'grey',
+			   $override->{'stdev_color'}
+		       )
+		   )
+        );
+
+    push @rows,TR( {-class=>'whiskers'}, 
+		   th( { -align => 'right' }, $self->tr('WHISKER_MAX_COLOR') ),
+		   td( $picker->color_pick(
+			   'conf_max_color',
+			   $max_color || 'lightgrey',
+			   $override->{'max_color'}
+		       )
+		   )
+        );
+
+    push @rows,TR( {-class=>'xyplot density whiskers'},
+		   th( { -align => 'right' },$self->tr('SCALE_MIN')),
+		   td( textfield(-name  => 'conf_min_score',
+				 -value => defined $override->{min_score} ? $override->{min_score}
+				                                          : $summary_mode ? 0 : $min_score))) if $quantitative;
+
+    push @rows,TR(  {-class=>'xyplot density whiskers'},
+		    th( { -align => 'right' },$self->tr('SCALE_MAX')),
+		    td( textfield(-name  => 'conf_max_score',
+				  -value => defined $override->{max_score} ? $override->{max_score}
+				  : $max_score)));
+
+    push @rows,TR({-class=>'xyplot'},
+		  th( { -align => 'right' }, $self->tr('SHOW_VARIANCE')),
+		  td(
+		      hidden(-name=>'conf_variance_band',-value=>0),
+		      checkbox(
+			  -name    => 'conf_variance_band',
+			  -override=> 1,
+			  -value   => 1,
+			  -checked => defined $override->{'variance_band'} 
+			  ? $override->{'variance_band'} 
+			  : $variance_band,
+			  -label   => '',
+		      )
+		  )
+        );
+
+    push @rows,TR( {-class=>'features'},
+		   th( { -align => 'right' }, $self->tr('LINEWIDTH') ),
+		   td( $picker->popup_menu(
+			   -name    => 'conf_linewidth',
+			   -current => $override->{'linewidth'},
+			   -default => $width || 1,
+			   -values  => [ sort { $a <=> $b } ( $width, 1 .. 5 ) ]
+		       )
+		   )
+	);
+
+    push @rows,TR( {-class=>'general'},
+		   th(
+		       { -align => 'right' }, $self->tr('HEIGHT') ),
+		   td( $picker->popup_menu(
+			   -name    => 'conf_height',
+			   -current => $override->{'height'},
+			   -default => $summary_mode ? 15 : $height,
+			   -values  => [
+				sort { $a <=> $b }
+				( $height, map { $_ * 5 } ( 1 .. 20 ) )
+			   ],
+		       )
+		   )
+        );
+    
+    push @rows,TR({-class=>'features'},
+		  th( { -align => 'right' }, $self->tr('Limit') ),
+		  td( $picker->popup_menu(
+			  -name     => 'conf_feature_limit',
+			  -values   => [ 0, 5, 10, 25, 50, 100, 200, 500, 1000 ],
+			  -labels   => { 0 => $self->tr('NO_LIMIT') },
+			   -current  => $override->{feature_limit},
+			  -override => 1,
+			  -default  => $limit,
+		       )
+		  )
+        );
+    
+    push @rows,TR({-class=>'features'},
+		  th( { -align => 'right' }, $self->tr('STRANDED') ),
+		  td( hidden(-name=>'conf_stranded',-value=>0),
+		      checkbox(
+			  -name    => 'conf_stranded',
+			  -override=> 1,
+			 -value   => 1,
+			  -checked => defined $override->{'stranded'} 
+			  ? $override->{'stranded'} 
+			  : $stranded,
+			  -label   => '',
+		      )
+		  )
+        );
+
+    push @rows,TR({-class=>'general'},
+		  th( { -align => 'right' }, $self->tr('APPLY_CONFIG')),
+		  td(textfield(
+			 -name    => 'apply_semantic',
+			 -override=> 1,
+			 -value   => $semantic_override||$semantic_level),' bp',
+		     hidden(-name=>'delete_semantic',-value=>$semantic_override)
+		  ),
+		   ) unless $summary_mode;
+
+    push @rows,TR({-class=>'general'},
+		  th( { -align => 'right' }, $self->tr('SHOW_SUMMARY')),
+		  td(textfield(
+			 -name    => 'summary_mode',
+			 -override=> 1,
+			 -value   => $state->{features}{$label}{summary_mode_len}
+			 || $summary_length),' bp'
+		  )
+		   ) if $can_summarize && $summary_length;
+
+    my $submit_script = <<END;
+Element.extend(this);
+var ancestors    = this.ancestors();
+var form_element = ancestors.find(function(el) {return el.nodeName=='FORM'; });
+Controller.reconfigure_track('$label',form_element,'$mode')
 END
-	      )
-	   )
-	)
+
+    push @rows,TR({-class=>'general'},
+		  td({-colspan=>2},
+		     button(
+			 -style   => 'background:pink',
+			 -name    => $self->tr('Revert'),
+			 -onClick => $reset_js
+		     ), br, 
+		     button(
+			 -name    => $self->tr('Cancel'),
+			 -onClick => 'Balloon.prototype.hideTooltip(1)'
+		     ),
+		     button(
+			 -name    => $self->tr('Change'),
+			 -onClick => $submit_script
+		     ),
+		     hidden(-name=>'segment_length',-value=>$length),
+		  )
     );
+
+    $form .= table({-id=>'config_table',-border => 0 },@rows);
     $form .= end_form();
 
     $return_html
         .= table( TR( td( { -valign => 'top' }, [ $form ] ) ) );
+    $return_html .= script({-type=>'text/javascript'},"track_configure.glyph_select(\$('config_table'),\$('glyph_picker_id'))");
     $return_html .= end_html();
     return $return_html;
+}
+
+sub cit_link {
+    my $self        = shift;
+    my $label       = shift;
+    return "?display_citation=$label";
 }
 
 sub track_citation {
@@ -2064,69 +2447,18 @@ sub download_track_menu {
 
 		   button(-value   => $self->tr('DOWNLOAD_TRACK_DATA_REGION',$segment_str),
 			  -onClick => "$unload;window.location='?gbgff=1;q=$seqid:$start..$end;l=$track;s=0;f=save+gff3';$byebye",
-		   ),
+		   ),br(),
 
 		   button(-value   => $self->tr('DOWNLOAD_TRACK_DATA_CHROM',$seqid),
 			  -onClick => "$unload;window.location='?gbgff=1;q=$seqid;l=$track;s=0;f=save+gff3';$byebye",
-		   ),
+		   ),br(),
 
 		   button(-value=> $self->tr('DOWNLOAD_TRACK_DATA_ALL'),
 			  -onClick => "$unload;location.href='?gbgff=1;l=$track;s=0;f=save+gff3';$byebye",
 		   )).
 
-		   a({-href=>'javascript:void(0)',-onClick=>$byebye},
-		     $self->tr('CLOSE_WINDOW'));
+		   button(-style=>"background:pink",-onClick=>"$byebye",-name=>$self->tr('CANCEL'));
     return $html;
-}
-
-# this is the content of the popup balloon that allows the user to select
-# individual features by source or name
-sub select_subtracks {
-    my $self  = shift;
-    my $label = shift;
-
-    my $state       = $self->state();
-    my $data_source = $self->data_source();
-
-    my ($method,$values,$labels)   = $data_source->subtrack_select_list($label);
-    my @values = sort @$values;
-    my %labels;
-    @labels{@$values} = @$labels;
-
-    my $filter = $state->{features}{$label}{filter};
-    my @turned_on = grep {$filter->{values}{$_}} @values;
-
-    my $change_button = button(-name    => 
-			   $self->tr('Change'),
-			   -onClick => 
-			   "Controller.filter_subtrack('$label',\$('subtrack_select_form'))"
-	);
-
-    my $return_html = start_html();
-    $return_html   .= start_form(-name => 'subtrack_select_form',
-				 -id   => 'subtrack_select_form');
-    $return_html   .= p($self->language->tr('SHOW_SUBTRACKS')
-			||'Show subtracks');
-    $return_html   .= div(a({-href=>'javascript:void(0)',
-			     -onClick=>'$$(\'input.subtrack_checkbox\').each(function(t){t.checked=false})',
-			    },$self->tr('All_off')),
-			  a({-href=>'javascript:void(0)',
-			     -onClick=>'$$(\'input.subtrack_checkbox\').each(function(t){t.checked=true})',
-			    },$self->tr('All_on')),
-			  $change_button
-	);
-
-    my @checkboxes =  checkbox_group(-name      => "select",
-				     -values    => \@values,
-				     -linebreak => 1,
-				     -class     => 'subtrack_checkbox',
-				     -labels    => \%labels,
-				     -defaults  => \@turned_on);
-    $return_html   .= $self->tableize(\@checkboxes,undef,int sqrt(@values));
-    $return_html .= $change_button;
-    $return_html .= end_form();
-    $return_html .= end_html();
-    return $return_html;
 }
 
 # this is the content of the popup balloon that describes how to share a track
@@ -2195,6 +2527,8 @@ sub share_track {
     my $return_html = start_html();
     $return_html .= h1( $self->tr( 'SHARE', $description ) );
 
+    my $tsize = 72;
+
     if ($label ne 'all' && $label !~ /^(http|ftp)/) {
 	
 	my $shared;
@@ -2210,8 +2544,8 @@ sub share_track {
 	    textfield(
 		-style    => 'background-color: wheat',
 		-readonly => 1,
+		-size     => $tsize,
 		-value    => $shared,
-		-size     => 65,
 		-onClick  => 'this.select()'
 	    )
 	    )
@@ -2223,12 +2557,12 @@ sub share_track {
 		$label eq 'all'
 		? 'SHARE_INSTRUCTIONS_ALL_TRACKS'
 		: 'SHARE_INSTRUCTIONS_ONE_TRACK'
-	    ),br(),
+	    ).br().
 	    textfield(
 		-style    => 'background-color: wheat',
 		-readonly => 1,
+		-size     => $tsize,
 		-value    => $gbgff,
-		-size     => 65,
 		-onClick  => 'this.select()'));
 
     if ($das_types) {
@@ -2245,8 +2579,8 @@ sub share_track {
 	    . p( textfield(
                 -style    => 'background-color: wheat',
                 -readonly => 1,
+		-size     => $tsize,
                 -value    => $das,
-                -size     => 56,
                 -onFocus  => 'this.select()',
                 -onSelect => 'this.select()')
              );
@@ -2258,7 +2592,7 @@ sub share_track {
 		 );
 
     $return_html .= end_html();
-    return $return_html;
+    return div({-style=>'width:600px'},$return_html);
 }
 
 
@@ -2307,11 +2641,6 @@ sub toggle_section {
   my ($name,$section_title,@section_body) = @_;
 
   my $visible = $config{on};
-
-  # IE hack -- no longer needed?
-  # my $agent      = CGI->user_agent || '';
-  # my $ie         = $agent =~ /MSIE/;
-  # $config{tight} = undef if $ie;
 
   my $buttons = $self->globals->button_url;
   my $plus  = "$buttons/plus.png";

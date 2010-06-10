@@ -1,5 +1,5 @@
 package Bio::Graphics::Browser2::Plugin;
-# $Id: Plugin.pm 22464 2009-12-23 21:00:15Z lstein $
+# $Id: Plugin.pm 23307 2010-06-03 15:00:48Z cnvandev $
 # base class for plugins for the Generic Genome Browser
 
 =head1 NAME
@@ -601,6 +601,10 @@ configuration form methods with calls to the javascript routine
 doPluginUpdate(). This causes GBrowse to update the plugin's
 configuration and refresh the tracks table as a side effect.
 
+=item @terms = $plugin->hilite_terms
+
+Returns a list of terms to hilight in the tracks table, or empty if none.
+
 =back
 
 =head2 METHODS TO BE IMPLEMENTED IN FEATURE HILITERS
@@ -907,6 +911,11 @@ sub filter_tracks {
     return @$tracks;  # pass 'em all through
 }
 
+sub hilite_terms {
+    my $self = shift;
+    return;
+}
+
 sub pkg {
   my $self  = shift;
   my $class = ref $self or return;
@@ -952,7 +961,7 @@ sub selected_features {
 sub new_feature_list {
   my $self     = shift;
   return Bio::Graphics::FeatureFile->new(-smart_features=>1,
-					 -safe => 1);
+		-safe => 1);
 }
 
 # install the plugin but do not show it in the "Reports & Analysis" menu
@@ -961,6 +970,26 @@ sub hide {}
 
 sub config_hash {
   return md5_hex( Dumper( shift->configuration ) );
+}
+
+# A list of all extra scripts required by a plugin, defaults to nothing.
+sub scripts {
+  my $self = shift;
+  return;
+}
+
+# A list of all additional stylesheets required by a plugin, defaults to nothing.
+sub stylesheets {
+  my $self = shift;
+  return;
+}
+
+# A list of all Javascript commands to be run once the page or tab is loaded (in either the body's onLoad section, or the callback event from the tab's rendering animation).
+# Should return a hash, key is the section which contains the elements plus "_select", value is the function (e.g. "track_page_select", "some.function();").
+# Will accet "main_page_select", "track_page_select", "custom_track_page_select", "settings_page_select" and "body" as keys.
+sub onLoads {
+  my $self = shift;
+  return;
 }
 
 

@@ -44,13 +44,21 @@ sub configure_form {
   my $source         = $self->browser_config;
   my $html = '';
 
-  $html .= b('Search: ').textfield(-id         => 'plugin_TrackFinderKeywords',
-				   -name       => $self->config_name('keywords'),
- 				   -onKeyPress => "if (typeof(timeOutID) != 'undefined') clearTimeout(timeOutID);timeOutID= setTimeout('doPluginUpdate()',1000)",
-				   -override   => 1,
-				   -value      => $current_config->{keywords},
-				   -onChange   => 'doPluginUpdate()',
-      );
+  $html .= div({-class=>'searchbody'}, 
+	   	   b('Search: ').textfield(-id         => 'plugin_TrackFinderKeywords',
+					   -name       => $self->config_name('keywords'),
+ 					   -onKeyPress => "if (typeof(timeOutID) != 'undefined') clearTimeout(timeOutID);timeOutID= setTimeout('doPluginUpdate()',1000)",
+					   -override   => 1,
+					   -value      => $current_config->{keywords},
+					   -onChange   => 'doPluginUpdate()',
+      		),
+      	 input({-type => 'checkbox',
+      	        -id => 'stickySearch',
+      	        -value => 'Stick to top when scrolled'
+      	       }
+      	 ),
+      	 label({-for => 'stickySearch'}, 'Stick to top when scrolled')
+	);
   $html .= button(-value   => 'Clear',
 		  -onClick => "\$('plugin_TrackFinderKeywords').clear();doPluginUpdate()",
       );
@@ -81,6 +89,24 @@ sub filter_tracks {
       push @result,$l;
   }
   return @result;
+}
+
+sub hilite_terms {
+    my $self = shift;
+  my $config  = $self->configuration;
+    my @keywords = map {quotemeta($_)} shellwords $config->{keywords};    
+    return @keywords;
+}
+
+# Scripts required by the plugin.
+sub scripts {
+  return qw(scrollfix.js);
+}
+
+# Functions to run once the content has been loaded.
+sub onLoads {
+  my %loads = (track_page => "scrollfix.setup();");
+  return %loads;
 }
 
 1;

@@ -1,6 +1,6 @@
 package Bio::Graphics::Browser2::DataLoader::generic;
 
-# $Id: generic.pm 23028 2010-04-12 21:16:01Z lstein $
+# $Id: generic.pm 23270 2010-05-25 01:48:42Z lstein $
 use strict;
 use Bio::DB::SeqFeature::Store;
 use Carp 'croak';
@@ -23,7 +23,8 @@ sub start_load {
     eval "require $loader_class" unless $loader_class->can('new');
     my $loader = $loader_class->new(-store=> $db,
 				    -fast => $fast,
-				    -index_subfeatures=>0,
+				    -summary_stats    => 1,
+				    -index_subfeatures=> 0,
 	);
     $loader->start_load();
     $self->{loader}    = $loader;

@@ -59,8 +59,11 @@ sub new {
       return $object;
   }
 
-  my $self = $class->new_from_cache(-file=>$config_file_path,
-				    -safe=>1);
+  my @args = (-file=>$config_file_path,-safe=>1);
+  my $self = $class->can('new_from_cache') && !$ENV{GBROWSE_NOCACHE} && ($config_file_path !~ /\|$/)
+             ? $class->new_from_cache(@args)
+	     : $class->_new(@args);
+
   $self->name($name);
   $self->description($description);
   $self->globals($globals);
@@ -360,15 +363,28 @@ sub i18n_style {
 # track at the current length
 sub show_summary {
     my $self = shift;
-    my ($label,$length) = @_;
-    my $c  = $self->semantic_fallback_setting($label=>'show_summary',$length);
+    my ($label,$length,$settings) = @_;
+    $settings ||= {};
+    my $c  = $settings->{features}{$label}{summary_mode_len}
+          || $self->semantic_fallback_setting($label=>'show summary',$length);
     my $g  = $self->semantic_fallback_setting($label=>'glyph',$length);
     return 0 if $g =~ /wiggle|xyplot|density/;  # don't summarize wiggles or xyplots
-    return 0 unless defined $c;
+    return 0 if $self->semantic_fallback_setting($label=>'global feature',$length);
+    return 0 unless $c;
+    $c =~ s/_//g;  
     return 0 unless $c <= $length;
     my $db = $self->open_database($label,$length) or return;
     return 0 unless $db->can('feature_summary');
     return 1;
+}
+
+sub can_summarize {
+   my $self = shift;
+   my $label = shift;
+   my $g  = $self->fallback_setting($label=>'glyph');
+   return if $g =~ /wiggle|xyplot|density/;  # don't summarize wiggles or xyplots
+   my $db = $self->open_database($label) or return;
+   return unless $db->can('feature_summary');
 }
 
 sub clear_usertracks {
@@ -743,9 +759,12 @@ sub db_settings {
 	                    ? "$symbolic_db_name:database" 
                             : $basename;
   }
-
-  my $adaptor = $self->semantic_fallback_setting($section => 'db_adaptor', $length)
-      or die "Unknown database defined for $section";
+  
+  my $adaptor = $self->semantic_fallback_setting($section => 'db_adaptor', $length);
+  unless ($adaptor) {
+      warn "Unknown database defined for $section";
+      return;
+  }
   eval "require $adaptor; 1" or die $@;
 
   my $args    = $self->semantic_fallback_setting($section => 'db_args', $length);
@@ -908,9 +927,12 @@ sub generate_image {
   $signature =~ /^([0-9A-Fa-f]+)$/g or return;
   $signature = $1;
 
-  my $path        = $self->globals->tmpimage_dir($self->name);
+  my $self_name = $self->name;
+  $self_name =~ s/\\/_/g; # Because Safari and Chrome translate backslash to forward slash
+  my $path        = $self->globals->tmpimage_dir($self_name);
+
   my $image_url   = $self->globals->image_url;
-  my $url         = sprintf("%s/%s/%s.%s",$image_url,$self->name,$signature,$extension);
+  my $url         = sprintf("%s/%s/%s.%s",$image_url,$self_name,$signature,$extension);
   my $imagefile   = sprintf("%s/%s.%s",$path,$signature,$extension);
   open (my $f,'>',$imagefile) 
       || die("Can't open image file $imagefile for writing: $!\n");
@@ -1102,53 +1124,30 @@ sub parse_user_fh {
 }
 
 
-sub subtrack_select_list {
+sub subtrack_scan_list {
     my $self  = shift;
     my $label = shift;
-    my $select = $self->code_setting($label=>'select') or return;
-    my ($method,@values,@labels);
-    if ($select =~ /;/) { # new syntax
-	my @lines = split ';',$select; 
-	($method) = shellwords (shift @lines);
-	for my $l (@lines) {
-	    my ($name,$label) = grep {!/^[#=]/} shellwords($l);
-	    push @values,$name;
-	    push @labels,$label||$name;
-	}
-    } else {
-	($method,@values) = grep {!/^#/} shellwords $self->setting($label=>'select') or return;
-	foreach    (@values) {s/#.+$//}  # get rid of comments
-	@labels = @values;
-    }
-    return ($method,\@values,\@labels);
-}
+    my $stt   = Bio::Graphics::Browser2::Render->create_subtrack_manager($label,$self,{}) or return;
+    my @ids   = keys %{$stt->elements};
+    return \@ids;
+    
+#     my $select = $self->code_setting($label=>'select') or return;
+#     my @results;
+#     if ($select =~ /;/) { # new syntax
+# 	my @lines = split ';',$select;
+# 	my ($method) = shellwords (shift @lines);
+# 	for my $l (@lines) {
+# 	    my ($name,@args) = grep {!/^#/} shellwords($l);
+# 	    my @comments     = map {s/^=// && $_} grep {/^=/} @args;
+# 	    push @results,$name;
+# 	    push @results,'#'.$comments[0] if @comments;
+# 	}
+# 	return \@results;
+#     } else {
+# 	my ($method,@values) = shellwords($select);
+# 	return \@values;
+#     }
 
-sub subtrack_scan_list {
-    my $self = shift;
-    my $label = shift;
-    my $select = $self->code_setting($label=>'select') or return;
-    my @results;
-    if ($select =~ /;/) { # new syntax
-	my @lines = split ';',$select;
-	my ($method) = shellwords (shift @lines);
-	for my $l (@lines) {
-	    my ($name,@args) = grep {!/^#/} shellwords($l);
-	    my @comments     = map {s/^=// && $_} grep {/^=/} @args;
-	    push @results,$name;
-	    push @results,'#'.$comments[0] if @comments;
-	}
-	return \@results;
-    } else {
-	my ($method,@values) = shellwords($select);
-	return \@values;
-    }
-
-}
-
-sub subtrack_select_default {
-    my $self = shift;
-    my $label = shift;
-    return shellwords $self->code_setting($label=>'select default');
 }
 
 1;

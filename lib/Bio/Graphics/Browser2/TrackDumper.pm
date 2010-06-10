@@ -7,7 +7,7 @@ package Bio::Graphics::Browser2::TrackDumper;
 #
 ###################################################################
 
-# $Id: TrackDumper.pm 23246 2010-05-21 02:48:00Z lstein $
+# $Id: TrackDumper.pm 23337 2010-06-08 21:17:19Z lstein $
 
 # Simple track dumper, suitable for a lightweight replacement to DAS.
 # Call this way:

@@ -18,6 +18,7 @@ use Bio::Graphics::Browser2::Region;
 use Bio::Graphics::Browser2::RegionSearch;
 use Bio::Graphics::Browser2::RenderPanels;
 use Bio::Graphics::Browser2::RemoteSet;
+use Bio::Graphics::Browser2::SubtrackTable;
 use Bio::Graphics::Browser2::TrackDumper;
 use Bio::Graphics::Browser2::Util qw[modperl_request url_label];
 use Bio::Graphics::Browser2::UserTracks;
@@ -706,24 +707,23 @@ sub render_body {
 
   if ($region->feature_count > 1) {
       $main_page .= $self->render_multiple_choices($features,$self->state->{name});
-      $main_page .= $self->render_toggle_track_table;
+      $main_page .= $self->render_select_track_link;
   }
 
   elsif (my $seg = $region->seg) {
       $main_page .= $self->render_panels($seg,{overview   => $source->show_section('overview'),
 					       regionview => $source->show_section('region'),
 					       detailview => $source->show_section('detail')});
-      $main_page .= $self->render_toggle_track_table;
       $main_page .= $self->render_galaxy_form($seg);
-  }
-  else {
-      $main_page .= $self->render_toggle_track_table;
+  } else {
+      $main_page .= $self->render_select_track_link;
   }
 
+  my $tracks        = $self->render_tracks_section;
   my $upload_share  = $self->render_upload_share_section;
   my $global_config = $self->render_global_config;
 
-  $output .= $self->render_tabbed_pages($main_page,$upload_share,$global_config);
+  $output .= $self->render_tabbed_pages($main_page,$tracks,$upload_share,$global_config);
   $output .= $self->render_bottom($features);
 
   $output .= $self->render_login_section;
@@ -752,6 +752,15 @@ sub render_login_section {
 	$output .= $self->render_login_openid_confirm(param('page'),param('s'));
     }
     return $output;
+}
+
+sub render_select_track_link {
+    croak "implement in subclass";
+}
+
+sub render_tracks_section {
+    my $self = shift;
+    return $self->render_toggle_track_table;
 }
 
 sub render_upload_share_section {
@@ -898,9 +907,12 @@ sub render_panels {
 			  div({ -id => 'detail_panels', -class => 'track'},
 			      $details_msg,
 			      $scale_bar_html, 
-			      $panels_html
+			      $panels_html,
 			  ),
-			  div({-style=>'text-align:right'},$clear_hilites),
+			  div({-style=>'text-align:center'},
+			      $self->render_select_track_link,
+			      $clear_hilites,
+			  ),
 			  div($self->html_frag('html4',$self->state))
             )
 	    ) . $drag_script;
@@ -1852,13 +1864,6 @@ sub default_tracks {
 	                                      or $visibility eq 'collapse';
       $state->{features}{$label}{visible} = 0 if $visibility eq 'hide';
       $state->{track_collapsed}{$label}   = 1 if $visibility eq 'collapse';
-
-      if (my ($method,@values) = $source->subtrack_select_list($label)) {
-	  my @defaults         = $source->subtrack_select_default($label);
-	  my %turnon           = map {$_=>1} @defaults ? @defaults : @values;
-	  $state->{features}{$label}{filter}{method} = $method;
-	  $state->{features}{$label}{filter}{values} = {map {$_=>$turnon{$_}} @defaults};
-      }
   }
 }
 
@@ -1971,43 +1976,78 @@ sub update_state_from_cgi {
   $self->update_galaxy_url($state);
 }
 
-sub filter_subtrack {
-    my $self        = shift;
-    my $label       = shift;
-    my $subtracks   = shift;
+sub create_subtrack_manager {
+    my $self          = shift;
+    my $label         = shift;
+    my $source        = shift || $self->data_source;
+    my $state         = shift || $self->state;
+    
+    my ($dimensions,$rows,$aliases) 
+	= Bio::Graphics::Browser2::SubtrackTable->infer_settings_from_source($source,$label)
+	or return;
 
-    my $state       = $self->state;
+    my $key            = $source->setting($label => 'key');
+    my $selected       = $state->{subtracks}{$label};
+    my $comment        = $source->setting($label => 'brief comment');
 
-    my ($method,$values) = $self->data_source->subtrack_select_list($label);
-    $state->{features}{$label}{filter}{method} = $method;
-    $state->{features}{$label}{filter}{values}{$_} = 0 foreach @$values;
-
-    # if undef passed, then turn off all filters
-    return unless $subtracks && @$subtracks;
-    $state->{features}{$label}{filter}{values}{$_} = 1 foreach @$subtracks;
+    my $stt            = Bio::Graphics::Browser2::SubtrackTable->new(-columns=>$dimensions,
+								     -rows   =>$rows,
+								     -label  => $label,
+								     -key    => $key||$label,
+								     -aliases => $aliases,
+								     -comment => $comment);
+    $stt->set_selected($selected) if $selected;
+    return $stt;
 }
 
 # Handle returns from the track configuration form
 sub reconfigure_track {
     my $self  = shift;
     my $label = shift;
-    my $semantic_label = shift;
 
-    my $state = $self->state();
+    my $state  = $self->state();
+    my $source = $self->data_source;
+
     $state->{features}{$label}{visible}          = param('show_track') ? 1 : 0;
     $state->{features}{$label}{options}          = param('format_option');
     my $dynamic = $self->tr('DYNAMIC_VALUE');
+    my $mode    = param('mode');
 
-    for my $s ( 'bgcolor', 'fgcolor', 'height', 'glyph', 'linewidth', 'feature_limit' ) {
-        my $value = param($s);
+    my $length          = param('segment_length')  || 0;
+    my $semantic_len    = param('apply_semantic')  || 0;
+    my $delete_semantic = param('delete_semantic');
+
+    $state->{features}{$label}{summary_mode_len} = param('summary_mode') 
+	if param('summary_mode');
+
+    delete $state->{features}{$label}{semantic_override}{$delete_semantic} if $delete_semantic;
+
+    my $o = $mode eq 'summary' ? $state->{features}{$label}{summary_override}                ={}
+                               : $state->{features}{$label}{semantic_override}{$semantic_len}={};
+
+    my $glyph = param('conf_glyph') || '';
+  
+    for my $s ( grep {/^conf_/} param()) {
+        my @values = param($s);
+	my $value  = $values[-1]; # last one wins
+	$s =~ s/^conf_//;
+	next unless defined $value;
+
+	my $configured_value = $source->semantic_fallback_setting($label=>$s,$semantic_len);
+
 	if ($value eq $dynamic) {
-	    delete $state->{features}{$semantic_label}{override_settings}{$s};
+	    delete $o->{$s};
+	} elsif ($s eq 'bicolor_pivot' && $value eq 'value') {
+	    my $bp = param('bicolor_pivot_value');
+	    $o->{$s} =    $bp if !defined $configured_value or $bp != $configured_value;
 	} else {
-	    $state->{features}{$semantic_label}{override_settings}{$s} = $value;
+	    $o->{$s} = $value if !defined $configured_value or $value ne $configured_value;
+	    if ($glyph eq 'wiggle_whiskers') {# workarounds for whisker options
+		$o->{"${s}_neg"}  = $value if $s =~ /^(mean_color|stdev_color)/; 
+		$o->{min_color}   = $value if $s eq 'max_color';
+	    }
 	}
     }
-
-    $state->{features}{$semantic_label}{override_settings}{stranded}   = param('stranded') || 0;
 }
 
 sub track_config {
@@ -2103,12 +2143,35 @@ sub update_tracks {
   } #... the 't' parameter
   elsif (my @t = param('t')) {
       $self->set_tracks($self->split_labels(@t));
-  } #... the 'ds' (data source) parameter
-  elsif (my @ds = shellwords param('ds')) {
-      $self->set_tracks($self->data_source->data_source_to_label(@ds));
-  } #... or the 'ts' (track source) parameter
-  elsif (my @ts = shellwords param('ts')) {
-      $self->set_tracks($self->data_source->track_source_to_label(@ts));
+  } #... the 'ds' (data source) or the 'ts' (track source) parameter
+  elsif ((my @ds = shellwords param('ds')) || (my @ts = shellwords param('ts'))) {
+      my @main_l = @ds ? $self->data_source->data_source_to_label(@ds) : $self->data_source->track_source_to_label(@ts);
+      if (!@ds && @ts) {
+       my %ds = ();
+       foreach my $label (@main_l) {
+        my @tracks = grep {!/^#/} shellwords $self->setting($label=>'track source');
+        my @datasr = grep {!/^#/} shellwords $self->setting($label=>'data source');
+
+        for (my $i = 0; $i <@tracks; $i++) {
+         map{$ds{$datasr[$i]}++ if $_ == $tracks[$i] && $datasr[$i]} (@ts);
+       }
+      }
+      @ds = keys %ds;
+      }
+
+      foreach my $label (@main_l) {
+      my @subs = grep {!/^#/} shellwords $self->setting($label=>'select');
+      shift @subs;
+
+      my @matched;
+       foreach my $s (@subs) {
+        map {push(@matched,$`) if ($s=~/\D(\d+)$/i && $1 == $_)} @ds;
+        map {s/\s.*//} @matched;
+       }
+       $label.="/".join("+",@matched) if @matched;
+      }
+
+    $self->set_tracks(@main_l);
   }
 
   if (my @selected = $self->split_labels_correctly(param('enable'))) {
@@ -2484,6 +2547,10 @@ sub asynchronous_update_coordinates {
 	$position_updated++;
     }
     if ( $action =~ /flip (\S+)/ ) {
+    if ( $action =~ /name/) {
+        $self->move_to_name($state, $action);
+        $position_updated++;
+    }
         if ( $1 eq 'true' ) {
             $state->{'flip'} = 1;
         }
@@ -2533,6 +2600,22 @@ sub zoom_to_span {
   my ($state,$new_span) = @_;
 
   my ($span) = $new_span =~ /([\d+.-]+)/;
+
+sub move_to_name {
+  my $self = shift;
+  my ( $state, $new_name ) = @_;
+
+  if ( $new_name =~ /:(.*):([\d+.-]+)\.\.([\d+.-]+)/ ) {
+    my $new_chr   = $1;
+    my $new_start = $2;
+    my $new_stop  = $3;
+
+    $state->{ref} = $new_chr;
+    $state->{start} = $new_start;
+    $state->{stop}  = $new_stop;
+    $self->background_track_render();
+  }
+}
 
   my $current_span = $state->{stop} - $state->{start} + 1;
   my $center	    = int(($current_span / 2)) + $state->{start};
@@ -2868,11 +2951,7 @@ sub set_tracks {
 	my @subtracks         = shellwords($subtracks);
 	foreach (@subtracks) {s/#.+$//}  # get rid of comments
 	push @main,$main;
-	if (@subtracks) {
-	    $self->filter_subtrack($main,\@subtracks);
-	} else {
-	    $self->filter_subtrack($main,undef);
-	}
+	$state->{subtracks}{$main} = \@subtracks if @subtracks;
     }
 
     $state->{tracks} = [grep {$potential{$_}} @main];
@@ -3040,6 +3119,8 @@ sub expand_track_names {
 sub get_section_from_label {
     my $self   = shift;
     my $label  = shift;
+
+    return 'detail' if ref $label;  # work around a DAS bug
 
     if ($label eq 'overview' || $label =~ /:overview$/){
         return 'overview';
@@ -3477,6 +3558,7 @@ sub join_selected_tracks {
 
     my @selected = $self->visible_tracks;
     for (@selected) { # escape hyphens
+#	warn "MUST FIX join_selected_tracks";
 	if ((my $filter = $state->{features}{$_}{filter}{values})) {
 	    my @subtracks = grep {$filter->{$_}} keys %{$filter};
 	    $_ .= "/@subtracks";

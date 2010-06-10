@@ -199,7 +199,7 @@ sub search_db {
   my $args = shift;
   my ($features);
   if (my $name = $args->{-search_term}) {
-      $name =~ tr/a-zA-Z0-9.'"_*?: ;+-//cd;  # remove rude characters
+      $name =~ tr/a-zA-Z0-9.'"_*?: ;+-\///cd;  # remove rude characters
       my ($ref,$start,$stop,$class,$id) = $self->parse_feature_name($name);
       $features =  $self->lookup_features($ref,$start,$stop,$class,$name,$id);
   }
@@ -481,7 +481,7 @@ sub region_segment {
 
    # region can't be smaller than detail
     if ($detail_end - $detail_start + 1 > $regionview_length) { 
-	$regionview_length = $detail_end - $detail_start + 1;
+	$regionview_length = 3*($detail_end - $detail_start + 1);
     }
 
     my $midpoint = ($detail_end + $detail_start) / 2;

@@ -251,14 +251,16 @@ sub make_requests {
 
     foreach my $label ( @{ $labels || [] } ) {
 
-	$self->set_subtrack_defaults($label);
-
         my @track_args = $self->create_track_args( $label, $args );
 
-	my (@filter_args,@featurefile_args,@segment_args);
+	my (@filter_args,@featurefile_args,@subtrack_args);
+
+	my $format_option = $settings->{features}{$label}{options};
 
 	my $filter     = $settings->{features}{$label}{filter};
 	@filter_args   = %{$filter->{values}} if $filter->{values};
+	@subtrack_args = @{$settings->{subtracks}{$label}} 
+	                 if $settings->{subtracks}{$label};
 	my $ff_error;
 
         # get config data from the feature files
@@ -272,8 +274,12 @@ sub make_requests {
 		    -cache_base => $base,
 		    -panel_args => \@panel_args,
 		    -track_args => \@track_args,
-		    -extra_args => [ @cache_extra, @filter_args, 
-				     @featurefile_args, @segment_args, $label ],
+		    -extra_args => [ @cache_extra, 
+				     @filter_args, 
+				     @featurefile_args, 
+				     @subtrack_args,
+				     $format_option, 
+				     $label ],
 		    );
 		$cache_object->flag_error("Could not fetch data for $track");
 		$d{$track} = $cache_object;
@@ -296,7 +302,12 @@ sub make_requests {
             -cache_base => $base,
             -panel_args => \@panel_args,
             -track_args => \@track_args,
-            -extra_args => [ @cache_extra, @filter_args, @featurefile_args, $label ],
+            -extra_args => [ @cache_extra, 
+			     @filter_args, 
+			     @featurefile_args,  
+			     @subtrack_args, 
+			     $format_option, 
+			     $label ],
 	    -cache_time => $cache_time
         );
 
@@ -443,7 +454,7 @@ sub wrap_rendered_track {
     if ( $label =~ /^plugin:/ ) {
         my $config_url = "url:?plugin=$escaped_label;plugin_do=Configure";
         $config_click
-            = "GBox.showTooltip(event,'$config_url',1,500,500)";
+            = "GBox.showTooltip(event,'$config_url',true)";
     }
 
     elsif ( $label =~ /^file:/ ) {
@@ -454,13 +465,13 @@ sub wrap_rendered_track {
     else {
         my $config_url = "url:?action=configure_track;track=$escaped_label";
         $config_click
-            = "GBox.showTooltip(event,'$config_url',1,500,500)";
+            = "GBox.showTooltip(event,'$config_url',true)";
     }
 
     my $help_url       = "url:?action=cite_track;track=$escaped_label";
     my $help_click     = "GBox.showTooltip(event,'$help_url',1)";
 
-    my $download_click = "GBox.showTooltip(event,'url:?action=download_track_menu;track=$escaped_label',1)";
+    my $download_click = "GBox.showTooltip(event,'url:?action=download_track_menu;track=$escaped_label',true)";
 
     my $title;
     if ($label =~ /^file:/) {
@@ -497,7 +508,7 @@ sub wrap_rendered_track {
                 -onMouseOver =>
                     "$balloon_style.showTooltip(event,'$share_this_track')",
 		    -onMousedown =>
-                    "GBox.showTooltip(event,'url:?action=share_track;track=$escaped_label',1,500,500)",
+                    "GBox.showTooltip(event,'url:?action=share_track;track=$escaped_label',true)",
             }
         ),
 
@@ -1429,57 +1440,23 @@ sub render_hidden_track {
     return $gd;
 }
 
-# this method is a little unconventional; it modifies the title in-place
 sub select_features_menu {
     my $self     = shift;
     my $label    = shift;
     my $titleref = shift;
-
-    my $source = $self->source;
-    my $settings=$self->settings;
-
-    my $buttons = $self->source->globals->button_url;
+    my $stt      = $self->subtrack_manager($label) or return;
+    my ($selected,$total) = $stt->counts;
     my $escaped_label = CGI::escape($label);
-
-    my ($method,$values,$labels)   = $source->subtrack_select_list($label) or return;
-    my $filter = $settings->{features}{$label}{filter};
-
-    my @showing = grep {
- 	$filter->{values}{$_}
-    } @$values;
-
-    my @hidden = grep {
-	!$filter->{values}{$_}
-    } @$values;
-
-    my $showing = @showing;
-    my $total   = @showing+@hidden;
-
-    my %labels;
-    @labels{@$values} = @$labels;
-
-    my $select_features = $self->language->tr('SUBTRACKS_SHOWN');
-    $select_features   .= ul({-style=>'list-style: none;margin:0,0,0,0'},
-			      map {$filter->{values}{$_} ? li($labels{$_})
-				                         : li({-style=>'color: gray'},$labels{$_})
-			      } @$values);
-				 
-
-    $select_features   .= $self->language->tr('SELECT_SUBTRACKS');
-
-    my $balloon_style = $source->global_setting('balloon style') || 'GBubble'; 
-
-    my $select_features_click
-	= "GBox.showTooltip(event,'url:?action=select_subtracks;track=$escaped_label',1,500)";
-    my $select_features_over = "$balloon_style.showTooltip(event,'$select_features')";
+    my $subtrack_over  = "GBubble.showTooltip(event,'url:?action=show_subtracks;track=$escaped_label',false)";
+    my $subtrack_click = "GBox.showTooltip(event,'url:?action=select_subtracks;track=$escaped_label',true)";
 
     # modify the title to show that some subtracks are hidden
-    $$titleref .= " ".a({-href       => 'javascript:void(0)',
-			 -onClick    => $select_features_click,
-			 -onMouseOver=> $select_features_over
-			},
-			$self->language->tr('SHOWING_SUBTRACKS',$showing,$total)
-    );
+    $$titleref .= " ".span({-class       =>'clickable',
+			   -onMouseOver  => "GBubble.showTooltip(event,'Click to modify subtrack selections.')",
+			   -onClick      => $subtrack_click
+			  },
+			  $self->language->tr('SHOWING_SUBTRACKS',$selected,$total));
+    
 }
 
 sub generate_filters {
@@ -1500,49 +1477,13 @@ sub generate_filters {
     return \%filters;
 }
 
-sub set_subtrack_defaults {
-    my $self = shift;
-    my $label = shift;
-    my $settings = $self->settings;
-    my $source   = $self->source;
-
-    if (my @defaults = $source->subtrack_select_default($label)) {
-	my ($method) = $source->subtrack_select_list($label);
-        $settings->{features}{$label}{filter}{values} ||= {map {$_=>1} @defaults};
-	$settings->{features}{$label}{filter}{method} ||= $method;
-    } elsif (my ($method,$values,$labels) = $source->subtrack_select_list($label)) {
-        $settings->{features}{$label}{filter}{values} ||= {map {$_=>1} @$values};
-        $settings->{features}{$label}{filter}{method} ||= $method;
-    }
-}
-
 sub subtrack_select_filter {
     my $self     = shift;
     my ($settings,$label) = @_;
 
-    my $filter   = $settings->{features}{$label}{filter} or return;
-    my $method   = $filter->{method};
-    return unless $method;
-    
-    my $code;
-    my @values = grep {$filter->{values}{$_}} keys %{$filter->{values}};
-    if (@values) {
-	my $regex  = join '|',@values;
-	$code .= "return 1 if \$f->$method =~ /($regex)/i;\n";
-    } else {
-	$code .= "return;\n";
-    }
-    return unless $code;
-    my $sub = <<END;
-sub {
-    my \$f = shift;
-    $code;
-    return;
-}
-END
-    my $cref = eval $sub;
-    warn "failed compiling $sub: ",$@ if $@;
-    return $cref;
+    # new method via SubtrackTable:
+    my $stt = $self->subtrack_manager($label) or return;
+    return $stt->filter_feature_sub;
 }
 
 sub add_features_to_track {
@@ -1567,7 +1508,7 @@ sub add_features_to_track {
   my (%db2label,%db2db);
   for my $label (@$labels) {
     my $db = eval { $source->open_database($label,$length)};
-    unless ($db) { warn "Couldn't open database for $_: $@"; next; }
+    unless ($db) { warn "Couldn't open database for $label: $@"; next; }
     $db2label{$db}{$label}++;
     $db2db{$db}  =  $db;  # cache database object
   }
@@ -1579,7 +1520,7 @@ sub add_features_to_track {
       my (@full_types,@summary_types);
       for my $l (@labels) {
 	  my @types = $source->label2type($l,$length) or next;
-	  if ($source->show_summary($l,$length)) {
+	  if ($source->show_summary($l,$length,$self->settings)) {
 	      push @summary_types,@types;
 	  } else {
 	      push @full_types,@types;
@@ -1588,7 +1529,8 @@ sub add_features_to_track {
 	  
       warn "[$$] RenderPanels->get_iterator(@full_types)"  if DEBUG;
       warn "[$$] RenderPanels->get_summary_iterator(@summary_types)" if DEBUG;
-      if (@summary_types && (my $iterator = $self->get_summary_iterator($db2db{$db},$segment,\@summary_types))) {
+      if (@summary_types && 
+	  (my $iterator = $self->get_summary_iterator($db2db{$db},$segment,\@summary_types))) {
 	  $iterators{$iterator}     = $iterator;
 	  $iterator2dbid{$iterator} = $source->db2id($db);
       }
@@ -1805,18 +1747,14 @@ sub get_summary_iterator {
   my $self = shift;
   my ($db,$segment,$feature_types) = @_;
 
-  if (eval {$db->can_summarize}) {
-      my @args = (-type   => $feature_types,
-		  -seq_id => $segment->seq_id,
-		  -start  => $segment->start,
-		  -end    => $segment->end,
-		  -bins   => $self->settings->{width},
-		  -iterator=>1,
-	  );
-      return $db->feature_summary(@args);
-  } else {
-      return;
-  }
+  my @args = (-type   => $feature_types,
+	      -seq_id => $segment->seq_id,
+	      -start  => $segment->start,
+	      -end    => $segment->end,
+	      -bins   => $self->settings->{width},
+	      -iterator=>1,
+      );
+  return $db->feature_summary(@args);
 }
 
 
@@ -1992,19 +1930,24 @@ sub create_track_args {
   my $source          = $self->source;
   my $lang            = $self->language;
 
-  my $slabel          = $source->semantic_label($label,$length);
-
-  my $override        = $self->settings->{features}{$slabel}{override_settings}
-                        || {};   # user-set override settings for tracks
+  my $is_summary      = $source->show_summary($label,$length,$self->settings);
+  
+  my $state            = $self->settings;
+  my ($semantic_override) = sort {$b<=>$a} grep {$_ < $length} 
+                    keys %{$state->{features}{$label}{semantic_override}};
+  $semantic_override ||= 0;
+  my $override         = $is_summary ? $state->{features}{$label}{summary_override}
+                                     : $state->{features}{$label}{semantic_override}{$semantic_override};
 
   my @override        = map {'-'.$_ => $override->{$_}} keys %$override;
   push @override,(-feature_limit => $override->{limit}) if $override->{limit};
 
-  if ($source->show_summary($label,$length)) {
-      push @override,(-glyph     => 'wiggle_density',
-		      -height    => 14,
-		      -bgcolor => 'black',
-		      -autoscale => 'local'
+  if ($is_summary) {
+      unshift @override,(-glyph     => 'wiggle_density',
+			 -height    => 15,
+			 -bgcolor   => 'black',
+			 -min_score => 0,
+			 -autoscale => 'local'
       );
   }
 
@@ -2013,6 +1956,10 @@ sub create_track_args {
   my @default_args = (-glyph => 'generic');
   push @default_args,(-key   => $label)        unless $label =~ /^\w+:/;
   push @default_args,(-hilite => $hilite_callback) if $hilite_callback;
+
+  if (my $stt = $self->subtrack_manager($label)) {
+      push @default_args,(-sort_order => $stt->sort_feature_sub);
+  }
 
   my @args;
   if ($source->semantic_setting($label=>'global feature',$length)) {
@@ -2045,19 +1992,28 @@ sub create_track_args {
   return @args;
 }
 
-=head2 create_cache_key()
-
-  $cache_key = $self->create_cache_key(@args)
-
-Create a unique cache key for the given args.
-
-=cut
-
-sub create_cache_key {
-  my $self = shift;
-  my @args = map {$_ || ''} grep {!ref($_)} @_;  # the map gets rid of uninit variable warnings
-  return md5_hex(@args);
+sub subtrack_manager {
+    my $self = shift;
+    my $label = shift;
+    return Bio::Graphics::Browser2::Render->create_subtrack_manager($label,
+								    $self->source,
+								    $self->settings);
 }
+
+# dead code - slate for removal
+# =head2 create_cache_key()
+
+#   $cache_key = $self->create_cache_key(@args)
+
+# Create a unique cache key for the given args.
+
+# =cut
+
+# sub create_cache_key {
+#   my $self = shift;
+#   my @args = map {$_ || ''} grep {!ref($_)} @_;  # the map gets rid of uninit variable warnings
+#   return md5_hex(@args);
+# }
 
 sub get_cache_base {
     my $self = shift;
