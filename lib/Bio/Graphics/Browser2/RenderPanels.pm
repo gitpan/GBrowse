@@ -18,6 +18,7 @@ use CGI qw(:standard param escape unescape);
 
 use constant TRUE  => 1;
 use constant DEBUG => 0;
+use constant DEBUGGING_RECTANGLES => 0;  # outline the imagemap
 use constant BENCHMARK => 0;
 
 use constant DEFAULT_EMPTYTRACKS => 0;
@@ -1392,6 +1393,8 @@ sub run_local_requests {
 
 		# == generate the images and maps in background==
 		$gd  = $panel->gd;
+		$self->debugging_rectangles($gd,scalar $panel->boxes)
+		    if DEBUGGING_RECTANGLES;
 		$map = $self->make_map( scalar $panel->boxes,
 					$panel, $label,
 					\%trackmap, 0 );
@@ -1513,7 +1516,7 @@ sub add_features_to_track {
     $db2db{$db}  =  $db;  # cache database object
   }
 
-  my (%iterators,%iterator2dbid);
+  my (%iterators,%iterator2dbid,%is_summary);
   for my $db (keys %db2db) {
       my @labels           = keys %{$db2label{$db}};
 
@@ -1521,12 +1524,13 @@ sub add_features_to_track {
       for my $l (@labels) {
 	  my @types = $source->label2type($l,$length) or next;
 	  if ($source->show_summary($l,$length,$self->settings)) {
+	      $is_summary{$l}++;
 	      push @summary_types,@types;
 	  } else {
 	      push @full_types,@types;
 	  }
       }
-	  
+      
       warn "[$$] RenderPanels->get_iterator(@full_types)"  if DEBUG;
       warn "[$$] RenderPanels->get_summary_iterator(@summary_types)" if DEBUG;
       if (@summary_types && 
@@ -1567,6 +1571,9 @@ sub add_features_to_track {
           $l =~ s/:\d+//;  # get rid of semantic zooming tag
 
 	  my $track = $tracks->{$l}  or next;
+	  
+	  my $stt        = $self->subtrack_manager($l);
+	  my $is_summary = $is_summary{$l};
 
 	  $filters->{$l}->($feature) or next if $filters->{$l};
 	  $feature_count{$l}++;
@@ -1608,6 +1615,22 @@ sub add_features_to_track {
 		  next;
 	      }
 	  }
+
+	  if (!$is_summary && $stt && (my $id = $stt->feature_to_id_sub->($feature))) {
+	      unless ($groups{$l}) {
+		  my @ids   = $stt->selected_ids;
+		  $groups{$l}{$_} ||= Bio::Graphics::Feature->new(-type   => 'group',
+								  -primary_id     => $_,
+								  -name   => $stt->id2label($_),
+								  -start  => $segment->start,
+								  -end    => $segment->end,
+								  -seq_id => $segment->seq_id) 
+		      foreach @ids
+	      }
+	      $groups{$l}{$id}->add_segment($feature);
+	      next;
+	  }
+
 	  $track->add_feature($feature);
       }
     }
@@ -1950,12 +1973,21 @@ sub create_track_args {
 			 -autoscale => 'local'
       );
   }
-
   my $hilite_callback = $args->{hilite_callback};
 
   my @default_args = (-glyph => 'generic');
   push @default_args,(-key   => $label)        unless $label =~ /^\w+:/;
   push @default_args,(-hilite => $hilite_callback) if $hilite_callback;
+
+  if ($self->subtrack_manager($label)) {
+      push @default_args,(-connector   => '');
+      my $left_label = 
+	  $source->semantic_setting($label=>'label_position',$length)||'' eq 'left';
+      $left_label++ if $source->semantic_setting($label=>'label_transcripts',$length);
+      push @default_args,(
+	  -group_label          => 1,
+	  -group_label_position => $left_label ? 'top' : 'left');
+  }
 
   if (my $stt = $self->subtrack_manager($label)) {
       push @default_args,(-sort_order => $stt->sort_feature_sub);
@@ -1995,25 +2027,23 @@ sub create_track_args {
 sub subtrack_manager {
     my $self = shift;
     my $label = shift;
-    return Bio::Graphics::Browser2::Render->create_subtrack_manager($label,
-								    $self->source,
-								    $self->settings);
+    return $self->{_stt}{$label} if exists $self->{_stt}{$label};
+    return $self->{_stt}{$label} = undef
+	if $self->source->show_summary($label,$self->segment->length,$self->settings);
+    return $self->{_stt}{$label} = Bio::Graphics::Browser2::Render->create_subtrack_manager($label,
+											    $self->source,
+											    $self->settings);
 }
 
-# dead code - slate for removal
-# =head2 create_cache_key()
-
-#   $cache_key = $self->create_cache_key(@args)
-
-# Create a unique cache key for the given args.
-
-# =cut
-
-# sub create_cache_key {
-#   my $self = shift;
-#   my @args = map {$_ || ''} grep {!ref($_)} @_;  # the map gets rid of uninit variable warnings
-#   return md5_hex(@args);
-# }
+sub debugging_rectangles {
+  my $self = shift;
+  my ($image,$boxes) = @_;
+  my $red = $image->colorClosest(255,0,0);
+  foreach (@$boxes) {
+    my @rect = @{$_}[1,2,3,4];
+    $image->rectangle(@{$_}[1,2,3,4],$red);
+  }
+}
 
 sub get_cache_base {
     my $self = shift;
