@@ -3,7 +3,7 @@
 
  Lincoln Stein <lincoln.stein@gmail.com>
  Ben Faga <ben.faga@gmail.com>
- $Id: controller.js 23329 2010-06-04 21:17:02Z lstein $
+ $Id: controller.js 23436 2010-06-22 12:29:28Z lstein $
 
 Indentation courtesy of Emacs javascript-mode 
 (http://mihai.bazon.net/projects/emacs-javascript-mode/javascript.el)
@@ -398,7 +398,6 @@ var GBrowseController = Class.create({
         if (results.display_details == 0){
           Controller.hide_detail_tracks();
         }
-//	Controller.idle();
       } // end onSuccess
       
     }); // end Ajax.Request
@@ -605,7 +604,7 @@ var GBrowseController = Class.create({
     );
 
     if (finished) {
-//      this.idle();
+      this.idle();
       return;
     }
 
@@ -824,9 +823,9 @@ var GBrowseController = Class.create({
       if (innerdiv != null) {
           var caption = detailsdiv.visible() ? 'Hide details' : 'Show details';
 	  innerdiv.innerHTML = message +
-                               ' <a id="detailscaption" href="javascript:void(0)" onClick="Controller.show_hide_errordetails()">'
+                               ' <span id="detailscaption" class="clickable" style="font-size:12pt" onClick="Controller.show_hide_errordetails()">'
 			       +caption
-			       +'</a>';
+			       +'</span>';
       }			     
       if (detailsdiv != null) {
           detailsdiv.innerHTML  = details;

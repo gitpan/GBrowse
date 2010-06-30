@@ -271,7 +271,8 @@ sub render_html_head {
   
   # Set any onTabLoad functions
   my $main_page_onLoads = "";
-  my $track_page_onLoads = "checkSummaries();";
+#  my $track_page_onLoads = "checkLists();";
+  my $track_page_onLoads = '';
   my $custom_track_page_onLoads = "";
   my $settings_page_onLoads = "";
   
@@ -698,7 +699,7 @@ sub render_actionmenu {
 	if HAVE_SVG && $self->can_generate_pdf;
 
     push @export_links,a({-href=>$self->gff_dump_link},                    $self->tr('DUMP_GFF'));
-    push @export_links,a({-href=>$self->dna_dump_link},                           $self->tr('DUMP_SEQ'));
+    push @export_links,a({-href=>$self->dna_dump_link},                    $self->tr('DUMP_SEQ'));
     push @export_links,a({-href=>'javascript:'.$self->galaxy_link},        $self->tr('SEND_TO_GALAXY'))
 	if $self->data_source->global_setting('galaxy outgoing');
 
@@ -724,8 +725,9 @@ sub render_actionmenu {
 			       -style       => 'cursor:pointer'
 			      },
 			      $self->tr('ABOUT_ME'));
-    my $plugin_link   = $self->plugin_links($self->plugins);
-    my $reset_link    = a({-href=>'?reset=1',-class=>'reset_button'},    $self->tr('RESET'));
+    my $plugin_link      = $self->plugin_links($self->plugins);
+    my $chrom_sizes_link = a({-href=>'?action=chrom_sizes'},$self->tr('CHROM_SIZES'));
+    my $reset_link       = a({-href=>'?reset=1',-class=>'reset_button'},    $self->tr('RESET'));
 
     my $login = $self->setting('user accounts') ? $self->render_login : '';
 
@@ -737,7 +739,8 @@ sub render_actionmenu {
 			     li({-class=>'dir'},a({-href=>'#'},$self->tr('EXPORT')),
 				ul(li(\@export_links))),
 			     $plugin_link ? li($plugin_link) : (),
-			     li($reset_link)
+			     li($chrom_sizes_link),
+			     li($reset_link),
 			  )
 		       ),
 		       li({-class=>'dir'},$self->tr('HELP'),
@@ -880,6 +883,7 @@ sub render_track_table {
   if (my $filter = $self->track_filter_plugin) {
       $filter_active++;
       eval {@labels    = $filter->filter_tracks(\@labels,$source)};
+      warn $@ if $@;
       eval {@hilite    = $filter->hilite_terms};
       warn $@ if $@;
   }
@@ -932,7 +936,7 @@ sub render_track_table {
 				     },i($self->tr('SELECT_SUBTRACKS',$selected,$total))).']';
    }
   }
-   
+
   my @defaults   = grep {$settings->{features}{$_}{visible}  }   @labels;
 
   # Sort the tracks into categories:
@@ -1015,10 +1019,13 @@ sub render_track_table {
 						       span({-id=>$id},$table)));
       $control .= '&nbsp;'.i({-class=>'nojs'},
 			     checkbox(-id=>"${id}_a",-name=>"${id}_a",
-				      -label=>$all_on,-onClick=>"gbCheck(this,1)"),
+				      -label=>$all_on,-onClick=>"gbCheck(this,1);"),
 			     checkbox(-id=>"${id}_n",-name=>"${id}_n",
-				      -label=>$all_off,-onClick=>"gbCheck(this,0)")
-			    ).br()   if exists $track_groups{$category};
+				      -label=>$all_off,-onClick=>"gbCheck(this,0);")
+			    ).span({-class => "list",
+			            -id => "${id}_list",
+			            -style => "display: none;"},"")
+			    .br()   if exists $track_groups{$category};
       $section_contents{$category} = div($control.$section);
     }
 
@@ -1109,7 +1116,8 @@ sub nest_toggles {
 	    $settings->{section_visible}{$id} = $default unless exists $settings->{section_visible}{$id};
  	    $result .= $self->toggle_section({on=>$settings->{section_visible}{$id}},
 					     $id,
-					     b($key),
+					     b($key).span({-class => "list",
+			            -id => "${id}_list"},""),
 					     div({-style=>'margin-left:1.5em;margin-right:1em'},
 						 $self->nest_toggles($hash->{$key},$sort)));
 	} else {
@@ -1320,15 +1328,19 @@ sub render_upload_share_section {
 sub render_toggle_userdata_table {
     my $self = shift;
     return div(
-	h2({-style=>'margin: 0px 0px 0px 0px;padding:5px 0px 5px 0px'},'Uploaded Tracks'),
+	h2({-style=>'margin: 0px 0px 0px 0px;padding:5px 0px 5px 0px'},$self->tr('UPLOADED_TRACKS')),
+	a({-href=>$self->annotation_help,-target=>'_blank'},
+	  i('['.$self->tr('HELP_FORMAT_UPLOAD').']')),
 	$self->render_userdata_table(),
-	$self->userdata_upload()
+	$self->userdata_upload(),
 	);
 }
 
 sub render_toggle_import_table {
     my $self = shift;
-    return h2('Imported Tracks').
+    return h2($self->tr('IMPORTED_TRACKS')).
+	a({-href=>$self->annotation_help.'#remote',-target=>'_blank'},
+	  i('['.$self->tr('HELP_FORMAT_IMPORT').']')).
 	div($self->render_userimport_table(),
 	    $self->userdata_import()
 	);
@@ -2468,6 +2480,7 @@ sub share_track {
 
     my $state = $self->state();
     my $source = $self->data_source;
+    my $name   = $source->name;
 
     (my $lbase = $label) =~ s/:\w+$//;
 
@@ -2517,10 +2530,11 @@ sub share_track {
             map  { shellwords( $self->setting( $_ => 'feature' ) ) }
             grep { $self->setting( $_ => 'das category' ) }
             $label eq 'all'
-        ? @visible
-        : $label );
+			  ? @visible
+			  : $label );
     my $das = url( -full => 1, -path_info => 1 );
     $das =~ s/gbrowse/das/;
+    $das =~ s/$name/$name|$label/ if $label ne 'all';
     $das .= "features";
     $das .= "?$das_types";
 
@@ -2573,9 +2587,6 @@ sub share_track {
                 : 'SHARE_DAS_INSTRUCTIONS_ONE_TRACK'
             )
             )
-            . br()
-            .b('DAS URL: ') 
-	    . br()
 	    . p( textfield(
                 -style    => 'background-color: wheat',
                 -readonly => 1,

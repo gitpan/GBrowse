@@ -84,8 +84,8 @@ function visibility (element_name,is_visible) {
       if (break_element != null)
 	  turnOff(break_element);
    } else {
-      if (element_name.search("_section") != -1)
-        summarizeTracks(element_name);
+//      if (element_name.search("_section") != -1)
+//        summarizeTracks(element_name);
       turnOff(element);
       turnOff(hide_control);
       turnOn(show_control);
