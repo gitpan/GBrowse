@@ -1,6 +1,6 @@
 package Bio::Graphics::Browser2::UserTracks;
 
-# $Id: UserTracks.pm 23485 2010-06-28 20:11:22Z lstein $
+# $Id: UserTracks.pm 23528 2010-07-02 20:57:08Z lstein $
 use strict;
 use Bio::Graphics::Browser2::DataSource;
 use Bio::Graphics::Browser2::DataLoader;
@@ -383,7 +383,7 @@ sub labels {
     my $self       = shift;
     my $track_name = shift;
     my $conf       = $self->track_conf($track_name) or return;
-    return grep {!/:database/} eval{Bio::Graphics::FeatureFile->new(-file=>$conf)->labels};
+    return grep {!/:(database|\d+)/} eval{Bio::Graphics::FeatureFile->new(-file=>$conf)->labels};
 }
 
 sub status {

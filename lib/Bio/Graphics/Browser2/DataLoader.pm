@@ -1,5 +1,5 @@
 package Bio::Graphics::Browser2::DataLoader;
-# $Id: DataLoader.pm 23472 2010-06-25 04:56:19Z lstein $
+# $Id: DataLoader.pm 23528 2010-07-02 20:57:08Z lstein $
 
 use strict;
 use IO::File;
@@ -104,7 +104,6 @@ sub get_fasta_files {
 	my $fasta = $args{-fasta} || $args{-dsn};
 	next if $seenit{$fasta}++;
 	next unless -e $fasta;
-	warn "looking at $dbid $fasta";
 	if (-d _) {
 	    push @fastai, glob("$fasta/*.fai");
 	    push @fasta, $fasta
@@ -280,7 +279,8 @@ sub load {
 
     die $@ if $@;
     $self->set_processing_complete;
-    return $self->tracks;
+    my @tracks = $self->tracks;
+    return @tracks;
 }
 
 sub start_load  { }
