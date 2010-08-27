@@ -24,11 +24,12 @@ our $CAN_PDF;
 
 sub render_html_start {
   my $self  = shift;
-  my $title = shift;
+  my ($title,@actions) = @_;
   my $dsn   = $self->data_source;
-  my $html  = $self->render_html_head($dsn,$title);
+  my $html  = $self->render_html_head($dsn,$title,@actions);
   $html    .= $self->render_js_controller_settings();
   $html    .= $self->render_balloon_settings();
+  $html    .= "<div id='main'>";
   $html    .= $self->render_select_menus();
   return $html;
 }
@@ -119,7 +120,7 @@ sub render_bottom {
   my $a   = $self->data_source->global_setting('footer');
   my $value = ref $a eq 'CODE' ? $a->(@_) : $a;
   $value ||= '';
-  return $value.end_html();
+  return $value."</div>".end_html();
 }
 
 sub render_navbar {
@@ -258,7 +259,7 @@ END
 
 sub render_html_head {
   my $self = shift;
-  my ($dsn,$title) = @_;
+  my ($dsn,$title,@other_initialization) = @_;
   my @plugin_list = $self->plugins->plugins;
 
   return if $self->{started_html}++;
@@ -412,7 +413,8 @@ sub render_html_head {
   push @args,(-onLoad => "$body_onLoads");
 
   my $plugin_onloads  = join ';',map {eval{$_->body_onloads}} @plugin_list;
-  push @args,(-onLoad => "initialize_page(); $set_dragcolors; $plugin_onloads");
+  my $other_actions   = join ';',@other_initialization;
+  push @args,(-onLoad => "initialize_page(); $set_dragcolors; $plugin_onloads; $other_actions");
 
   return start_html(@args);
 }
@@ -786,13 +788,8 @@ sub galaxy_form {
     return '' unless $galaxy_url;
 
     my $URL  = $source->global_setting('galaxy incoming');
-    if (!$URL) {
-	$URL = url(-full=>1,-path_info=>1);
-    } else {
-      $URL .= "/".$source->name;
-    }
+    $URL   ||= $self->globals->gbrowse_url;
 
-    
     # Make sure to include all necessary parameters in URL to ensure that gbrowse will retrieve the data
     # when Galaxy posts the URL.
     my $dbkey  = $source->global_setting('galaxy build name') || $source->name;
@@ -1319,10 +1316,8 @@ sub render_upload_share_section {
     return $self->is_admin
 	? div(h2({-style=>'font-style:italic;background-color:yellow'}, # BUG: this is HTML - should not be here!!!
 		 'Admin mode: Uploaded tracks are public'),
-	      $self->render_toggle_userdata_table,
-	      $self->render_toggle_import_table)
-	: div($self->render_toggle_userdata_table,
-	      $self->render_toggle_import_table);
+	      $self->render_toggle_userdata_table)
+	: div($self->render_toggle_userdata_table);
 }
 
 sub render_toggle_userdata_table {
@@ -1336,28 +1331,10 @@ sub render_toggle_userdata_table {
 	);
 }
 
-sub render_toggle_import_table {
-    my $self = shift;
-    return h2($self->tr('IMPORTED_TRACKS')).
-	a({-href=>$self->annotation_help.'#remote',-target=>'_blank'},
-	  i('['.$self->tr('HELP_FORMAT_IMPORT').']')).
-	div($self->render_userimport_table(),
-	    $self->userdata_import()
-	);
-}
-
 sub render_userdata_table {
     my $self = shift;
     my $html = div( {-id=>'userdata_table_div',-class=>'uploadbody'},
-		    scalar $self->list_userdata('uploaded'));
-    return $html;
-}
-
-sub render_userimport_table {
-    my $self = shift;
-    my $html = div( { -id => 'userimport_table_div',-class=>'uploadbody' },
-		    $self->list_userdata('imported'),
-	);
+		    scalar $self->list_userdata());
     return $html;
 }
 
@@ -1367,8 +1344,7 @@ sub list_userdata {
 
     my $userdata = $self->user_tracks();
 
-    my $imported = $type eq 'imported' ? 1 : 0;
-    my @tracks   = $userdata->tracks($imported);
+    my @tracks   = $userdata->tracks();
     my %modified = map {$_ => $userdata->modified($_) } @tracks;
     @tracks      = sort @tracks;
 
@@ -1403,19 +1379,21 @@ sub list_userdata {
 	my $random_id = 'upload_'.int rand(9999);
 
 	my ($conf_name,$conf_modified,$conf_size) = $userdata->conf_metadata($name);
+	my $mirror_url = $userdata->is_mirrored($name);
 
 	my @source_files  = $userdata->source_files($name);
 	my $download_data = 
 	    table({-class=>'padded-table'},
 		  TR([map {
 		      th({-align=>'left'},
-			 a({-href=>"?userdata_download=$_->[0];track=$name"},$_->[0])).
+			 a({-href=>$mirror_url || "?userdata_download=$_->[0];track=$name"},$_->[0])).
 			     td(scalar localtime($_->[2])).
 			     td($_->[1],'bytes').
 			     td(
-				 ($_->[1] <= MAXIMUM_EDITABLE_UPLOAD && -T $_->[3])
-				 ? a({-href    => "javascript:void(0)",
-				      -onClick => "editUploadData('$name','$_->[0]')"},'[edit]')
+				 $mirror_url                                          ? a({-href    => "javascript:void(0)",
+											   -onClick => "reloadURL('$name','$mirror_url')"},"[reload from $mirror_url]")
+				 : ($_->[1] <= MAXIMUM_EDITABLE_UPLOAD && -T $_->[3]) ? a({-href    => "javascript:void(0)",
+											   -onClick => "editUploadData('$name','$_->[0]')"},'[edit]')
 				 : '&nbsp;'
 			     )
 		      } @source_files]),
@@ -1452,7 +1430,7 @@ sub list_userdata {
 		 -onMouseOver => 'GBubble.showTooltip(event,"Delete",0,100)',
 		 -onClick     => "deleteUploadTrack('$name')"
 		},'&nbsp;',
-	    ($type eq 'uploaded') 
+	    (@source_files) 
 		? img({-src=>$share,
 		 -style   => 'cursor:pointer',
 		 -onMouseOver => 'GBubble.showTooltip(event,"Share with other users",0)',
@@ -1482,24 +1460,6 @@ sub list_userdata {
     return join '',@rows;
 }
 
-sub userdata_import {
-    my $self     = shift;
-    my $html     = '';
-
-    my $url      = url(-absolute=>1,-path_info=>1);
-    $html   .= div({-id=>'import_list_start'},'');
-
-    my $import_label  = $self->tr('IMPORT_TRACK');
-    my $import_prompt = $self->tr('REMOTE_URL');
-    my $remove_label  = $self->tr('REMOVE');
-    my $help_link     = $self->annotation_help;
-    $html            .= div({-style=>'margin-left:10pt'},
-			   a({-href => "javascript:addAnUploadField('import_list_start','$url','$import_prompt','$remove_label','import','$help_link')",
-			      -id   => 'import_adder',
-			     },b("[$import_label]")));
-    return $html;
-}
-
 sub userdata_upload {
     my $self     = shift;
     my $url      = url(-absolute=>1,-path_info=>1);
@@ -1508,16 +1468,21 @@ sub userdata_upload {
     $html       .= div({-id=>'upload_list_start'},'');
 
     my $upload_label = $self->tr('UPLOAD_FILE');
+    my $mirror_label = $self->tr('MIRROR_FILE');
     my $remove_label = $self->tr('REMOVE');
+
     my $new_label    = $self->tr('NEW_TRACK');
     my $from_text    = $self->tr('FROM_TEXT');
     my $from_file    = $self->tr('FROM_FILE');
+    my $from_url     = $self->tr('FROM_URL');
     my $help_link     = $self->annotation_help;
     $html         .= p({-style=>'margin-left:10pt;font-weight:bold'},
 		       'Add custom track(s):',
-		       a({-href=>"javascript:addAnUploadField('upload_list_start', '$url', '$new_label',   '$remove_label', 'edit','$help_link')"},
+		       a({-href=>"javascript:addAnUploadField('upload_list_start', '$url', '$new_label',    '$remove_label', 'edit','$help_link')"},
 			 "[$from_text]"),
-		       a({-href=>"javascript:addAnUploadField('upload_list_start', '$url','$upload_label','$remove_label' , 'upload','$help_link')",
+		       a({-href=>"javascript:addAnUploadField('upload_list_start', '$url', '$mirror_label', '$remove_label', 'url','$help_link')"},
+			 "[$from_url]"),
+		       a({-href=>"javascript:addAnUploadField('upload_list_start', '$url','$upload_label',  '$remove_label' , 'upload','$help_link')",
 			  -id=>'file_adder',
 			 },"[$from_file]"));
 		       

@@ -1,8 +1,8 @@
 package Bio::Graphics::Browser2;
-# $Id: Browser2.pm 23528 2010-07-02 20:57:08Z lstein $
+# $Id: Browser2.pm 23708 2010-08-27 15:04:55Z lstein $
 # Globals and utilities for GBrowse and friends
 
-our $VERSION = '2.13';
+our $VERSION = '2.14';
 
 use strict;
 use warnings;
@@ -117,6 +117,26 @@ sub js_url      { shift->url_path('js')                 }
 sub help_url    { shift->url_path('gbrowse_help')       }
 sub stylesheet_url   { shift->url_path('stylesheet')    }
 
+
+# this returns the base URL and path info for use in constructing
+# links. For example, if gbrowse is running at http://foo.bar/cgi-bin/gb2/gbrowse/yeast,
+# it will return the list ('http://foo.bar/cgi-bin/gb2','yeast')
+sub gbrowse_base {
+    my $self   = shift;
+    my $url    = CGI::url();
+    my $source = $self->get_source_from_cgi;
+    $source    = CGI::escape($source);
+    $url =~   s!/[^/]*$!!;
+    return ($url,$source);
+}
+
+# this returns the URL of the "master" gbrowse instance
+sub gbrowse_url {
+    my $self   = shift;
+    my ($base,$source) = $self->gbrowse_base;
+    return "$base/gbrowse/$source";
+}
+
 sub make_path {
     my $self = shift;
     my $path = shift;
@@ -217,6 +237,24 @@ sub admin_account          { shift->setting(general=>'admin_account') }
 sub admin_dbs              { shift->setting(general=>'admin_dbs')     }
 sub openid_secret {
     return GBrowse::ConfigData->config('OpenIDConsumerSecret')
+}
+
+# uploads
+sub upload_db_adaptor {
+    my $self = shift;
+    return $self->setting(general=>'upload_db_adaptor') || $self->setting(general=>'userdb_adaptor');
+}
+sub upload_db_host {
+    my $self = shift;
+    return $self->setting(general=>'upload_db_host') || $self->setting(general=>'userdb_host') || 'localhost'
+}
+sub upload_db_user {
+    my $self = shift;
+    return $self->setting(general=>'upload_db_user') || $self->setting(general=>'userdb_user') || '';
+}
+sub upload_db_pass {
+    my $self = shift;
+    return $self->setting(general=>'upload_db_pass') || $self->setting(general=>'userdb_pass') || '';
 }
 
 sub session_driver {

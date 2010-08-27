@@ -1,6 +1,6 @@
 package Bio::Graphics::Browser2::UserTracks;
 
-# $Id: UserTracks.pm 23528 2010-07-02 20:57:08Z lstein $
+# $Id: UserTracks.pm 23707 2010-08-27 14:56:28Z lstein $
 use strict;
 use Bio::Graphics::Browser2::DataSource;
 use Bio::Graphics::Browser2::DataLoader;
@@ -32,6 +32,7 @@ my $HASBIGWIG;
 sub busy_file_name     { 'BUSY'      }
 sub status_file_name   { 'STATUS'    }
 sub imported_file_name { 'IMPORTED'  }
+sub mirrored_file_name { 'MIRRORED'  }
 sub sources_dir_name   { 'SOURCES'   }
 
 sub new {
@@ -60,22 +61,35 @@ sub path {
 sub tracks {
     my $self     = shift;
     my $path     = $self->path;
-    my $imported = shift;
     return unless $self->{uuid};
 
     my @result;
     opendir D,$path;
     while (my $dir = readdir(D)) {
 	next if $dir =~ /^\.+$/;
-
-	my $is_imported   = (-e File::Spec->catfile($path,
-						    $dir,
-						    $self->imported_file_name))||0;
-	next if defined $imported && $imported != $is_imported;
-
 	push @result,$dir;
     }
     return @result;
+}
+
+sub is_mirrored {
+    my $self  = shift;
+    my $track = shift;
+    my $mirror_flag = $self->mirror_flag($track);
+    return unless -e $mirror_flag;
+    open(my $i,$mirror_flag);
+    my $url = <$i>;
+    close $i;
+    return $url;
+}
+
+sub set_mirrored {
+    my $self = shift;
+    my ($track_name,$url) = @_;
+    my $flagfile = $self->mirror_flag($track_name);
+    open my $i,">",$flagfile or warn "can't open mirror file: $!";
+    print $i $url;
+    close $i;
 }
 
 sub conf_files {
@@ -114,6 +128,14 @@ sub import_flag {
     return File::Spec->catfile($self->path,
 			       $track,
 			       $self->imported_file_name);
+}
+
+sub mirror_flag {
+    my $self  = shift;
+    my $track = shift;
+    return File::Spec->catfile($self->path,
+			       $track,
+			       $self->mirrored_file_name);
 }
 
 sub created {
@@ -176,6 +198,8 @@ sub trackname_from_url {
     my $url      = shift;
     my $uniquefy = shift;
 
+    warn "trackname_from_url($url)" if DEBUG;
+
     (my $track_name=$url) =~ tr!a-zA-Z0-9_%^@.-!_!cs;
 
     if (length $track_name > $self->max_filename) {
@@ -208,8 +232,7 @@ sub max_filename {
 sub import_url {
     my $self = shift;
 
-    my $url       = shift;
-    my $overwrite = shift;
+    my ($url,$overwrite) = @_;
 
     my $key;
     if ($url =~ m!http://([^/]+).+/(\w+)/\?.*t=([^+;]+)!) {
@@ -224,6 +247,7 @@ sub import_url {
 							  $self->track_conf($track_name),
 							  $self->config,
 							  $self->state->{uploadid});
+    $loader->strip_prefix($self->config->seqid_prefix);
     $loader->set_status('starting import');
 
     my $conf = $self->track_conf($track_name);
@@ -238,6 +262,7 @@ sub import_url {
     else {
 	print $f $self->remote_mirror_conf($track_name,$url,$key);
     }
+
     close $f;
     open my $i,">",$self->import_flag($track_name);
     close $i;
@@ -264,6 +289,44 @@ sub reload_file {
     }
 }
 
+sub mirror_url {
+    my $self  = shift;
+    my ($name,$url,$overwrite) = @_;
+
+    warn "mirroring..." if DEBUG;
+
+    if ($url =~ /\.(bam|bw)$/ or $url =~ /\b(gbgff|das)\b/) {
+	return $self->import_url($url,$overwrite);
+    }
+
+    # first we do a HEAD to validate that the thing exists
+    eval "require LWP::UserAgent" unless LWP::UserAgent->can('new');
+    my $agent  = LWP::UserAgent->new();
+    my $result = $agent->head($url);
+    unless ($result->is_success) {
+	my $msg = $url.': '.$result->status_line;
+	warn $msg if DEBUG;
+	return (0,$msg,[]);
+    }
+
+    # fetch in one process, process in another
+    eval "use IO::Pipe" unless IO::Pipe->can('new');
+    my $fh  = IO::Pipe->new;
+    my $child = Bio::Graphics::Browser2::Render->fork();
+    die "Couldn't fork" unless defined $child;
+
+    unless ($child) {
+	warn "printing from child..." if DEBUG;
+	$fh->writer();
+	$self->_print_url($agent,$url,$fh);
+	CORE::exit 0;
+    }
+    $fh->reader;
+    my @result = $self->upload_file($name,$fh,$result->header('Content-Type')||'text/plain',$overwrite);
+    $self->set_mirrored($name,$url);
+    return @result;
+}
+
 sub upload_data {
     my $self = shift;
     my ($file_name,$data,$content_type,$overwrite) = @_;
@@ -274,7 +337,9 @@ sub upload_data {
 sub upload_file {
     my $self = shift;
     my ($file_name,$fh,$content_type,$overwrite) = @_;
-    
+
+    warn "$file_name: OVERWRITE = $overwrite" if DEBUG;
+
     my $track_name = $self->trackname_from_url($file_name,!$overwrite);
     $content_type ||= '';
 
@@ -407,12 +472,14 @@ sub get_loader {
     my $module = "Bio::Graphics::Browser2::DataLoader::$type";
     eval "require $module";
     die $@ if $@;
-    return $module->new($track_name,
-			$self->track_path($track_name),
-			$self->track_conf($track_name),
-			$self->config,
-			$self->state->{uploadid},
+    my $loader = $module->new($track_name,
+			      $self->track_path($track_name),
+			      $self->track_conf($track_name),
+			      $self->config,
+			      $self->state->{uploadid},
 	);
+    $loader->strip_prefix($self->config->seqid_prefix);
+    return $loader;
 }
 
 # guess the file type and eol based on its name and the first 1024 bytes
@@ -608,6 +675,12 @@ stdev_color_neg = grey
 height          = 20
 
 END
+}
+
+sub _print_url {
+    my $self = shift;
+    my ($agent,$url,$fh) = @_;
+    $agent->get($url,':content_cb' => sub { print $fh shift; });
 }
 
 package Bio::Graphics::Browser2::UserConf;

@@ -1,6 +1,6 @@
 package Bio::Graphics::Browser2::DataLoader::bam;
 
-# $Id: bam.pm 23472 2010-06-25 04:56:19Z lstein $
+# $Id: bam.pm 23707 2010-08-27 14:56:28Z lstein $
 use strict;
 use base 'Bio::Graphics::Browser2::DataLoader';
 
@@ -93,6 +93,14 @@ $semantic_track
 $sam_track
 END
 
+}
+
+# slightly different behavior -- never return the .fai file - only the first .fa file
+sub get_fasta_file {
+    my $self = shift;
+    my @fasta      = $self->get_fasta_files;
+    my $fasta      = (grep {!/\.fai$/} @fasta)[0];
+    return $fasta;
 }
 
 sub load {
