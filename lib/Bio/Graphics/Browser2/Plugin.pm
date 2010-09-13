@@ -1,5 +1,5 @@
 package Bio::Graphics::Browser2::Plugin;
-# $Id: Plugin.pm 23307 2010-06-03 15:00:48Z cnvandev $
+# $Id: Plugin.pm 23738 2010-09-03 17:02:57Z lstein $
 # base class for plugins for the Generic Genome Browser
 
 =head1 NAME
@@ -763,6 +763,13 @@ sub init {
 sub name {
   my $self = shift;
   return "generic";
+}
+
+sub id {
+    my $self = shift;
+    my $class = ref($self) || $self;
+    my ($id)  = $class =~ /(\w+)$/;
+    return $id;
 }
 
 # return nothing unless the plugin overides this method 

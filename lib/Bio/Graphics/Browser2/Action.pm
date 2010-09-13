@@ -1,6 +1,6 @@
 package Bio::Graphics::Browser2::Action;
 
-#$Id: Action.pm 23706 2010-08-27 06:51:24Z lstein $
+#$Id: Action.pm 23735 2010-09-02 20:41:29Z lstein $
 # dispatch
 
 use strict;
@@ -8,6 +8,7 @@ use Carp 'croak';
 use CGI();
 use Bio::Graphics::Browser2::TrackDumper;
 use File::Basename 'basename';
+use JSON;
 use constant DEBUG => 0;
 
 sub new {

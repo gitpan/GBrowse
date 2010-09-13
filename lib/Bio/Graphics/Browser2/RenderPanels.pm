@@ -41,6 +41,7 @@ sub new {
   my $data_source   = $options{-source};
   my $page_settings = $options{-settings};
   my $language      = $options{-language};
+  my $render        = $options{-render};
 
   my $self  = bless {},ref $class || $class;
   $self->segment($segment);
@@ -49,6 +50,7 @@ sub new {
   $self->source($data_source);
   $self->settings($page_settings);
   $self->language($language);
+  $self->render($render);
 
   return $self;
 }
@@ -92,6 +94,13 @@ sub language {
   my $self = shift;
   my $d = $self->{language};
   $self->{language} = shift if @_;
+  return $d;
+}
+
+sub render {
+  my $self = shift;
+  my $d = $self->{render};
+  $self->{render} = shift if @_;
   return $d;
 }
 
@@ -488,7 +497,7 @@ sub wrap_rendered_track {
 
     }
     elsif ($label =~ /^plugin/) {
-	($title = $label) =~ s/^plugin://;
+	$title = $self->render->plugin_name($label);
     }
     else {
 	(my $l = $label) =~ s/:\w+$//;
@@ -816,9 +825,10 @@ sub sort_local_remote {
 			      !/plugin:/ &&
 			      !/file:/   &&
 			      !/^(ftp|http|das):/ &&
-			      (($url = $source->fallback_setting($_=>'remote renderer') ||0)
-			       && ($url ne 'none')
-			       && ($url ne 'local')))
+			      !$source->is_usertrack($_) &&
+			      (($url = $source->fallback_setting($_=>'remote renderer') ||0) &&
+			      ($url ne 'none') &&
+			      ($url ne 'local')))
                         } @uncached;
 
     my @remote    = grep {$is_remote{$_} } @uncached;

@@ -245,7 +245,7 @@ sub render_search_form_objects {
 	-override=>1,
     );
     if ($self->setting('autocomplete')) {
-        my $spinner_url = $self->globals->button_url.'/spinner.gif';
+        my $spinner_url = $self->data_source->button_url.'/spinner.gif';
 	$html .= <<END
 <span id="indicator1" style="display: none">
   <img src="$spinner_url" alt="Working..." />
@@ -684,7 +684,7 @@ sub render_busy_signal {
     my $self = shift;
     return img({
         -id    => 'busy_indicator',
-        -src   => $self->globals->button_url.'/spinner.gif',
+        -src   => $self->data_source->button_url.'/spinner.gif',
         -style => 'position: fixed; top: 5px; left: 5px; display: none',
         -alt   => "Working..."
        });
@@ -891,7 +891,8 @@ sub render_track_table {
    my $key = $self->label2key($label);
    my ($link,$mouseover);
    if ($label =~ /^plugin:/) {
-       $labels{$label} = $key;
+#       $labels{$label} = $key;
+       $labels{$label} = $self->plugin_name($label);
        next;
    }
    elsif ($label =~ /^file:/){
@@ -1640,6 +1641,7 @@ sub plugin_configuration_form {
 
     my $plugin_type = $plugin->type;
     my $plugin_name = $plugin->name;
+    my $plugin_id   = $plugin->id;
 
     print CGI::header(-type=>'text/html',     
 		      -cache_control =>'no-cache');
@@ -1652,7 +1654,7 @@ sub plugin_configuration_form {
 	  button(-value => $self->tr('Configure_plugin'),
  		 -onClick=>'Controller.reconfigure_plugin('
                  . '"'.$self->tr('Configure_plugin').'"'
-                 . qq(, "plugin:$plugin_name")
+                 . qq(, "plugin:$plugin_id")
                  . qq(, "plugin_configure_div")
                  . qq(, "$plugin_type")
                  . qq(, this.parentNode)
@@ -1683,6 +1685,7 @@ sub wrap_plugin_configuration {
     if ($config_html) {
         my $plugin_type        = $plugin->type;
         my $plugin_name        = $plugin->name;
+        my $plugin_id          = $plugin->id;
 	my @plugin_description = $plugin->description;
         my @buttons;
 
@@ -1704,7 +1707,7 @@ sub wrap_plugin_configuration {
             -value   => $self->tr('Configure_plugin'),
             -onClick => 'Controller.reconfigure_plugin("'
                 . $self->tr('Configure_plugin') . '", "'
-                . "plugin:$plugin_name"
+                . "plugin:$plugin_id"
                 . '","plugin_configure_div","'
                 . $plugin_type . '");'
             );
@@ -1713,7 +1716,11 @@ sub wrap_plugin_configuration {
                 button(
                 -name    => 'plugin_button',
                 -value   => $self->tr('Find'),
-                -onClick => 'alert("Find not yet implemented")',
+                -onClick => 'Controller.plugin_go("'
+                    . $plugin_base . '","'
+                    . $plugin_type . '","'
+                    . $self->tr('Find') . '","'
+                    . 'config' . '")',
                 );
         }
         elsif ( $plugin_type eq 'dumper' ) {
@@ -1811,7 +1818,7 @@ sub slidertable {
   my $span  = $self->thin_segment->length;
   my $max   = $self->thin_whole_segment->length;
 
-  my $buttonsDir    = $self->globals->button_url;
+  my $buttonsDir    = $self->data_source->button_url;
 
   my $half_title = $self->data_source->unit_label(int $span/2);
   my $full_title = $self->data_source->unit_label($span);
@@ -1900,12 +1907,19 @@ sub source_menu {
   my %descriptions = map {$_=>$globals->data_source_description($_)} @sources;
   @sources         = sort {$descriptions{$a} cmp $descriptions{$b}} @sources;
 
+  my %sources      = map {$_=>1} @sources;
+  unless ($sources{$self->data_source->name}) { # for regexp-based sources
+      my $n = $self->data_source->name;
+      $descriptions{$n} = $self->data_source->description;
+      @sources         = sort {$descriptions{$a} cmp $descriptions{$b}} (@sources,$n);
+  }
+
   return b($self->tr('DATA_SOURCE')).br.
     ( $sources ?
-      popup_menu(-name   => 'source',
-		 -values => \@sources,
-		 -labels => \%descriptions,
-		 -default => $self->session->source,
+      popup_menu(-name     => 'source',
+		 -values   => \@sources,
+		 -labels   => \%descriptions,
+		 -default  => $self->data_source->name,
 		 -onChange => 'this.form.submit()',
 		)
 	: $globals->data_source_description($self->session->source)
@@ -2618,7 +2632,7 @@ sub toggle_section {
 
   my $visible = $config{on};
 
-  my $buttons = $self->globals->button_url;
+  my $buttons = $self->data_source->button_url;
   my $plus  = "$buttons/plus.png";
   my $minus = "$buttons/minus.png";
   my $break = div({-id=>"${name}_break",
