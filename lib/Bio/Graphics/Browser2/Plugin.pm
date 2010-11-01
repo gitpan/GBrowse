@@ -1,5 +1,5 @@
 package Bio::Graphics::Browser2::Plugin;
-# $Id: Plugin.pm 23738 2010-09-03 17:02:57Z lstein $
+# $Id: Plugin.pm 24031 2010-10-25 19:00:33Z lstein $
 # base class for plugins for the Generic Genome Browser
 
 =head1 NAME
@@ -276,6 +276,13 @@ hashref must be scalars or array references.
 
 See CONFIGURATION METHODS for instructions on how to create and
 maintain the plugin's persistent configuration information.
+
+=item $renderer = $self->renderer
+
+This method returns a copy of the Render object, which provides access
+to the internal workings of the page layout engine. You will need to 
+troll the Bio::Graphics::Browser2::Render source code to understand
+how to use this object.
 
 =item $database = $self->database
 
@@ -814,6 +821,13 @@ sub configuration {
   $d;
 }
 
+sub renderer {
+    my $self = shift;
+    my $d    = $self->{render};
+    $self->{render} = shift if @_;
+    $d;
+}
+
 sub configure_form {
   return;
 }
@@ -997,6 +1011,11 @@ sub stylesheets {
 sub onLoads {
   my $self = shift;
   return;
+}
+
+sub DESTROY {
+    my $self = shift;
+#    warn "$self is destroyed";
 }
 
 

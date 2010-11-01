@@ -1,4 +1,31 @@
-2.15 
+2.16
+     * Added code to recognize and strip whitespace from search coordinates. This 
+       allows "chr1:2,000 .. 1,180,000" to work as a search term.
+     * Added code that allows callbacks to invoke Bio::Graphics::Browser2::Render->request()
+       in order to get a hash that contains various information about the current state.
+       Interesting keys include: search_str, ref, start, end, flip, tracks, features, userid, uploadid,
+       h_feat, width, grid. (NOTE: please update documentation WIKI with some explanation of how to use this).
+     * Disable track filters when in summary mode, since the summary features generated when this
+       mode is active rarely have the structure and attributes expected by the writer of the filter.
+       The downside of this is that if you use track filters to distinguish one set of features from
+       another, this will not be reflected in the summary density plots, which will show all features
+       of the matching type regardless of the filter.
+     * Basic support for Google federated login via openid.
+     * "unit label" and "unit divider" should now work as advertised.
+     * Add commas to coordinates more liberally.
+     * Maybe fixed failing t/00.compile.t test.
+     * Fixed problem with subtrack selection tables producing empty tracks under some conditions.
+     * Fixed SequenceDumper plugin to not crash on BigWig tracks.
+     * added # to the list of acceptable characters in feature IDs
+     * uploaded files won't use the summary mode unless the number of lines loaded exceeds 10,000
+     * Modified plugin base class to make it possible to get at the underlying renderer object
+       by calling renderer() method.
+     * Fixed regression in which database option wasn't propagating from base track to semantic 
+       zoom tracks.
+     * Fixed SequenceDumper behavior on GFF dumping.
+     * Removed brackets from list of naughty search characters to fix bug 3030462
+
+2.15 Mon Sep 13 11:22:40 EDT 2010
      * Set the "DNA accessor" for databases to the default database. Assuming that the backend supports
        the dna_accessor() method and that the default database has access to the underlying sequence, then
        this will enable glyphs and plugins to access the DNA for all features, even if the feature is contained
@@ -17,6 +44,7 @@
        Bio::DB::GFF database backend.
      * Fixed problems with losing all default tracks when first loading the browser (this was a bug
        introduced in SVN and never released.)
+     * You can now override the "buttons" images path in individual datasource files.
 
 2.14 Fri Aug 27 11:05:08 EDT 2010
      * Prevent a blank-screen crash when searching for chromosomes not in the database.

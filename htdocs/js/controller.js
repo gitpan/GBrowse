@@ -3,7 +3,7 @@
 
  Lincoln Stein <lincoln.stein@gmail.com>
  Ben Faga <ben.faga@gmail.com>
- $Id: controller.js 23743 2010-09-03 21:11:59Z lstein $
+ $Id: controller.js 23858 2010-09-28 14:32:39Z lstein $
 
 Indentation courtesy of Emacs javascript-mode 
 (http://mihai.bazon.net/projects/emacs-javascript-mode/javascript.el)
@@ -1065,6 +1065,24 @@ function set_dragcolors(color) {
      regionObject.background   = color;
     if (detailsObject != null)
      detailsObject.background  = color;
+}
+
+// set the colors for the rubberband regions
+function set_dragunits(unit,divider) {
+    if (unit == null)    unit    = 'bp';
+    if (divider == null) divider = 1;
+    if (overviewObject != null) {
+	overviewObject.unit    = unit;
+        overviewObject.divider = divider;
+    }
+    if (regionObject != null) {
+	regionObject.unit      = unit;
+	regionObject.divider   = divider;
+    }
+    if (detailsObject != null) {
+	detailsObject.unit    = unit;
+	detailsObject.divider = divider;
+    }
 }
 
 function create_time_key () {

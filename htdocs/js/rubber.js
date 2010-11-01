@@ -3,7 +3,7 @@
  rubber.js -- a base class for drag/rubber-band selection in gbrowse
 
  Sheldon McKay <mckays@cshl.edu>
- $Id: rubber.js 23311 2010-06-03 21:11:00Z lstein $
+ $Id: rubber.js 23858 2010-09-28 14:32:39Z lstein $
 
 */
 
@@ -12,6 +12,9 @@ var selectAreaIsActive;
 
 // Constructor
 var SelectArea = function () {
+    this.background = 'yellow';
+    this.unit      = 'bp';
+    this.divider   = 1;
   return this;
 }
 
@@ -295,14 +298,16 @@ SelectArea.prototype.moveRubber = function(event) {
     self.overrideAutoSubmit = false;
   }
 
-  var unit = 'bp';
+  var unit     = self.unit;
+  var divider  = self.divider;
+  selectSequenceWidth /= divider;
   if (selectSequenceWidth > 1000 && selectSequenceWidth < 1000000) {
     selectSequenceWidth = selectSequenceWidth/1000;
-    unit = 'kbp';
+    unit = 'k'+unit;
   }
   else if (selectSequenceWidth > 1000000) {
     selectSequenceWidth = selectSequenceWidth/1000000;
-    unit = 'Mbp';
+    unit = 'M'+unit;
   }
 
   if (Math.floor(selectSequenceWidth) != selectSequenceWidth) {

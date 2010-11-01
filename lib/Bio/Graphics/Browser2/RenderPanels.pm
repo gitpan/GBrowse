@@ -956,6 +956,7 @@ sub render_scale_bar {
 		-label_position => 'left'
 		);
 	}
+
         $panel->add_track(
              $wide_segment,
             -glyph          => 'arrow',
@@ -963,7 +964,7 @@ sub render_scale_bar {
             -tick           => 2,
             -units_in_label => $no_tick_units,
             -units          => $units,
-            -unit_divider   => $source->global_setting('unit_divider') || 1,
+            -unit_divider   => $source->unit_divider,
             %add_track_extra_args,
         );
 
@@ -1427,7 +1428,7 @@ sub run_local_requests {
 	warn "render($label): $elapsed seconds ", ($@ ? "(error)" : "(ok)") if BENCHMARK;
 	
 	if ($@) {
-	    warn "RenderPanels error";
+	    warn "RenderPanels error: $@";
 #	    warn $@;
 	    if ($@ =~ /timeout/) {
 		$requests->{$label}->flag_error('Timeout; Try turning off tracks or looking at a smaller region.');
@@ -1593,7 +1594,7 @@ sub add_features_to_track {
 	  my $stt        = $self->subtrack_manager($l);
 	  my $is_summary = $is_summary{$l};
 
-	  $filters->{$l}->($feature) or next if $filters->{$l};
+	  $filters->{$l}->($feature) or next if $filters->{$l} && !$is_summary;
 	  $feature_count{$l}++;
 
 	  # -----------------------------------------------------------------------------
@@ -1633,7 +1634,7 @@ sub add_features_to_track {
 	      }
 	  }
 
-	  if (!$is_summary && $stt && (my $id = $stt->feature_to_id_sub->($feature))) {
+	  if (!$is_summary && $stt && (defined (my $id = $stt->feature_to_id_sub->($feature)))) {
 	      $groups{$l}{$id} ||= Bio::Graphics::Feature->new(-type       => 'group',
 							       -primary_id => $id,
 							       -name       => $stt->id2label($id),
@@ -1990,7 +1991,8 @@ sub create_track_args {
   }
 
   if (my $stt = $self->subtrack_manager($label)) {
-      push @default_args,(-sort_order => $stt->sort_feature_sub);
+      my $sub = $stt->sort_feature_sub;
+      push @default_args,(-sort_order => $sub);
   }
 
   my @args;
@@ -2170,10 +2172,19 @@ sub do_description {
 sub make_link {
   my $self     = shift;
   my ($feature,$panel,$label,$track)  = @_;
+  my $label_fix = $label;
+
+  if (ref $label && $label->{name}){ 
+    $label_fix = $label->{name};
+    if ($label_fix =~/^(plugin)\:/){$label_fix = join(":",($',$1));}
+  }
 
   my $data_source = $self->source;
   my $ds_name     = $data_source->name;
 
+  my $link     = $data_source->code_setting($label_fix,'link');
+
+  if (! defined $link) {
   if ($feature->can('url')) {
     my $link = $feature->url;
     return $link if defined $link;
@@ -2182,13 +2193,14 @@ sub make_link {
       if $label
       && $label =~ /^[a-zA-Z_]/
       && $label->isa('Bio::Graphics::FeatureFile');
+  }
+
 
   $panel ||= 'Bio::Graphics::Panel';
   $label ||= $data_source->feature2label($feature);
   $label ||= 'general';
 
   # most specific -- a configuration line
-  my $link     = $data_source->code_setting($label,'link');
 
   # less specific - a smart feature
   $link        = $feature->make_link if $feature->can('make_link') && !defined $link;
