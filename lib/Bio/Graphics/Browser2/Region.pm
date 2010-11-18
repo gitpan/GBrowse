@@ -200,9 +200,12 @@ sub search_db {
   my $args = shift;
   my ($features);
   if (my $name = $args->{-search_term}) {
-      $name =~ tr/a-zA-Z0-9.'"_*?: ;+-\/\#\[\]//cd;  # remove rude characters
+      $name =~ tr/a-zA-Z0-9.'"_*?: ;+-\/\#\[\]//cd;  # remove rude/naughty characters
       my ($ref,$start,$stop,$class,$id) = $self->parse_feature_name($name);
       $features =  $self->lookup_features($ref,$start,$stop,$class,$name,$id);
+  }
+  elsif ($args->{-name} && $args->{-name}=~/^id:(.+)/) {
+      $features =  $self->lookup_features(undef,undef,undef,undef,undef,$1);
   }
   else {
       my @features = $self->db->features(%$args);
@@ -215,8 +218,6 @@ sub lookup_features {
   my $self  = shift;
   my ($name,$start,$stop,$class,$literal_name,$id) = @_;
   my $source = $self->source;
-
-  warn "lookup_features(@_)" if DEBUG;
 
   my $refclass = $source->global_setting('reference class') || 'Sequence';
 
@@ -438,7 +439,7 @@ sub parse_feature_name {
     $stop  =~ s/,//g;
   }
 
-  elsif ($name =~ /^(\w+):(.+)$/) {
+  elsif ($name =~ /^(\w+):([^:]+)$/) {
     $class = $1;
     $ref   = $2;
   }

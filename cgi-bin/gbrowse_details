@@ -128,11 +128,12 @@ sub run {
 
     # this is the weird part; we create a search name based on the arguments
     # provided to us
-    my $search_term;
+    my ($search_term,$search_class);
     if ($f_id) {
 	$search_term = "id:$f_id";
     } elsif ($class && $name) {
-	$search_term = "$class:$name";
+	$search_term  = $name;
+	$search_class = $class;
     } elsif (defined $ref && defined $start && defined $end) {
 	$search_term = "$ref:$start..$end";
     } else {
@@ -149,7 +150,7 @@ sub run {
 
     warn "search term = $search_term" if DEBUG;
 
-    my $features = eval {$search->search_features({-search_term=>$search_term})} || [];
+    my $features = eval {$search->search_features({-name=>$search_term,-class=>$search_class})} || [];
     warn "search_features(-search_term=>$search_term): $@" if $@;
 
     warn "features = @$features" if DEBUG;
@@ -429,6 +430,7 @@ sub print_matches {
     }
     warn ("sdir = $sdir, $src_x -> $src_y / $tgt_x -> $tgt_y") if DEBUG;
     my ($top,$middle,$bottom) = do_align($src,$sdna,$tdna);
+    ($top,$middle,$bottom)    = clip($top,$middle,$bottom);
 
     my $m = max(length($top_label),length($bot_label));
     my $p = max(length($src_x),length($src_y),length($tgt_x),length($tgt_y));
@@ -455,6 +457,21 @@ sub print_matches {
 	
     }
     return pre($string);
+}
+
+sub clip {
+    my ($src,$align,$tgt) = @_;
+    my @src   = split '',$src;
+    my @align = split '',$align;
+    my @tgt   = split '',$tgt;
+    while ($src[0] eq '-') {
+	shift @src; shift @align; shift @tgt;
+    }
+    while ($src[-1] eq '-') {
+	pop @src; pop @align; pop @tgt;
+    }
+
+    return (join('',@src),join('',@align),join('',@tgt));
 }
 
 sub do_align {

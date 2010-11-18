@@ -1,6 +1,6 @@
 package Bio::Graphics::Browser2::Action;
 
-#$Id: Action.pm 23735 2010-09-02 20:41:29Z lstein $
+#$Id: Action.pm 24187 2010-11-18 15:34:57Z lstein $
 # dispatch
 
 use strict;
@@ -80,6 +80,7 @@ sub ACTION_navigate {
 	= $render->asynchronous_update_detail_scale_bar() if $source->show_section('detail');
 
     my $segment_info_object = $render->segment_info_object();
+#    warn Data::Dumper::Dumper($segment_info_object);
 
     warn "navigate() returning track keys = ",join ' ',%$track_keys if DEBUG;
 
@@ -237,6 +238,8 @@ sub ACTION_set_track_visibility {
 sub ACTION_reconfigure_plugin {
     my $self   = shift;
     my $q      = shift;
+    my $plugin = $q->param('plugin');
+    # currently we reinit all plugins, not just the one involved
     $self->render->init_plugins();
     return (204,'text/plain',undef);
 }

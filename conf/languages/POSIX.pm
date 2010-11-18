@@ -322,6 +322,7 @@ END
 
    NAME           => 'Name',
    TYPE           => 'Type',
+   SUBTYPE         => 'subtype',
    DESCRIPTION    => 'Description',
    POSITION       => 'Position',
    SCORE          => 'Match Score',
@@ -476,7 +477,7 @@ END
 
  GLYPH            => 'Shape',
 
- XYPLOT_TYPE      => 'xyplot subtype',
+ XYPLOT_TYPE      => 'plot style',
 
  WHISKERS_TYPE      => 'whiskers subtype',
 
@@ -493,6 +494,10 @@ END
  WHISKER_STDEV_COLOR    => 'Color from mean to stdev value',
 
  WHISKER_MAX_COLOR    => 'Color from stdev to min/max value',
+
+ AUTOSCALING      => 'Y-axis scaling',
+
+ SCALING          => 'Fixed Y-axis range',
 
  SCALE_MIN        => 'Minimum scale value',
 

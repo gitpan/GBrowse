@@ -26,6 +26,7 @@ use POSIX ":sys_wait_h";
 
 use constant VERSION              => 2.0;
 use constant DEBUG                => 0;
+use constant TRACE_RUN            => 0;
 use constant TRACE                => 0; # shows top level events
 use constant OVERVIEW_SCALE_LABEL => 'Overview Scale';
 use constant REGION_SCALE_LABEL   => 'Region Scale';
@@ -201,7 +202,7 @@ sub run {
   warn "[$$] RUN(): ",
        request_method(),': ',
        url(-path=>1),' ',
-       query_string() if $debug;
+       query_string() if $debug || TRACE_RUN;
 
   $self->set_source() && return;
   my $state = $self->state;
@@ -868,9 +869,7 @@ sub segment_info_object {
     );
 
     if ( $settings->{region_size} ) {
-        my ( $rstart, $rend )
-            = $self->get_regionview_start_stop( $settings, $segment->start, $segment->end,
-            $whole_segment->start, $whole_segment->end );
+        my ( $rstart, $rend ) = $self->regionview_bounds;
         my $rlen  = abs( $rend - $rstart );
         my $ratio = $rlen / $width;
         $segment_info_object{'region_start'}       = $rstart;
@@ -1212,8 +1211,7 @@ sub init_plugins {
   my $source      = $self->data_source->name;
   my @plugin_path = shellwords($self->data_source->globals->plugin_path);
 
-  my $plugins = $PLUGINS{$source} 
-    ||= Bio::Graphics::Browser2::PluginSet->new($self->data_source,@plugin_path);
+  my $plugins = $PLUGINS{$source} ||= Bio::Graphics::Browser2::PluginSet->new($self->data_source,@plugin_path);
   $self->fatal_error("Could not initialize plugins") unless $plugins;
   $plugins->configure($self);
   $self->plugins($plugins);
@@ -2079,9 +2077,14 @@ sub reconfigure_track {
 	$s =~ s/^conf_//;
 	next unless defined $value;
 
-	if ($s eq 'graph_type_whiskers') {
-	    next unless $glyph =~ /whiskers/;
-	    $s = 'graph_type';
+	if ($s =~ /(\w+)_subtype/) {
+	    next unless $1 eq $glyph;
+	    $s = 'glyph_subtype';
+	} elsif ($s =~ /(\w+)_autoscale/) {
+	    my $g = $1;
+	    next if $g eq 'wiggle' && $glyph !~ /wiggle|vista/;
+	    next if $g eq 'xyplot' && $glyph !~ /xyplot|density/;
+	    $s = 'autoscale';
 	}
 
 	my $configured_value = $source->semantic_fallback_setting($label=>$s,$semantic_len);
@@ -2099,6 +2102,11 @@ sub reconfigure_track {
 	    }
 	}
     }
+    if (defined $o->{autoscale} && $o->{autoscale} ne 'none') { undef $o->{min_score}; undef $o->{max_score} }
+#    {
+#	local $Data::Dumper::Sortkeys=1;
+#	warn Data::Dumper::Dumper($o);
+#    }
 }
 
 sub track_config {
@@ -2927,29 +2935,8 @@ sub get_max_segment {
 #############################################################################
 sub regionview_bounds {
   my $self  = shift;
-
-  my $state             = $self->state;
-  my $regionview_length = $state->{region_size};
-
-  my ($detail_start,$detail_stop) = (@{$state}{'start','stop'})      or return;
-  my ($whole_start,$whole_stop)   = (@{$state}{'seg_min','seg_max'}) or return;
-
-  if ($detail_stop - $detail_start + 1 > $regionview_length) { # region can't be smaller than detail
-    $regionview_length = $detail_stop - $detail_start + 1;
-  }
-  my $midpoint = ($detail_stop + $detail_start) / 2;
-  my $regionview_start = int($midpoint - $regionview_length/2 + 1);
-  my $regionview_end = int($midpoint + $regionview_length/2);
-
-  if ($regionview_start < $whole_start) {
-    $regionview_start = 1;
-    $regionview_end   = $regionview_length;
-  }
-  if ($regionview_end > $whole_stop) {
-    $regionview_start = $whole_stop - $regionview_length + 1;
-    $regionview_end   = $whole_stop;
-  }
-  return ($regionview_start, $regionview_end);
+  my $segment = $self->thin_region_segment;
+  return ($segment->start,$segment->end);
 }
 
 # this version handles labels with embedded hyphens correctly
@@ -3475,23 +3462,7 @@ Description
 
 sub get_regionview_start_stop {
   my $self = shift;
-  my ($settings,$detail_start, $detail_end, $whole_start, $whole_end) = @_;
-  my $regionview_length = $settings->{region_size};
-  if ($detail_end - $detail_start + 1 > $regionview_length) { # region can't be smaller than detail
-    $regionview_length = $detail_end - $detail_start + 1;
-  }
-  my $midpoint = ($detail_end + $detail_start) / 2;
-  my $regionview_start = int($midpoint - $regionview_length/2 + 1);
-  my $regionview_end = int($midpoint + $regionview_length/2);
-  if ($regionview_start < $whole_start) {
-    $regionview_start = 1;
-    $regionview_end   = $regionview_length;
-  }
-  if ($regionview_end > $whole_end) {
-    $regionview_start = $whole_end - $regionview_length + 1;
-    $regionview_end   = $whole_end;
-  }
-  return ($regionview_start, $regionview_end);
+  return $self->regionview_bounds;
 }
 
 ##################### utilities #####################
