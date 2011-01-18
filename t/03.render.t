@@ -16,7 +16,7 @@ use POSIX ":sys_wait_h";
 use lib "$Bin/testdata";
 use TemplateCopy; # for the template_copy() function
 
-use constant TEST_COUNT => 138;
+use constant TEST_COUNT => 150;
 use constant CONF_FILE  => "$Bin/testdata/conf/GBrowse.conf";
 
 my $PID;
@@ -467,27 +467,44 @@ ok(join(' ',sort $render->detail_tracks),"BindingSites Clones Motifs");
 ### check user tracks
 my $usertracks = $render->user_tracks;
 ok($usertracks);
+ok($usertracks =~ /(database|filesystem)/i);
+ok($usertracks->{config});
+ok($usertracks->{globals});
+
+my $url = 'http://www.foo.bar/this/is/a/remotetrack';
+my $escaped_url = $usertracks->escape_url($url);
 ok($usertracks->path =~ m!/gbrowse_testing/userdata/volvox/[0-9a-h]{32}$!);
-$usertracks->import_url('http://www.foo.bar/this/is/a/remotetrack');
+
+my $file = $usertracks->import_url($url);
 my @tracks = $usertracks->tracks;
-ok(@tracks+0,1);
-ok($tracks[0],'http_www.foo.bar_this_is_a_remotetrack');
-my $path = $usertracks->track_conf($tracks[0]);
-ok(-e $path);
+ok(@tracks,1);
+ok($tracks[0], $file);
+ok($usertracks->is_imported($file));
+my $conf = $usertracks->track_conf($tracks[0]);
+ok(-e $conf);
 
 {
     local $^W = 0; # kill annoying warning from bioperl
-    $f = Bio::Graphics::FeatureFile->new(-file=>$path);
-    ok (($f->configured_types)[0] eq 'http_www.foo.bar_this_is_a_remotetrack');
-    ok ($f->setting('http_www.foo.bar_this_is_a_remotetrack'=>'remote feature'),
-	'http://www.foo.bar/this/is/a/remotetrack');
-    ok ($f->setting('http_www.foo.bar_this_is_a_remotetrack'=>'category'),
-	'My Tracks:Remote Tracks');
+    $f = Bio::Graphics::FeatureFile->new(-file=>$conf);
+    my $configured_types = ($f->configured_types)[0];
+    ok ($configured_types, $escaped_url);
+    ok ($f->setting($escaped_url=>'remote feature'), $url);
+    ok ($f->setting($escaped_url=>'category'), 'My Tracks:Remote Tracks');
 }
 
-$usertracks->delete_file($tracks[0]);
-ok(!-e $path);
+ok($usertracks->filename($file), $escaped_url);
+ok($usertracks->get_file_id($escaped_url), $file);
+ok($usertracks->title($file), $escaped_url);
+ok($usertracks->description($file, "This is a test description"));
+ok($usertracks->description($file), "This is a test description");
+ok($usertracks->file_type($file), "imported");
+ok($usertracks->created($file));
+ok($usertracks->modified($file));
+
+$usertracks->delete_file($file);
+ok(!-e $conf);
 ok($usertracks->tracks+0,0);
+
 exit 0;
 
 sub check_multiple_renders {

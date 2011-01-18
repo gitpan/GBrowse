@@ -1,6 +1,6 @@
 package Bio::Graphics::Browser2::I18n;
 
-# $Id: I18n.pm 23727 2010-08-31 21:14:39Z lstein $
+# $Id: I18n.pm 23789 2010-09-16 16:02:05Z cnvandev $
 
 use strict;
 my %TABLES;

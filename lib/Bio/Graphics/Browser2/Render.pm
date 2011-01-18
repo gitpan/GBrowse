@@ -6,9 +6,10 @@ use warnings;
 use JSON;
 use Digest::MD5 'md5_hex';
 use CGI qw(:standard param request_method header url iframe img span div br center url_param);
-use Carp 'croak','cluck';
+use Carp qw(croak cluck);
 use File::Basename 'dirname','basename';
 use Text::Tabs;
+use Data::Dumper;
 
 use Bio::Graphics::Browser2::I18n;
 use Bio::Graphics::Browser2::PluginSet;
@@ -22,6 +23,8 @@ use Bio::Graphics::Browser2::SubtrackTable;
 use Bio::Graphics::Browser2::TrackDumper;
 use Bio::Graphics::Browser2::Util qw[modperl_request url_label];
 use Bio::Graphics::Browser2::UserTracks;
+use Bio::Graphics::Browser2::UserDB;
+use Bio::Graphics::Browser2::Session;
 use POSIX ":sys_wait_h";
 
 use constant VERSION              => 2.0;
@@ -52,15 +55,16 @@ my $STATE;         # stash state for use by callbacks
 sub new {
   my $class = shift;
 
-  my ($data_source,$session);
+  my ($data_source, $session, $requested_id, $authority);
 
   if (@_ == 2) {
-    ($data_source,$session) = @_;
+    ($data_source, $session) = @_;
   } elsif (@_ == 1) {
     my $globals = shift;
-    my $requested_id = param('id')        || CGI::cookie('gbrowse_sess');
-    my $authority    = param('authority') || CGI::cookie('authority');
-    $session = $globals->authorized_session($requested_id,$authority);
+    $requested_id = param('id')        || CGI::cookie('gbrowse_sess');
+    $authority    = param('authority') || CGI::cookie('authority');
+
+    $session = $globals->authorized_session($requested_id, $authority);
     $globals->update_data_source($session);
     $data_source = $globals->create_data_source($session->source);
   } else {
@@ -68,6 +72,7 @@ sub new {
   }
 
   my $self = bless {},ref $class || $class;
+
   $self->data_source($data_source);
   $self->session($session);
   $self->state($session->page_settings);
@@ -78,26 +83,24 @@ sub new {
 
 sub set_signal_handlers {
     my $self = shift;
-    $SIG{CHLD} = sub{    my $kid; 
-			 do { 
-			     $kid = waitpid(-1, WNOHANG); 
-			 } 
-			 while $kid > 0;
+    $SIG{CHLD} = sub {
+    	my $kid; 
+		do { $kid = waitpid(-1, WNOHANG) } while $kid > 0;
     };
 }
 
 sub data_source {
-  my $self = shift;
-  my $d = $self->{data_source};
-  $self->{data_source} = shift if @_;
-  $d;
+    my $self = shift;
+    my $d = $self->{data_source};
+    $self->{data_source} = shift if @_;
+    $d;
 }
 
 sub session {
-  my $self = shift;
-  my $d = $self->{session};
-  $self->{session} = shift if @_;
-  $d;
+    my $self = shift;
+    my $d = $self->{session};
+    $self->{session} = shift if @_;
+    $d;
 }
 
 sub state {
@@ -127,24 +130,40 @@ sub is_admin {
     return $login eq $admin;
 }
 
+sub userdb {
+    my $self = shift;
+    return $self->{userdb} if exists $self->{userdb};
+    unless ($self->globals->user_accounts) {
+	$self->{userdb} = undef;
+	return;
+    }
+    my $userdb = $self->{userdb} ||= Bio::Graphics::Browser2::UserDB->new($self->globals);
+    return $userdb;
+}
 
+# User Tracks - Returns a list of a user's tracks.
 sub user_tracks {
     my $self  = shift;
-    my $uuid  = shift;
 
     # note: Bio::Graphics::Browser2::AdminTracks is a subclass of UserTracks
     # that is defined within the UserTracks.pm file.
     my $class = $self->is_admin ? 'Bio::Graphics::Browser2::AdminTracks'
                                 : 'Bio::Graphics::Browser2::UserTracks';
     
-    $uuid  ||= $self->state->{uploadid} || '';
-    warn "[$$] uuid  = $uuid" if DEBUG;
-    return $self->{usertracks}{$uuid} 
-       ||= $class->new($self->data_source,
-		       $self->state,
-		       $self->language,
-		       $uuid,
-	   );
+    $self->{usertracks} ||= $class->new($self->data_source,$self->session);
+    return $self->{usertracks};
+}
+
+sub get_usertrack_labels {
+    my $self = shift;
+    return $self->{'.user_labels'} if exists $self->{'.user_labels'};
+    my $userdata = $self->user_tracks;
+    my @files    = $userdata->tracks;  # misnomer -- should be "uploads" or "files"
+    for my $f (@files) {
+	my @labels = $userdata->labels($f);
+	$self->{'.user_labels'}{$_}=$f foreach @labels;
+    }
+    return $self->{'.user_labels'} ||= {};
 }
 
 sub remote_sources {
@@ -183,9 +202,19 @@ sub debug {
 
 sub DESTROY {
     my $self = shift;
-    warn "$self: destroy she said" if DEBUG;
+    warn "[$$] $self: destroy she said" if DEBUG;
 }
 
+sub destroy {
+    my $self = shift;
+    # because the login manager maintains a copy of the render object,
+    # we need to explicitly destroy it to avoid memory leaks.
+    if (my $lm = $self->{login_manager}) {
+	$lm->destroy;
+	delete $self->{login_manager};
+    }
+    $self->session->flush if $self->session;
+}
 
 ###################################################################################
 #
@@ -203,14 +232,29 @@ sub run {
        request_method(),': ',
        url(-path=>1),' ',
        query_string() if $debug || TRACE_RUN;
+  warn "[$$] session id = ",$self->session->id if $debug;
 
   $self->set_source() && return;
-  my $state = $self->state;
+
+  warn "private session = ",$self->session->private  if $debug;
+  warn "username = ",       $self->session->username if $debug;
+
+  if ($self->data_source->must_authenticate) {
+      if ($self->session->private && 
+	  $self->user_authorized_for_source($self->session->username))
+      {
+	  # login session - make sure that the data source has the information needed
+	  # to restrict tracks according to policy
+      } else {
+	  # authentication required, but not a login session, so initiate authentication request
+	  $self->force_authentication;
+	  $self->session->flush;
+	  return;
+      }
+  }
 
   warn "[$$] add_user_tracks()" if $debug;
   $self->add_user_tracks($self->data_source);
-
-#  warn "user = ",$self->session->username;
 
   warn "[$$] testing for asynchronous event()" if $debug;
   if ($self->run_asynchronous_event) {
@@ -218,13 +262,17 @@ sub run {
       $self->session->flush;
       return ;
   }
+  
+  if (my $file = param('share_link')) {
+      $self->share_link($file);
+  }
 
   warn "[$$] init()"         if $debug;
   $self->init();
 
   warn "[$$] update_state()" if $debug;
   $self->update_state();
-
+  
   # EXPERIMENTAL CODE -- GET RID OF THE URL PARAMETERS
   if ($ENV{QUERY_STRING} && $ENV{QUERY_STRING} =~ /reset/) {
       print CGI::redirect(CGI::url(-absolute=>1,-path_info=>1));
@@ -239,7 +287,21 @@ sub run {
 
   warn "[$$] session flush" if $debug;
   $self->session->flush;
+  
+  delete $self->{usertracks};
   warn "[$$] synchronous exit" if $debug;
+}
+
+sub user_authorized_for_source {
+    my $self = shift;
+    my $username = shift;
+    my $source   = $self->data_source;
+    my $globals  = $source->globals;
+    my $session  = $self->session;
+    my $plugins = $self->init_plugins();
+    $source->set_username($username);
+    return $globals->authorized($source->name,$username,$plugins->auth_plugin)
+	&& $source->authorized('general');
 }
 
 sub set_source {
@@ -252,7 +314,7 @@ sub set_source {
 	my $url  = CGI::url(-absolute=>1,-path_info=>0);
 	$url     =~ s!(gbrowse[^/]*)(?\!.*gbrowse)/.+$!$1!;  # fix CGI/Apache bug
 	$url    .= "/$source/";
-	$url .= "?$args" if $args;
+	$url .= "?$args" if $args && $args !~ /^source=/;
 	print CGI::redirect($url);
 	return 1;
     }
@@ -276,32 +338,30 @@ sub init {
 # this prints out the HTTP data from an asynchronous event
 sub run_asynchronous_event {
     my $self = shift;
-    my ($status,$mime_type,$data,%headers) = $self->asynchronous_event
-	or return;
+    my ($status, $mime_type, $data, %headers) = $self->asynchronous_event or return;
 
     warn "[$$] asynchronous event returning status=$status, mime-type=$mime_type" if DEBUG;
 
     if ($status == 204) { # no content
-	print CGI::header( -status => '204 No Content',%headers );
-    }
-    elsif ($status == 302) { # redirect
-	print CGI::redirect($data,%headers);
-    }
-    elsif ($mime_type eq 'application/json') {
-	print CGI::header(-status=>$status,
-			  -cache_control => 'no-cache',
-			  -charset       => $self->tr('CHARSET'),
-			  -type  => $mime_type,
-			  ,%headers),
-	      JSON::to_json($data);
-    }
-    else {
-	print CGI::header(-status        => $status,
-			  -cache_control => 'no-cache',
-			  -charset       => $self->tr('CHARSET'),
-			  -type          => $mime_type,
-			  %headers),
-	$data;
+		print CGI::header( -status => '204 No Content', %headers );
+    } elsif ($status == 302) { # redirect
+	print CGI::redirect($data, %headers);
+    } elsif ($mime_type eq 'application/json') {
+		print CGI::header(
+			-status			=> $status,
+			-cache_control	=> 'no-cache',
+			-charset		=> $self->translate('CHARSET'),
+			-type			=> $mime_type,
+			%headers),
+			JSON::to_json($data);
+    } else {
+		print CGI::header(
+			-status        => $status,
+			-cache_control => 'no-cache',
+			-charset       => $self->translate('CHARSET'),
+			-type          => $mime_type,
+			%headers),
+			$data;
     }
     return 1;  # no further processing needed
 }
@@ -333,7 +393,7 @@ sub asynchronous_event {
     # legacy URLs
     my $dispatch = Bio::Graphics::Browser2::Action->new($self);
     if (my @result = $dispatch->handle_legacy_calls($CGI::Q,$self)) {
-	return @result;
+		return @result;
     }
 
     if ( my $track_name = param('display_citation') ) {
@@ -342,52 +402,60 @@ sub asynchronous_event {
     }
 
     elsif (my $action = param('action')) {
-	my $method   = "ACTION_${action}";
-	unless ($dispatch->can($method)) {
-	    return (401,'text/plain',"invalid action: '$action'");
-	}
-	return $dispatch->$method($CGI::Q);
+		my $method   = "ACTION_${action}";
+		unless ($dispatch->can($method)) {
+			return (401,'text/plain',"invalid action: '$action'");
+		}
+		return $dispatch->$method($CGI::Q);
     }
 
     else {
-	return;
+		return;
     }
 }
 
 sub authorize_user {
     my $self = shift;
-    my ($session,$error);
     my ($username,$id,$remember,$using_openid) = @_;
+    my ($session,$error);
+
+    my $userdb     = $self->userdb;
+    return unless $userdb->username_from_sessionid($id) eq $username;
     
     warn "Checking current session" if DEBUG;
     my $current = $self->session->id;
-    if($current eq $id) {
+    if ($current eq $id) {
         warn "Using current session" if DEBUG;
         $session = $self->session;
-    } elsif($self->session->private) {
-        warn "Another account is currently in use";
-        return ("error");
+    } elsif ($self->session->private) { # trying to login without logging out?
+	$session = $self->globals->session($id);  # create/retrieve session
     } else {
         warn "Retrieving old session" if DEBUG;
 	$session = $self->globals->session($id);  # create/retrieve session
     }
-    
+    unless ($session->id eq $id) {
+	warn "fixing probable expired session";
+      FIX: {
+	  my $username   = $userdb->username_from_sessionid($id) or last FIX;
+	  my $userid     = $userdb->get_user_id($username)       or last FIX;
+	  my $uploadsid  = $userdb->get_uploads_id($userid)      or last FIX;
+	  $session->uploadsid($uploadsid);
+	  $userdb->set_session_and_uploadsid($userid,$session->id,$uploadsid);
+	  $id = $session->id;
+	}
+    }
+
     my $nonce = Bio::Graphics::Browser2::Util->generate_id;
     my $ip    = CGI::remote_addr();
 
     $session->set_nonce($nonce,$ip,$remember);
     $session->username($username);
-
     $session->using_openid($using_openid);
 
-    # warn "id=$id, username =",$session->username;
+    warn "id=$id, username =",$session->username if DEBUG;
 
     $session->flush();
-    return ($id,$nonce);
-}
-
-sub format_autocomplete {
-    croak "implement in subclass";
+    return ($session->id,$nonce);
 }
 
 sub background_track_render {
@@ -415,12 +483,11 @@ sub background_track_render {
             cache_extra     => $cache_extra,
             external_tracks => $external
             );
-    }
-    else{
+    } else {
         $display_details = 0;
         $details_msg = h1(
 	    br(),
-            $self->tr(
+            $self->translate(
                 'TOO_BIG',
                 scalar $self->data_source()->unit_label($self->get_max_segment),
             )
@@ -434,7 +501,7 @@ sub background_track_render {
 				cache_extra     => $cache_extra, 
 				external_tracks => $external,
 	    )
-        if ( $self->state->{region_size} );
+        if ( $self->state->{region_size} && $self->data_source->show_section('region') );
 
     $requests{'overview'} =
         $self->render_deferred( labels          => [ $self->expand_track_names($self->overview_tracks) ],
@@ -442,7 +509,8 @@ sub background_track_render {
 				section         => 'overview', 
 				cache_extra     => $cache_extra, 
 				external_tracks => $external,
-	    );
+	    )
+        if ( $self->data_source->show_section('overview') );
 
     my (%track_keys,%seenit);
     for my $section (keys %requests) {
@@ -459,6 +527,17 @@ sub background_track_render {
     return (\%track_keys, $display_details, $details_msg);
 }
 
+sub share_link {
+    my $self = shift;
+    my $file = shift;
+    my $usertracks = $self->user_tracks;
+    $usertracks->share_link($file);
+    $self->add_user_tracks;
+    my @tracks = $usertracks->labels($file);
+    $self->add_track_to_state($_) foreach @tracks;
+    return \@tracks;
+}
+
 sub add_tracks {
     my $self        = shift;
     my $track_names = shift;
@@ -472,7 +551,9 @@ sub add_tracks {
     foreach (@$track_names) {
 	$self->add_track_to_state($_);
 	$remote++ if /http|ftp|das/;
+	$remote++ if $self->data_source->setting($_=>'remote feature');
     }
+
     $self->init_remote_sources if $remote;
     
     if ($segment) {
@@ -489,12 +570,12 @@ sub add_tracks {
 	    
 		my $track_key        = $track_keys->{$track_id};
 		my $track_section    = $self->get_section_from_label($track_id);
-		my $image_width      = $self->get_image_width;
+		my $image_width      = $self->get_image_width($self->state);
 		my $image_element_id = $track_name . "_image";
-
+		
 		my $track_html;
 		if ( $track_section eq 'detail' and not $display_details ) {
-		    my $image_width = $self->get_image_width;
+		    my $image_width = $self->get_image_width($self->state);
 		    $track_html .= $self->render_grey_track(
 			track_id         => $track_name,
 			image_width      => $image_width,
@@ -594,7 +675,7 @@ sub background_individual_track_render {
     {
         $display_details = 0;
         $details_msg     = h1(
-            $self->tr(
+            $self->translate(
                 'TOO_BIG',
                 scalar $self->data_source()->unit_label(MAX_SEGMENT),
             )
@@ -602,7 +683,7 @@ sub background_individual_track_render {
         my %track_keys = ( $label => 0 );
         return ( \%track_keys, $display_details, $details_msg );
     }
-
+    
     my $cache_extra = $self->create_cache_extra();
 
     # Start rendering the detail and overview tracks
@@ -652,23 +733,24 @@ sub render_header {
   my $header = CGI::header(
       -cache_control =>'no-cache',
       -cookie  => [$cookie1,$cookie2],
-      -charset => $self->tr('CHARSET'),
-      );
+      -charset => $self->translate('CHARSET'),
+  );
   print $header;
 }
 
 sub state_cookie {
   my $self    = shift;
   my $session = $self->session;
+  my $id      = shift || $session->id;
   my $path    = url(-absolute => 1);
   $path       =~ s!gbrowse/?$!!;
   my $globals = $self->globals;
   my $cookie = CGI::Cookie->new(
-    -name    => $CGI::Session::NAME,
-    -value   => $session->id,
-    -path    => $path,
-    -expires => '+'.$globals->time2sec($globals->remember_settings_time).'s',
-  );
+      -name    => $CGI::Session::NAME,
+      -value   => $id,
+      -path    => $path,
+      -expires => '+'.$globals->time2sec($globals->remember_settings_time).'s',
+      );
   return $cookie;
 }
 
@@ -676,11 +758,16 @@ sub auth_cookie {
     my $self = shift;
     my $path = url(-absolute => 1);
     $path    =~ s!gbrowse/?$!!;
-    my $auth = param('authority') or return;
-    return CGI::Cookie->new(
-    -name => 'authority',
-    -value=> $auth,
-    -path => $path);
+    my $auth     = (shift || param('authority')) or return;
+    my $globals  = $self->globals;
+    my $remember = $self->session->remember_auth;
+    my @args = (-name => 'authority',
+		-value=> $auth,
+		-path => $path);
+    if ($remember) {
+	push @args,(-expires => '+'.$globals->time2sec($globals->remember_settings_time).'s');
+    }
+    return CGI::Cookie->new(@args);
 }
 
 # for backward compatibility
@@ -737,65 +824,29 @@ sub render_body {
   }
 
   elsif ($region->feature_count > 0) { # feature but no segment? Admin error
-      my $message = 'Configuration error: Chromosome/contig not found!';
-      my $details = 'Cannot display '.
-	  $features->[0]->display_name.
-	  ' because the chromosome/contig named '.
-	  $features->[0]->seq_id.
-	  ' is not defined in the database.';
+      my $message = $self->translate('CHROM_NOT_FOUND');
+      my $details = $self->translate('CHROM_NOT_FOUND_DETAILS',  $features->[0]->display_name, $features->[0]->seq_id);
       $main_page .= script({-type=>'text/javascript'},"Controller.show_error('$message','$details')")
   }
 
   $main_page .= $self->render_select_track_link;
 
   my $tracks        = $self->render_tracks_section;
-  my $upload_share  = $self->render_upload_share_section;
+  my $community     = $self->user_tracks->database? $self->render_community_tracks_section : "";
+  my $custom        = $self->render_custom_tracks_section;
   my $global_config = $self->render_global_config;
 
-  $output .= $self->render_tabbed_pages($main_page,$tracks,$upload_share,$global_config);
-  $output .= $self->render_login_section;
+  $output .= $self->render_tabbed_pages($main_page,$tracks,$community,$custom,$global_config);
+  $output .= $self->login_manager->render_confirm;
   $output .= $self->render_bottom($features);
 
   print $output;
-}
-
-
-sub render_actionmenu {
-    my $self = shift;
-    croak "implement in subclass";
-}
-
-sub render_tabbed_pages {
-    my $self = shift;
-    my ($main,$upload_share,$config) = @_;
-    croak "implement in subclass";
-}
-
-sub render_login_section {
-    my $self = shift;
-    my $output = '';
-
-    if (param('confirm') && param('code') && param('id')) {
-	$output .= $self->render_login_account_confirm(param('code'));
-    } elsif (param('openid_confirm') && param('page') && param('s')) {
-	$output .= $self->render_login_openid_confirm(param('page'),param('s'));
-    }
-    return $output;
-}
-
-sub render_select_track_link {
-    croak "implement in subclass";
 }
 
 sub render_tracks_section {
     my $self = shift;
     return $self->render_toggle_track_table;
 }
-
-sub render_upload_share_section {
-    croak "implement in subclass";
-}
-
 
 sub generate_title {
     my $self     = shift;
@@ -808,41 +859,20 @@ sub generate_title {
 
     return $description unless $features;
     return !$features || !$state->{name}     ? $description
-         : @$features == 0                   ? $self->tr('NOT_FOUND',$state->{name})
+         : @$features == 0                   ? $self->translate('NOT_FOUND',$state->{name})
 	 : @$features == 1 ? "$description: ".
-				   $self->tr('SHOWING_FROM_TO',
-					     scalar $dsn->unit_label($features->[0]->length),
-					     $features->[0]->seq_id,
-					     $dsn->commas($features->[0]->start/$divider),
-					     $dsn->commas($features->[0]->end/$divider))
+				   $self->translate('SHOWING_FROM_TO',
+					     scalar $dsn->unit_label($state->{view_stop} - $state->{view_start}),
+					     $state->{ref},
+					     $dsn->commas($state->{view_start}),
+					     $dsn->commas($state->{view_stop}))
 	 : $description;
 }
 
-# never called, method in HTML.pm with same name is run instead
-sub render_top    {
-  my $self     = shift;
-  my $title    = shift;
-  croak "render_top() should not be called in parent class";
-}
-
-# never called, method in HTML.pm with same name is run instead
-sub render_title   {
-  my $self     = shift;
-  my $title    = shift;
-  croak "render_title() should not be called in parent class";
-}
-
-#never called, method in HTML.pm with same name is run instead
-sub render_navbar {
-  my $self = shift;
-  my $seg  = shift;
-  croak "render_navbar() should not be called in parent class";
-}
-
-# Provide segment info for rubberbanding
+# Provide segment info for rubberbanding and panning
 sub segment_info_object {
     my $self          = shift;
-    my $settings      = $self->state;
+    my $state         = $self->state;
     my $segment       = $self->segment;
     my $whole_segment = $self->whole_segment;
 
@@ -852,7 +882,9 @@ sub segment_info_object {
         || $renderer->image_padding
         || 0;
     my $max = $self->get_max_segment;
-    my $width = ( $settings->{width} * OVERVIEW_RATIO );
+    my $width = ( $state->{width} * OVERVIEW_RATIO );
+    my $image_width  = $self->get_image_width($state);
+    my $detail_width = $self->get_detail_image_width($state);
 
     my %segment_info_object = (
         image_padding        => $pad,
@@ -863,22 +895,32 @@ sub segment_info_object {
         detail_start         => $segment->start,
         detail_stop          => $segment->end,
         'ref'                => $segment->seq_id,
-        details_pixel_ratio  => $segment->length / $settings->{width},
-        detail_width         => $settings->{width} + 2 * $pad,
-        overview_width       => $width + 2 * $pad,
+        details_pixel_ratio  => $segment->length / ($state->{width} * $self->details_mult()),
+        detail_width         => $detail_width,
+        overview_width       => $image_width,
+        width_no_pad         => $state->{width},
+        details_mult         => $self->details_mult(),
+        hilite_fill          => $self->data_source->global_setting('hilite fill')    || 'red',  # Not sure if there's a
+        hilite_outline       => $self->data_source->global_setting('hilite outline') || 'gray', # better place for this
+        flip                 => $state->{flip},
+        initial_view_start   => $state->{view_start},
+        initial_view_stop    => $state->{view_stop},
+        length_label         => scalar $self->data_source->unit_label($state->{view_stop} - $state->{view_start}),
+        description          => $self->data_source->description,
     );
-
-    if ( $settings->{region_size} ) {
+    if ( $state->{region_size} ) {
         my ( $rstart, $rend ) = $self->regionview_bounds;
         my $rlen  = abs( $rend - $rstart );
         my $ratio = $rlen / $width;
         $segment_info_object{'region_start'}       = $rstart;
         $segment_info_object{'region_stop'}        = $rend;
         $segment_info_object{'region_pixel_ratio'} = $rlen / $width;
+        $segment_info_object{'region_width'}       = $image_width;
     }
     return \%segment_info_object;
 }
 
+# Returns the HTML for the blank panel for a section (which will later be filled)
 sub render_panels {
     my $self    = shift;
     my $seg     = shift;
@@ -895,14 +937,14 @@ sub render_panels {
         my $scale_bar_html = $self->scale_bar( $seg, 'overview', );
         my $panels_html    = $self->get_blank_panels( [$self->overview_tracks],
 						      'overview' );
-	my $drag_script    = $self->drag_script( 'overview_panels', 'track' );
-	$html .= div(
-	    $self->toggle({tight=>1},
- 			  'Overview',
- 			  div({ -id => 'overview_panels', -class => 'track', -style=>'padding-bottom:3px' },
- 			      $scale_bar_html, $panels_html,
- 			  ))
- 	    ) . $drag_script;
+		my $drag_script    = $self->drag_script( 'overview_panels', 'track' );
+		$html .= div(
+			$self->toggle({tight=>1},
+	 			  'Overview',
+	 			  div({ -id => 'overview_panels', -class => 'track', -style=>'margin-bottom:3px; overflow: hidden; margin-left:auto; margin-right:auto; position:relative; width:'.$self->get_image_width($self->state).'px' },
+	 			      $scale_bar_html, $panels_html,
+	 			  ))
+	 	    ) . $drag_script;
     }
 
     if ( $section->{'regionview'} and $self->state->{region_size} ) {
@@ -915,7 +957,7 @@ sub render_panels {
         $html .= div(
             $self->toggle({tight=>1},
                 'Region',
-                div({ -id => 'region_panels', -class => 'track', -style=>'padding-bottom:3px' },
+                div({ -id => 'region_panels', -class => 'track', -style=>'margin-bottom:3px; overflow: hidden; margin-left:auto; margin-right:auto; position:relative; width:'.$self->get_image_width($self->state).'px'  },
                     $scale_bar_html, $panels_html,
                 )
             )
@@ -924,16 +966,18 @@ sub render_panels {
 
     if ( $section->{'detailview'} ) {
         my $scale_bar_html = $self->scale_bar( $seg, 'detail' );
+        my $ruler_html     = $self->render_ruler_div;
         my $panels_html    = $self->get_blank_panels( [$self->detail_tracks],
 						      'detail');
         my $drag_script    = $self->drag_script( 'detail_panels', 'track' );
         my $details_msg    = span({ -id => 'details_msg', },'');
-	my $clear_hilites  = $self->clear_highlights;
+		my $clear_hilites  = $self->clear_highlights;
         $html .= div(
             $self->toggle({tight=>1},
 			  'Details',
-			  div({ -id => 'detail_panels', -class => 'track'},
+			  div({ -id => 'detail_panels', -class => 'track', -style=>'margin-left:auto; margin-right:auto; position:relative; width:'.$self->get_image_width($self->state).'px' },
 			      $details_msg,
+			      $ruler_html,
 			      $scale_bar_html, 
 			      $panels_html,
 			  ),
@@ -948,15 +992,13 @@ sub render_panels {
     return $html;
 }
 
-sub clear_highlights { croak 'implement in subclass' }
-
 sub get_post_load_functions {
     my $self = shift;
     my @fun;
     if (my $url = param('eurl')) {
-	my $trackname = $self->user_tracks->trackname_from_url($url);
-	push @fun,'Controller.select_tab("custom_tracks_page")';
-	push @fun,"reloadURL('$trackname','$url',true)";
+	    my $trackname = $self->user_tracks->escape_url($url);
+	    push @fun,'Controller.select_tab("custom_tracks_page")';
+	    push @fun,"reloadURL('$trackname','$url',true)";
     }
     return @fun;
 }
@@ -1013,54 +1055,6 @@ sub scale_bar {
     return $html
 }
 
-
-#never called, method in HTML.pm with same name is run instead
-sub render_toggle_track_table {
-  my $self = shift;
-  croak "render_toggle_track_table() should not be called in parent class";
-}
-
-sub render_track_table {
-  my $self = shift;
-  croak "render_track_table() should not be called in parent class";
-}
-
-sub render_instructions {
-  my $self  = shift;
-  my $title = shift;
-  croak "render_instructions() should not be called in parent class";
-}
-sub render_multiple_choices {
-  my $self = shift;
-  croak "render_multiple_choices() should not be called in parent class";
-}
-
-sub render_global_config {
-  my $self = shift;
-  croak "render_global_config() should not be called in parent class";
-}
-
-sub render_toggle_external_table {
-  my $self = shift;
-  croak "render_toggle_external_table() should not be called in parent class";
-}
-
-sub render_toggle_userdata_table {
-  my $self = shift;
-  croak "render_toggle_userdata_table() should not be called in parent class";
-}
-
-sub render_bottom {
-  my $self = shift;
-  my $features = shift;
-  croak "render_bottom() should not be called in parent class";
-}
-
-sub html_frag {
-  my $self = shift;
-  croak "html_frag() should not be called in parent class";
-}
-
 sub init_database {
   my $self = shift;
   return $self->db() if $self->db();  # already done
@@ -1097,7 +1091,7 @@ sub region {
     my $plugin_action  = $self->plugin_action || '';
     my $current_plugin = $self->current_plugin;
     if ($current_plugin 
-	&& $plugin_action eq $self->tr('Find')
+	&& $plugin_action eq $self->translate('Find')
 	|| lc $plugin_action eq 'find') {
 	$region->features($self->plugin_find($current_plugin,$self->state->{name}));
     }
@@ -1207,8 +1201,9 @@ sub get_search_object {
 # ========================= plugins =======================
 sub init_plugins {
   my $self        = shift;
-
   my $source      = $self->data_source->name;
+  return $PLUGINS{$source} if $PLUGINS{$source} && $self->{'.plugins_inited'}++;
+
   my @plugin_path = shellwords($self->data_source->globals->plugin_path);
 
   my $plugins = $PLUGINS{$source} ||= Bio::Graphics::Browser2::PluginSet->new($self->data_source,@plugin_path);
@@ -1227,7 +1222,7 @@ sub plugin_action {
   # the logic of this is obscure to me, but seems to have to do with activating plugins
   # via the URL versus via fill-out forms, which may go through a translation.
   if (param('plugin_do')) {
-    $action = $self->tr(param('plugin_do')) || $self->tr('Go');
+    $action = $self->translate(param('plugin_do')) || $self->translate('Go');
   }
 
   $action   ||=  param('plugin_action');
@@ -1245,6 +1240,7 @@ sub current_plugin {
 sub plugin_auto_find {
     my $self = shift;
     my $search_string = shift;
+    return if Bio::Graphics::Browser2::Region->is_chromosome_region($search_string);
     my (@results,$found_one);
     my $plugins = $self->plugins or return;
 
@@ -1270,13 +1266,13 @@ sub plugin_find {
 
   # nothing returned, so plug the keyword into the search box to save user's search
   unless ($results && @$results) {
-      $settings->{name} = $keyword ? $keyword : $self->tr('Plugin_search_2',$plugin_name);
+      $settings->{name} = $keyword ? $keyword : $self->translate('Plugin_search_2',$plugin_name);
       return;
   }
 
   # Write informative information into the search box - not sure if this is the right thing to do.
-  $settings->{name} = defined($search_string) ? $self->tr('Plugin_search_1',$search_string,$plugin_name)
-                                              : $self->tr('Plugin_search_2',$plugin_name);
+  $settings->{name} = defined($search_string) ? $self->translate('Plugin_search_1',$search_string,$plugin_name)
+                                              : $self->translate('Plugin_search_2',$plugin_name);
   # do we really want to do this?!!
   $self->write_auto($results);
   return $results;
@@ -1433,21 +1429,21 @@ sub handle_plugins {
 
     # for activating the plugin by URL
     if ( param('plugin_do') ) {
-        $plugin_action = $self->tr( param('plugin_do') ) || $self->tr('Go');
+        $plugin_action = $self->translate( param('plugin_do') ) || $self->translate('Go');
     }
-
+	
     my $state  = $self->state();
     my $cookie = $self->create_cookie();
 
     ### CONFIGURE  ###############################################
-    if ($plugin_action eq $self->tr('Configure')) {
+    if ($plugin_action eq $self->translate('Configure')) {
 	$self->plugin_configuration_form($plugin);
 	return 1;
     }
     
 
     ### FIND #####################################################
-    if ( $plugin_action eq $self->tr('Find') ) {
+    if ( $plugin_action eq $self->translate('Find') ) {
 
         #$self->do_plugin_find( $state, $plugin_base, $features )
         #    or ( $plugin_action = 'Configure' );    #reconfigure
@@ -1462,12 +1458,16 @@ sub handle_plugins {
 
     my $segment = $self->segment();
     if (    $plugin_type   eq 'dumper'
-        and $plugin_action eq $self->tr('Go')
+        and $plugin_action eq $self->translate('Go')
         and (  $segment
             or param('plugin_config')
-            or $plugin->verb eq ( $self->tr('Import') || 'Import' ) )
+            or $plugin->verb eq ( $self->translate('Import') || 'Import' ) )
         )
     {
+        $segment->{start} = param('view_start') || $segment->{start}; # We only care about the segment the user is actually
+        $segment->{stop}  = param('view_stop')  || $segment->{stop};  # viewing, not the whole segment that he/she has loaded
+        $segment->{end}   = param('view_stop')  || $segment->{end};   #
+
 	my $search      = $self->get_search_object();
 	my $metasegment = $search->segment($segment);
         $self->do_plugin_header( $plugin, $cookie );
@@ -1503,7 +1503,9 @@ sub init_remote_sources {
   warn "init_remote_sources()" if DEBUG;
   my $remote_sources   = Bio::Graphics::Browser2::RemoteSet->new($self->data_source,
 								 $self->state,
-								 $self->language);
+								 $self->language,
+								 $self->session->uploadsid,
+      );
   $remote_sources->add_files_from_state;
   $self->remote_sources($remote_sources);
   return $remote_sources;
@@ -1524,11 +1526,11 @@ sub galaxy_form { }
 sub delete_uploads {
     my $self = shift;
     my $userdata = $self->user_tracks;
-    my @files  = $userdata->tracks();
+    my @files  = $userdata->tracks;
     for my $file (@files) {
-	my @tracks = $userdata->labels($file);
-	$userdata->delete_file($file);
-	$self->remove_track_from_state($_) foreach @tracks;
+		my @tracks = $userdata->labels($file);
+		$userdata->delete_file($file);
+		$self->remove_track_from_state($_) foreach @tracks;
     }
     $self->data_source->clear_usertracks();
 }
@@ -1539,17 +1541,6 @@ sub cleanup {
   $self->plugins->destroy;
   my $state = $self->state;
   $state->{name} = $self->region_string if $state->{ref};  # to remember us by :-)
-}
-
-sub fatal_error {
-  my $self = shift;
-  my @msg  = @_;
-  croak 'Please call fatal_error() for a subclass of Bio::Graphics::Browser2::Render';
-}
-
-sub zoomBar {
-    my $self = shift;
-    croak 'Please define zoomBar() in a subclass of Bio::Graphics::Browser2::Render';
 }
 
 sub add_remote_tracks {
@@ -1563,7 +1554,7 @@ sub add_remote_tracks {
     my @tracks;
 
     for my $url (@$urls) {
-	my $name = $user_tracks->trackname_from_url($url);
+	my $name = $user_tracks->create_track_folder($url);
 	my ($result,$msg,$tracks) 
 	    = $user_tracks->mirror_url($name,$url,1);
 	warn "[$$] $url: result=$result, msg=$msg, tracks=@$tracks" if DEBUG;
@@ -1624,22 +1615,22 @@ sub write_auto {
 sub handle_download_userdata {
     my $self = shift;
     my $ftype    = param('userdata_download')    or return;
-    my $track    = param('track')                or return;
+    my $file   = param('track')                or return;
 
     my $userdata = $self->user_tracks;
-    my $file = $ftype eq 'conf' ? $userdata->track_conf($track)
-	                        : $userdata->data_path($track,$ftype);
+    my $download = $ftype eq 'conf' ? $userdata->track_conf($file)
+	                        : $userdata->data_path($file, $ftype);
 
-    my $fname = basename($file);
-    my $is_text = -T $file;
+    my $fname = basename($download);
+    my $is_text = -T $download;
 
     print CGI::header(-attachment   => $fname,
-		      -charset      => $self->tr('CHARSET'), # 'US-ASCII' ?
+		      -charset      => $self->translate('CHARSET'), # 'US-ASCII' ?
 		      -type         => $is_text ? 'text/plain' : 'application/octet-stream');
 
-    my $f = $ftype eq 'conf' ? $userdata->conf_fh($track)
-	                     : IO::File->new($file);
-    $f or croak "$file: $!";
+    my $f = $ftype eq 'conf' ? $userdata->conf_fh($file)
+	                     : IO::File->new($download);
+    $f or croak "$download: $!";
 
     if ($is_text) {
 	# try to make the file match the native line endings
@@ -1795,6 +1786,53 @@ sub get_external_presets {
 
 ##################################################################3
 #
+# AUTHENTICATION
+#
+##################################################################3
+sub force_authentication {
+    my $self = shift;
+
+    # asynchronous event -- only allow the ones needed for authentication
+    if (Bio::Graphics::Browser2::Action->is_authentication_event) {
+	$self->run_asynchronous_event;
+	return;
+    }
+
+    if (param('action')) {
+	print CGI::header(-status => '403 Forbidden');
+	return;
+    }
+
+    # render main page
+    $self->init();
+    $self->render_header();
+
+    my $confirm        = param('confirm') || param('openid_confirm');
+
+    my $action;
+    if ($self->data_source->auth_plugin) {
+	$action = "GBox.showTooltip(event,'url:?action=plugin_login',true)";
+    } else {
+ 	$action = $self->login_manager->login_script();
+    }
+    $action .= ";login_blackout(true,'')";
+
+    my $output = $self->render_html_start('GBrowse Login Required',
+					  $self->get_post_load_functions,
+					  ($confirm ? '' : $action));
+    $output .= div({-id=>'source_form'},$self->source_form());
+    if ($confirm) {
+	$output .= $self->login_manager->render_confirm;
+    } else {
+	$output .= $self->render_login_required($action);
+    }
+    $output .= "<hr>";
+    $output .= $self->render_bottom();
+    print $output;
+}
+
+##################################################################3
+#
 # STATE CODE HERE
 #
 ##################################################################3
@@ -1827,9 +1865,14 @@ sub _update_state {
 	$state->{seg_min} = $whole_segment->start;
 	$state->{seg_max} = $whole_segment->end;
 	
-	$state->{ref}     ||= $seg->seq_id;
-	$state->{start}   ||= $seg->start;
-	$state->{stop}    ||= $seg->end;
+	$state->{ref}          ||= $seg->seq_id;
+	$state->{view_start}   ||= $seg->start; # The user has selected the area that they want to see. Therefore, this
+	$state->{view_stop}    ||= $seg->end;   # will be the view_start and view_stop, rather than just start and stop.
+	                                        # asynchronous_update_coordinates will multiply this by the correct factor
+	                                        # to find the size of the segment to load
+
+	$state->{start}   ||= $seg->start;      # Set regular start and stop as well, just to be safe
+	$state->{stop}    ||= $seg->end;        # 
 	
 	# Automatically open the tracks with found features in them
 	$self->auto_open();
@@ -1857,7 +1900,6 @@ sub default_state {
   $state->{ks}           = 'between';
   $state->{grid}         = 1;
   $state->{sk}           = $self->setting("default varying") ? "unsorted" : "sorted";
-  $state->{uploadid}     = Bio::Graphics::Browser2::Util->generate_id;
 
   # if no name is specified but there is a "initial landmark" defined in the
   # config file, then we default to that.
@@ -1933,25 +1975,23 @@ sub auto_open {
 sub cleanup_dangling_uploads {
     my $self  = shift;
     my $state = shift;
-
-
+	
     my %name_to_id;
     for my $id (keys %{$state->{uploads}}) {
-	unless ($state->{uploads}{$id}[0]) {
-	    delete $state->{uploads}{$id};
-	    next;
-	}
-	$name_to_id{$state->{uploads}{$id}[0]}{$id}++;
+		unless ($state->{uploads}{$id}[0]) {
+			delete $state->{uploads}{$id};
+			next;
+		}
+		$name_to_id{$state->{uploads}{$id}[0]}{$id}++;
     }
-
 
     my $usertracks = $self->user_tracks;
     my %tracks = map {$_=>1} $usertracks->tracks();
 
     for my $k (keys %name_to_id) {
-	unless (exists $tracks{$k}) {
-	    delete $state->{uploads}{$_} foreach keys %{$name_to_id{$k}};
-	}
+		unless (exists $tracks{$k}) {
+			delete $state->{uploads}{$_} foreach keys %{$name_to_id{$k}};
+		}
     }
 
 }
@@ -2054,15 +2094,15 @@ sub reconfigure_track {
 
     $state->{features}{$label}{visible}          = param('show_track') ? 1 : 0;
     $state->{features}{$label}{options}          = param('format_option');
-    my $dynamic = $self->tr('DYNAMIC_VALUE');
+    my $dynamic = $self->translate('DYNAMIC_VALUE');
     my $mode    = param('mode');
 
     my $length          = param('segment_length')  || 0;
     my $semantic_len    = param('apply_semantic')  || 0;
     my $delete_semantic = param('delete_semantic');
+    my $summary         = param('summary_mode');
 
-    $state->{features}{$label}{summary_mode_len} = param('summary_mode') 
-	if param('summary_mode');
+    $state->{features}{$label}{summary_mode_len} = $summary if defined $summary;
 
     delete $state->{features}{$label}{semantic_override}{$delete_semantic} if $delete_semantic;
 
@@ -2080,6 +2120,10 @@ sub reconfigure_track {
 	if ($s =~ /(\w+)_subtype/) {
 	    next unless $1 eq $glyph;
 	    $s = 'glyph_subtype';
+	}
+	elsif ($s =~ /(\w+)_graphtype/) {
+	    next unless $1 eq $glyph;
+	    $s = 'graph_type';
 	} elsif ($s =~ /(\w+)_autoscale/) {
 	    my $g = $1;
 	    next if $g eq 'wiggle' && $glyph !~ /wiggle|vista/;
@@ -2102,29 +2146,10 @@ sub reconfigure_track {
 	    }
 	}
     }
-    if (defined $o->{autoscale} && $o->{autoscale} ne 'none') { undef $o->{min_score}; undef $o->{max_score} }
-#    {
-#	local $Data::Dumper::Sortkeys=1;
-#	warn Data::Dumper::Dumper($o);
-#    }
-}
-
-sub track_config {
-  my $self     = shift;
-  my $track_name    = shift;
-  croak "track_config() should not be called in parent class";
-}
-
-sub select_subtracks {
-  my $self       = shift;
-  my $track_name = shift;
-  croak "select_subtracks() should not be called in parent class";
-}
-
-sub share_track {
-  my $self     = shift;
-  my $track_name    = shift;
-  croak "share_track() should not be called in parent class";
+    unless (defined $o->{autoscale} && $o->{autoscale} eq 'none') { 
+	undef $o->{min_score}; 
+	undef $o->{max_score} 
+    }
 }
 
 sub update_options {
@@ -2202,39 +2227,39 @@ sub update_tracks {
       if (!@ds && @ts) {
        my %ds = ();
        foreach my $label (@main_l) {
-        my @tracks = grep {!/^#/} shellwords $self->setting($label=>'track source');
-        my @datasr = grep {!/^#/} shellwords $self->setting($label=>'data source');
+	   my @tracks = grep {!/^#/} shellwords $self->setting($label=>'track source');
+	   my @datasr = grep {!/^#/} shellwords $self->setting($label=>'data source');
 
-        for (my $i = 0; $i <@tracks; $i++) {
-         map{$ds{$datasr[$i]}++ if $_ == $tracks[$i] && $datasr[$i]} (@ts);
+	   for (my $i = 0; $i <@tracks; $i++) {
+	       map{$ds{$datasr[$i]}++ if $_ == $tracks[$i] && $datasr[$i]} (@ts);
+	   }
        }
-      }
-      @ds = keys %ds;
+       @ds = keys %ds;
       }
 
       foreach my $label (@main_l) {
-      my @subs = grep {!/^#/} shellwords $self->setting($label=>'select');
-      shift @subs;
-
-      my @matched;
-       foreach my $s (@subs) {
-        map {push(@matched,$`) if ($s=~/\D(\d+)\;*$/i && $1 == $_)} @ds;
-        map {s/\s*//} @matched;
-       }
-       $label.="/".join("+",@matched) if @matched;
+	  my @subs = grep {!/^#/} shellwords $self->setting($label=>'select');
+	  shift @subs;
+	  
+	  my @matched;
+	  foreach my $s (@subs) {
+	      map {push(@matched,$`) if ($s=~/\D(\d+)\;*$/i && $1 == $_)} @ds;
+	      map {s/\s*//} @matched;													#**
+	  }
+	  $label.="/".join("+",@matched) if @matched;
       }
-
-    $self->set_tracks(@main_l);
+      
+      $self->set_tracks(@main_l);
   }
-
+  
   if (my @selected = $self->split_labels_correctly(param('enable'))) {
-    $state->{features}{$_}{visible} = 1 foreach @selected;
+      $self->add_track_to_state($_) foreach @selected;
   }
-
+  
   if (my @selected = $self->split_labels_correctly(param('disable'))) {
-    $state->{features}{$_}{visible} = 0 foreach @selected;
+      $self->remove_track_from_state($_) foreach @selected;
   }
-
+  
 }
 
 # update coordinates logic
@@ -2258,27 +2283,24 @@ sub update_coordinates {
   delete $self->{region}; # clear cached region
   my $position_updated;
 
-  # I really don't know if this belongs here. Divider should only be used for displaying
-  # numbers, not for doing calculations with them.
-  # my $divider  = $self->setting('unit_divider') || 1;
   if (param('ref')) {
     $state->{ref}   = param('ref');
-    $state->{start} = param('start') if defined param('start') && param('start') =~ /^[\d-]+/;
-    $state->{stop}  = param('stop')  if defined param('stop')  && param('stop')  =~ /^[\d-]+/;
-    $state->{stop}  = param('end')   if defined param('end')   && param('end')   =~ /^[\d-]+/;
+    $state->{view_start} = param('start') if defined param('start') && param('start') =~ /^[\d-]+/;
+    $state->{view_stop}  = param('stop')  if defined param('stop')  && param('stop')  =~ /^[\d-]+/;
+    $state->{view_stop}  = param('end')   if defined param('end')   && param('end')   =~ /^[\d-]+/;
     $position_updated++;
   }
 
   elsif (param('q')) {
       warn "param(q) = ",param('q') if DEBUG;
       $state->{search_str} = param('q');
-      @{$state}{'ref','start','stop'} 
+      @{$state}{'ref','view_start','view_stop'} 
           = Bio::Graphics::Browser2::Region->parse_feature_name($state->{search_str});
       $position_updated++;
   }
 
   # quench uninit variable warning
-  my $current_span = length($state->{stop}||'') ? ($state->{stop} - $state->{start} + 1) 
+  my $current_span = length($state->{view_stop}||'') ? ($state->{view_stop} - $state->{view_start} + 1) 
                                                 : 0;
   my $new_span     = param('span');
   if ($new_span && $current_span != $new_span) {
@@ -2303,17 +2325,20 @@ sub update_coordinates {
   }
 
   if ($position_updated) { # clip and update param
-      if (defined $state->{seg_min} && $state->{start} < $state->{seg_min}) {
-	  my $delta = $state->{seg_min} - $state->{start};
-	  $state->{start} += $delta;
-	  $state->{stop}  += $delta;
+      if (defined $state->{seg_min} && $state->{view_start} < $state->{seg_min}) {
+	  my $delta = $state->{seg_min} - $state->{view_start};
+	  $state->{view_start} += $delta;
+	  $state->{view_stop}  += $delta;
       }
 
-      if (defined $state->{seg_max} && $state->{stop}  > $state->{seg_max}) {
-	  my $delta = $state->{stop} - $state->{seg_max};
-	  $state->{start} -= $delta;
-	  $state->{stop}  -= $delta;
+      if (defined $state->{seg_max} && $state->{view_stop}  > $state->{seg_max}) {
+	  my $delta = $state->{view_stop} - $state->{seg_max};
+	  $state->{view_start} -= $delta;
+	  $state->{view_stop}  -= $delta;
       }
+
+      # Take details multiplier into account
+      $self->update_state_from_details_mult;
 
       # update our "name" state and the CGI parameter
       $state->{name} = $self->region_string;
@@ -2323,10 +2348,12 @@ sub update_coordinates {
   }
 
   elsif (param('name')) {
-      $state->{backup_region} = [$state->{ref},$state->{start},$state->{stop}] if $state->{ref};
+      $state->{backup_region} = [$state->{ref},$state->{start},$state->{stop},$state->{view_start},$state->{view_stop}] if $state->{ref};
       undef $state->{ref};  # no longer valid
       undef $state->{start};
       undef $state->{stop};
+      undef $state->{view_start};
+      undef $state->{view_stop};
       $state->{name}       = $state->{search_str} = param('name');
       $state->{dbid}       = param('dbid'); # get rid of this
   }
@@ -2398,11 +2425,16 @@ sub asynchronous_update_detail_scale_bar {
 
     my $image_id = DETAIL_SCALE_LABEL . "_image";
 
+    my ($scale_size, $scale_label) = $renderer->calculate_scale_size($seg->length/$self->details_mult, $width/$self->details_mult);
+
     return {
-        url      => $url,
-        height   => $height,
-        width    => $width,
-        image_id => $image_id,
+        url         => $url,
+        height      => $height,
+        width       => $width,
+        view_width  => $self->get_image_width($self->state),
+        image_id    => $image_id,
+        scale_size  => $scale_size,
+        scale_label => $scale_label,
     };
 }
 
@@ -2447,6 +2479,10 @@ sub asynchronous_update_sections {
 	    = $self->render_search_form_objects();
     }
 
+    if ($handle_section_name{'login_menu'}) {
+	$return_object->{login_menu} = $self->login_manager->render_login();
+    }
+
     # Plugin Configuration Form
     # A params is used to determine the plugin
     if ( $handle_section_name{'plugin_configure_div'} ) {
@@ -2460,12 +2496,12 @@ sub asynchronous_update_sections {
             }
             else {
                 $return_object->{'plugin_configure_div'}
-                    = "$plugin_base is not a recognized plugin\n";
+                    = $self->translate('NOT_RECOGNIZED_PLUGIN',$plugin_base) . "\n";
             }
         }
         else {
             $return_object->{'plugin_configure_div'}
-                = "No plugin was specified.\n";
+                = $self->translate('NO_PLUGIN_SPECIFIED') . "\n";
         }
     }
 
@@ -2484,10 +2520,14 @@ sub asynchronous_update_sections {
         $return_object->{'tracks_panel'} = $self->render_track_table();
     }
 
-    # New Uploaded Data Section
-    if ( $handle_section_name{'userdata_table_div'}) {
-	$return_object->{'userdata_table_div'}
-	    = $self->render_userdata_table();
+    # New Custom Tracks Section
+    if ( $handle_section_name{'custom_tracks'}) {
+	$return_object->{'custom_tracks'} = $self->render_custom_track_listing();
+    }
+    
+    # Community Tracks Section
+    if ( $handle_section_name{'community_tracks'}) {
+	$return_object->{'community_tracks'} = $self->render_community_track_listing(@_); #Passing on any search terms.
     }
 
     # Handle Remaining and Undefined Sections
@@ -2512,7 +2552,7 @@ sub asynchronous_update_element {
         my $description = $dsn->description;
 	my $divider     = $dsn->unit_divider;
         return $description . '<br>'
-            . $self->tr(
+            . $self->translate(
             'SHOWING_FROM_TO',
             scalar $source->unit_label( $segment->length ),
             $segment->seq_id,
@@ -2617,23 +2657,31 @@ sub asynchronous_update_coordinates {
     }
 
     if ($position_updated) { # clip and update param
-	if (defined $whole_segment_start && $state->{start} < $whole_segment_start) {
-	    my $delta = $whole_segment_start - $state->{start};
-	    $state->{start} += $delta;
-	    $state->{stop}  += $delta;
+	if (defined $whole_segment_start && $state->{view_start} < $whole_segment_start) {
+	    my $delta = $whole_segment_start - $state->{view_start};
+	    $state->{view_start} += $delta;
+	    $state->{view_stop}  += $delta;
 	}
 
-	if (defined $whole_segment_stop && $state->{stop}  > $whole_segment_stop) {
-	    my $delta = $state->{stop} - $whole_segment_stop;
-	    $state->{start} -= $delta;
-	    $state->{stop}  -= $delta;
+	if (defined $whole_segment_stop && $state->{view_stop}  > $whole_segment_stop) {
+	    my $delta = $state->{view_stop} - $whole_segment_stop;
+	    $state->{view_start} -= $delta;
+	    $state->{view_stop}  -= $delta;
+
+            if ($state->{view_start} < 0) {
+                # Segment requested is larger than the whole segment
+                $state->{view_start} = $whole_segment_start;
+	        $state->{view_stop}  = $whole_segment_stop;
+            }
 	}
-	
+
+        # Take details multiplier into account
+        $self->update_state_from_details_mult;
 
 	unless (defined $state->{ref}) {
 	    warn "Reverting coordinates to last known good region (user probably hit 'back' button).";
 	    if ($state->{backup_region}) { # last known working region
-		@{$state}{'ref','start','stop'} = @{$state->{backup_region}};
+		@{$state}{'ref','start','stop','view_start','view_stop'} = @{$state->{backup_region}};
 	    } else {
 		$state->{name} = param('name') || param('q') || url_param('name') || url_param('q'); # get the region somehow!!
 		if (my $seg = $self->segment) {
@@ -2652,15 +2700,45 @@ sub asynchronous_update_coordinates {
     $position_updated;
 }
 
+sub update_state_from_details_mult {
+    my $self = shift;
+    my $state = $self->state;
+
+    my $view_start = $state->{view_start};
+    my $view_stop  = $state->{view_stop};
+
+    my $details_mult = $self->details_mult;
+
+    my $length         = $view_stop - $view_start;
+    my $length_to_load = int($length * $details_mult);
+
+    my $start_to_load  = int($view_start - $length * ($details_mult - 1) / 2);
+
+    if (defined $state->{seg_min} && $start_to_load < $state->{seg_min}) {
+        $start_to_load = $state->{seg_min};
+    }
+
+    my $stop_to_load   = $start_to_load + $length_to_load;
+
+    if (defined $state->{seg_max} && $stop_to_load > $state->{seg_max}) {
+        my $delta = $stop_to_load - $state->{seg_max};
+        $start_to_load -= $delta;
+        $stop_to_load  -= $delta;
+    }
+
+    $state->{start} = $start_to_load;
+    $state->{stop}  = $stop_to_load;
+}
+
 sub region_string {
     my $self    = shift;
     my $state   = $self->state;
     my $source  = $self->data_source;
     my $divider = $source->unit_divider;
     $state->{name} = "$state->{ref}:".
-	              $source->commas($state->{start}/$divider).
+	              $source->commas($state->{view_start}/$divider).
 		      '..'.
-		      $source->commas($state->{stop}/$divider);
+		      $source->commas($state->{view_stop}/$divider);
 }
 
 sub zoom_to_span {
@@ -2679,17 +2757,17 @@ sub move_to_name {
     my $new_stop  = $3;
 
     $state->{ref} = $new_chr;
-    $state->{start} = $new_start;
-    $state->{stop}  = $new_stop;
+    $state->{view_start} = $new_start;
+    $state->{view_stop}  = $new_stop;
     $self->background_track_render();
   }
 }
 
-  my $current_span = $state->{stop} - $state->{start} + 1;
-  my $center	    = int(($current_span / 2)) + $state->{start};
+  my $current_span = $state->{view_stop} - $state->{view_start} + 1;
+  my $center	    = int(($current_span / 2)) + $state->{view_start};
   my $range	    = int(($span)/2);
-  $state->{start}   = $center - $range;
-  $state->{stop }   = $state->{start} + $span - 1;
+  $state->{view_start}   = $center - $range;
+  $state->{view_stop }   = $state->{view_start} + $span - 1;
 }
 
 sub move_segment {
@@ -2700,8 +2778,8 @@ sub move_segment {
     my $new_start = $1;
     my $new_stop  = $2;
 
-    $state->{start} = $new_start;
-    $state->{stop}  = $new_stop;
+    $state->{view_start} = $new_start;
+    $state->{view_stop}  = $new_stop;
   }
 }
 
@@ -2715,8 +2793,8 @@ sub scroll {
   $scroll_data    =~ s/\.[xy]$//; # get rid of imagemap button cruft
   my $scroll_distance = $self->unit_to_value($scroll_data);
 
-  $state->{start} += $flip * $scroll_distance;
-  $state->{stop}  += $flip * $scroll_distance;
+  $state->{view_start} += $flip * $scroll_distance;
+  $state->{view_stop}  += $flip * $scroll_distance;
 }
 
 sub zoom {
@@ -2726,22 +2804,22 @@ sub zoom {
 
   $zoom_data    =~ s/\.[xy]$//; # get rid of imagemap button cruft
   my $zoom_distance = $self->unit_to_value($zoom_data);
-  my $span          = $state->{stop} - $state->{start} + 1;
-  my $center	    = int($span / 2) + $state->{start};
+  my $span          = $state->{view_stop} - $state->{view_start} + 1;
+  my $center	    = int($span / 2) + $state->{view_start};
   my $range	    = int($span * (1-$zoom_distance)/2);
   $range            = 1 if $range < 1;
 
   my $newstart      = $center - $range;
   my $newstop       = $center + $range - 1;
   
-  if ($newstart==$state->{start} && $newstop==$state->{stop}) {
+  if ($newstart==$state->{view_start} && $newstop==$state->{view_stop}) {
       if ($zoom_distance < 0) {$newstart--;$newstop++};
       if ($zoom_distance > 0) {$newstart++;$newstop--};
   }
   if ($newstop-$newstart <=2) {$newstop++}  # don't go down to 2 bp level!
 
-  $state->{start}   = $newstart;
-  $state->{stop}    = $newstop;
+  $state->{view_start}   = $newstart;
+  $state->{view_stop}    = $newstop;
 }
 
 sub position_from_overview {
@@ -2850,6 +2928,7 @@ sub set_language {
   return unless @languages;
   $lang->language(@languages);
   $self->language($lang);
+  Bio::Graphics::Browser2::Util->set_language($lang);
 }
 
 sub language {
@@ -2999,7 +3078,9 @@ sub set_tracks {
 	$state->{subtracks}{$main} = \@subtracks if @subtracks;
     }
 
-    $state->{tracks} = [grep {$potential{$_}} @main];
+    my %seenit;
+
+    $state->{tracks} = [grep {$potential{$_} && !$seenit{$_}++} @main];
     $self->load_plugin_annotators(\@main);
     $state->{features}{$_}{visible} = 0 foreach $self->data_source->labels;
     $state->{features}{$_}{visible} = 1 foreach @main;
@@ -3156,6 +3237,7 @@ sub expand_track_names {
 	    push @results,$t;
 	}
     }
+
     return @results;
  }
 
@@ -3245,7 +3327,7 @@ sub get_blank_panels {
     my $settings = $self->state;
 
     my $html  = '';
-    my $image_width = $self->get_image_width;
+    my $image_width = $self->get_image_width($settings);
     foreach my $track_name ( @{ $track_names || [] } ) {
 
 	my $divname = $self->trackname_to_id($track_name,$section);
@@ -3271,7 +3353,20 @@ sub get_blank_panels {
 
 sub get_image_width {
     my $self = shift;
-    my $state = $self->state;
+    my $state = shift;
+    my $image_width = $state->{'width'} + $self->get_total_pad_width;
+    return int($image_width);
+}
+
+sub get_detail_image_width {
+    my $self = shift;
+    my $state = shift;
+    my $image_width = $state->{'width'} * $self->details_mult + $self->get_total_pad_width;
+    return int($image_width);
+}
+
+sub get_total_pad_width {
+    my $self = shift;
     my $source = $self->data_source;
     my $renderer  = $self->get_panel_renderer($self->thin_segment,
 					      $self->thin_whole_segment,
@@ -3282,9 +3377,25 @@ sub get_image_width {
     my $image_pad = $renderer->image_padding;
     $padl = $image_pad unless defined $padl;
     $padr = $image_pad unless defined $padr;
+    return $padl + $padr;
+}
 
-    my $image_width = $state->{'width'} + $padl + $padr;
-    return $image_width;
+sub set_details_multiplier {
+    my $self = shift;
+    my $mult = shift || 1;
+    $self->{'.details_mult'} = $mult;
+}
+
+sub details_mult {
+    my $self = shift;
+    $self->{'.details_mult'} ||= $self->_details_mult;
+    return $self->{'.details_mult'};
+}
+
+sub _details_mult {
+    my $self = shift;
+    my $state = $self->state;
+    return $self->data_source->details_multiplier($state);
 }
 
 sub render_deferred {
@@ -3414,8 +3525,9 @@ sub render_deferred_track {
         $result_html = $result->{$track_id};
     }
     elsif ($cache->status eq 'ERROR') {
-	warn "[$$] rendering error track" if DEBUG;
-        my $image_width = $self->get_image_width;
+	warn "[$$] rendering error track: ",$cache->errstr; # if DEBUG;
+        my $image_width = $track_id =~ /overview|region/ ? $self->get_image_width($self->state)
+	                                                 : $self->get_detail_image_width($self->state);
         $result_html   .= $self->render_error_track(
 						  track_id       => $track_id,
 						  image_width      => $image_width,
@@ -3423,7 +3535,7 @@ sub render_deferred_track {
 						  image_element_id => $track_id . "_image",
 						  error_message    => 'Track rendering error: '.$cache->errstr)
      } else {
-        my $image_width = $self->get_image_width;
+        my $image_width = $self->get_detail_image_width($self->state);
         $result_html .= $self->render_grey_track(
 						 track_id         => $track_id,
 						 image_width      => $image_width,
@@ -3450,19 +3562,6 @@ sub drag_script {
  // ]]>
  </script>
 END
-}
-
-=head2 get_regionview_start_stop
-
- usage
-
-Description
-
-=cut
-
-sub get_regionview_start_stop {
-  my $self = shift;
-  return $self->regionview_bounds;
 }
 
 ##################### utilities #####################
@@ -3497,21 +3596,30 @@ sub make_hilite_callback {
 sub categorize_track {
   my $self  = shift;
   my $label = shift;
-  return $self->tr('OVERVIEW') if $label =~ /:overview$/;
-  return $self->tr('REGION')   if $label =~ /:region$/;
-  return $self->tr('EXTERNAL') if $label =~ /^(http|ftp|file):/;
-  return $self->tr('ANALYSIS') if $label =~ /^plugin:/;
+
+  my $user_labels = $self->get_usertrack_labels;
+
+  return $self->translate('OVERVIEW') if $label =~ /:overview$/;
+  return $self->translate('REGION')   if $label =~ /:region$/;
+  return $self->translate('EXTERNAL') if $label =~ /^(http|ftp|file):/;
+  return $self->translate('ANALYSIS') if $label =~ /^plugin:/;
+
+  if ($user_labels->{$label}) {
+      my $cat = $self->user_tracks->is_mine($user_labels->{$label}) 
+	  ? $self->translate('UPLOADED_TRACKS_CATEGORY')
+	  : $self->translate('SHARED_WITH_ME_CATEGORY');
+      return "$cat:".$self->user_tracks->title($user_labels->{$label});
+  }
 
   my $category;
   for my $l ($self->language->language) {
     $category      ||= $self->setting($label=>"category:$l");
-
   }
   $category        ||= $self->setting($label => 'category');
   $category        ||= '';  # prevent uninit variable warnings
   $category         =~ s/^["']//;  # get rid of leading quotes
   $category         =~ s/["']$//;  # get rid of trailing quotes
-  return $category ||= $self->tr('GENERAL');
+  return $category ||= $self->translate('GENERAL');
 }
 
 sub is_safari {
@@ -3543,21 +3651,22 @@ sub external_data {
 			 $self->whole_segment,$self->region_segment);
 	} foreach ($self->plugins,$self->remote_sources);
     }
-    warn "FEATURE files = ",join ' ',%$f if DEBUG;
     return $self->{feature_files} = $f;
 }
-
+#
 # Supplement data source with user uploads
 sub add_user_tracks {
     my $self        = shift;
     my ($data_source,$uuid) = @_;
+    $data_source ||= $self->data_source;
+    my $files   = $self->user_tracks;
+    my $userdb  = $self->userdb;
+    my $session = $self->session;
 
     return if $self->is_admin;  # admin user's tracks are already in main config file.
+    $self->session->uploadsid;
 
-    $self->state->{uploadid} ||= Bio::Graphics::Browser2::Util->generate_id;
-    $uuid ||= $self->state->{uploadid};
-
-    my $userdata    = $self->user_tracks($uuid);
+    my $userdata    = $self->user_tracks;
     my @user_tracks = $userdata->tracks;
 
 #    warn "adding usertracks for $uuid, getting @user_tracks";
@@ -3593,10 +3702,10 @@ sub join_selected_tracks {
 
     my @selected = $self->visible_tracks;
     for (@selected) { # escape hyphens
-	if ((my $filter = $state->{features}{$_}{filter}{values})) {
-	    my @subtracks = grep {$filter->{$_}} keys %{$filter};
-	    $_ .= "/@subtracks";
-	}
+		if ((my $filter = $state->{features}{$_}{filter}{values})) {
+			my @subtracks = grep {$filter->{$_}} keys %{$filter};
+			$_ .= "/@subtracks";
+		}
     }
     return $self->join_tracks(\@selected);
 }
@@ -3630,7 +3739,7 @@ sub gff_dump_link {
   my $fasta    = shift;
 
   my $state     = $self->state;
-  my $upload_id = $state->{uploadid} || $state->{userid};
+  my $upload_id = $self->session->uploadsid;
   my $segment   = $self->thin_segment or return '';
 
   my $q = new CGI('');
@@ -3641,7 +3750,9 @@ sub gff_dump_link {
        $q->param(-name=>'gbgff',   -value=>'Save');
        $q->param(-name=>'m',       -value=>'application/x-gff3');
   }
-  $q->param('q'=>$segment->seq_id.':'.$segment->start.'..'.$segment->end);
+
+  # This will now be detemined and added on the client side
+  #$q->param('q'=>$segment->seq_id.':'.$segment->start.'..'.$segment->end);
 
   # we probably need this ?
   $q->param(-name=>'id',      -value=>$upload_id);
@@ -3666,7 +3777,7 @@ sub galaxy_link {
     warn "[$$] galaxy_link = $galaxy_url" if DEBUG;
     return '' unless $galaxy_url;
     my $clear_it  = $self->galaxy_clear;
-    my $submit_it = q(document.galaxyform.submit());
+    my $submit_it = q(document.galaxyform.submit());							#}) - Syntax highlight fixing.
     return "$clear_it;$submit_it";
 }
 
@@ -3690,13 +3801,15 @@ sub image_link {
     my ($base,$s) = $self->globals->gbrowse_base;
     my $url      = "$base/gbrowse_img/$s";
     my $tracks   = $settings->{tracks};
-    my $width    = $settings->{width};
-    my $name     = "$settings->{ref}:$settings->{start}..$settings->{stop}";
+    my $width    = param('view_width') || $settings->{width};
+    my $start    = param('view_start') || $settings->{view_start};
+    my $stop     = param('view_stop')  || $settings->{view_stop};
+    my $name     = "$settings->{ref}:$start..$stop";
     my $selected = $self->join_selected_tracks;
     my $options  = join '+',map { join '+', CGI::escape($_),$settings->{features}{$_}{options}
                              } map {/\s/?"$_":$_}
     grep {
-	$settings->{features}{$_}{options}
+		$settings->{features}{$_}{options}
     } @$tracks;
     $id        ||= ''; # to prevent uninit variable warnings
     my $img_url  = "$url/?name=$name;l=$selected;width=$width;id=$id";
@@ -3717,17 +3830,16 @@ sub add_hilites {
 
   # add feature hilighting
     if ($settings->{h_feat} && ref $settings->{h_feat} eq 'HASH') {
-	for my $h (keys %{$settings->{h_feat}}) {
-	    $$img_url .= ";h_feat=$h\@$settings->{h_feat}{$h}";
-	}
+		for my $h (keys %{$settings->{h_feat}}) {
+			$$img_url .= ";h_feat=$h\@$settings->{h_feat}{$h}";
+		}
     }
   # add region hilighting
     if ($settings->{h_region} && ref $settings->{h_region} eq 'ARRAY') {
-	for my $h (@{$settings->{h_region}}) {
-	    $$img_url .= ";h_region=$h";
-	}
+		for my $h (@{$settings->{h_region}}) {
+			$$img_url .= ";h_region=$h";
+		}
     }
-
 }
 
 sub svg_link {
@@ -3886,13 +3998,162 @@ sub generate_chrom_sizes {
     return 1;
 }
 
+# Change IDs (Old Uploads ID, New Uploads ID, Old UserID, New User ID) - Sometimes the user's session (as stored by the ID) is unretrievable - this changes the session to a new one so that a user's login is still valid.
+sub change_ids {
+    my $self = shift;
+    my $old_uploadsid = shift;
+    my $new_uploadsid = shift;
+    my $old_userid = shift;
+    my $new_userid = shift;
+    my $usertracks = $self->user_tracks;
+    $usertracks->change_ids($old_uploadsid, $new_uploadsid, $old_userid, $new_userid);
+    my $userdb = $self->{userdb};
+    $userdb->change_ids($old_uploadsid, $new_uploadsid, $old_userid, $new_userid);
+}
 
+# The following functions are implemented in HTML.pm (or any other Render subclass), are never called, and are here for debugging.
+sub format_autocomplete {
+    croak "implement in subclass";
+}
+
+sub render_actionmenu {
+    my $self = shift;
+    croak "implement in subclass";
+}
+
+sub render_tabbed_pages {
+    my $self = shift;
+    my ($main,$upload_share,$config) = @_;
+    croak "implement in subclass";
+}
+
+sub render_select_track_link {
+    croak "implement in subclass";
+}
+
+sub render_upload_share_section {
+    croak "implement in subclass";
+}
+
+sub render_top    {
+  my $self     = shift;
+  my $title    = shift;
+  croak "render_top() should not be called in parent class";
+}
+
+sub render_title   {
+  my $self     = shift;
+  my $title    = shift;
+  croak "render_title() should not be called in parent class";
+}
+
+sub render_navbar {
+  my $self = shift;
+  my $seg  = shift;
+  croak "render_navbar() should not be called in parent class";
+}
+
+sub clear_highlights { croak 'implement in subclass' }
+
+sub render_toggle_track_table {
+  my $self = shift;
+  croak "render_toggle_track_table() should not be called in parent class";
+}
+
+sub render_track_table {
+  my $self = shift;
+  croak "render_track_table() should not be called in parent class";
+}
+
+sub render_instructions {
+  my $self  = shift;
+  my $title = shift;
+  croak "render_instructions() should not be called in parent class";
+}
+sub render_multiple_choices {
+  my $self = shift;
+  croak "render_multiple_choices() should not be called in parent class";
+}
+
+sub render_global_config {
+  my $self = shift;
+  croak "render_global_config() should not be called in parent class";
+}
+
+sub render_toggle_external_table {
+  my $self = shift;
+  croak "render_toggle_external_table() should not be called in parent class";
+}
+
+sub render_toggle_userdata_table {
+  my $self = shift;
+  croak "render_toggle_userdata_table() should not be called in parent class";
+}
+
+sub render_bottom {
+  my $self = shift;
+  my $features = shift;
+  croak "render_bottom() should not be called in parent class";
+}
+
+sub html_frag {
+  my $self = shift;
+  croak "html_frag() should not be called in parent class";
+}
+
+sub fatal_error {
+  my $self = shift;
+  my @msg  = @_;
+  croak 'Please call fatal_error() for a subclass of Bio::Graphics::Browser2::Render';
+}
+
+sub zoomBar {
+    my $self = shift;
+    croak 'Please define zoomBar() in a subclass of Bio::Graphics::Browser2::Render';
+}
+
+sub track_config {
+  my $self     = shift;
+  my $track_name    = shift;
+  croak "track_config() should not be called in parent class";
+}
+
+sub select_subtracks {
+  my $self       = shift;
+  my $track_name = shift;
+  croak "select_subtracks() should not be called in parent class";
+}
+
+sub share_track {
+  my $self     = shift;
+  my $track_name    = shift;
+  croak "share_track() should not be called in parent class";
+}
+
+sub render_ruler_div {
+  my $self = shift;
+  croak "render_ruler_div() should not be called in parent class";
+}
 
 ########## note: "sub tr()" makes emacs' syntax coloring croak, so place this function at end
+sub translate {
+	my $self = shift;
+	my $lang = $self->language or return @_;
+	$lang->translate(@_);
+}
+
+sub login_manager {
+    my $self = shift;
+    return $self->{login_manager} if exists $self->{login_manager};
+    eval "require Bio::Graphics::Browser2::Render::Login" unless
+	Bio::Graphics::Browser2::Render::Login->can('new');
+    return $self->{login_manager} = Bio::Graphics::Browser2::Render::Login->new($self);
+}
+
 sub tr {
-  my $self = shift;
-  my $lang = $self->language or return @_;
-  $lang->tr(@_);
+	my $self = shift;
+	my $lang = $self->language or return @_;
+	$lang->translate(@_);
 }
 
 1;

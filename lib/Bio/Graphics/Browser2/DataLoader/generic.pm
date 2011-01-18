@@ -1,16 +1,16 @@
 package Bio::Graphics::Browser2::DataLoader::generic;
 
-# $Id: generic.pm 24024 2010-10-22 20:30:41Z lstein $
+# $Id: generic.pm 24319 2010-12-29 21:24:32Z lstein $
 use strict;
 use Bio::DB::SeqFeature::Store;
 use Carp 'croak';
 use File::Basename 'basename';
 use base 'Bio::Graphics::Browser2::DataLoader';
 
+use constant TOO_SMALL_FOR_SUMMARY_MODE => 10000;  # don't go into summary mode
+
 my @COLORS = qw(blue red orange brown mauve peach green cyan 
                 black yellow cyan papayawhip coral);
-
-use constant TOO_SMALL_FOR_SUMMARY_MODE => 10000;  # don't go into summary mode
 
 my $DUMPING_FIXED;  # flag that we patched Bio::SeqFeature::Lite
 
@@ -26,6 +26,7 @@ sub start_load {
     my $loader = $loader_class->new(-store=> $db,
 				    -fast => $fast,
 				    -summary_stats    => 1,
+				    -verbose          => 0,
 				    -index_subfeatures=> 0,
 	);
     $loader->start_load();
@@ -41,7 +42,7 @@ sub Loader {
 }
 
 sub finish_load {
-    my $self  = shift;
+    my $self = shift;
     my $line_count = shift;
 
     $self->set_status('creating database');
@@ -57,6 +58,12 @@ sub finish_load {
     my $trackno   = 0;
     my $loadid    = $self->loadid;
     my $inhibit_summary = $line_count < TOO_SMALL_FOR_SUMMARY_MODE;
+    eval {
+	$self->set_status('calculating summary statistics');
+	$self->loader->build_summary;
+    } unless $inhibit_summary;
+    warn $@ if $@;
+
     $self->set_status('creating configuration');
     
     print $conf <<END;
@@ -125,7 +132,7 @@ database = $loadid
 feature   = $t
 glyph     = $glyph
 bgcolor   = $color
-fgcolor   = black
+fgcolor   = $color
 label     = 1
 stranded  = $stranded
 connector = solid
@@ -226,7 +233,7 @@ sub {
 END
 }
 
-# shamelessly copied from Bio::Graphics:;FeatureFile.
+# shamelessly copied from Bio::Graphics::FeatureFile.
 sub _state_transition {
     my $self = shift;
     my ($current_state,$line) = @_;

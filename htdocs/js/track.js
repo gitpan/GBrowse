@@ -2,7 +2,7 @@
  track.js -- The GBrowse track object
 
  Ben Faga <faga.cshl@gmail.com>
- $Id: track.js 22257 2009-11-16 15:11:04Z lstein $
+ $Id: track.js 23937 2010-10-08 16:16:06Z tonydecat $
 
 Method structure
  - Class Utility Methods
@@ -41,6 +41,11 @@ var GBrowseTrack = Class.create({
   get_last_update_key:
   function () {
     return this.last_update_key;
+  },
+
+  get_image_div:
+  function () {
+    return $(this.track_id+'_inner_div');
   },
 
   is_standard_track:

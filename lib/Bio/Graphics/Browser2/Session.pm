@@ -1,6 +1,6 @@
-package Bio::Graphics::Browser2::Session;
+ package Bio::Graphics::Browser2::Session;
 
-# $Id: Session.pm 23146 2010-05-07 05:49:29Z lstein $
+# $Id: Session.pm 24381 2011-01-18 22:33:05Z lstein $
 
 use strict;
 use warnings;
@@ -27,36 +27,38 @@ use constant DEBUG => 0;
 use constant DEBUG_LOCK => DEBUG || 0;
 
 sub new {
-  my $class    = shift;
-  my %args     = @_;
-  my ($driver,$id,$session_args,$default_source,$lockdir,$locktype,$expire_time) 
-      = @args{'driver','id','args','source','lockdir','locktype','expires'};
+	my $class    = shift;
+	my %args     = @_;
+	my ($driver,$id,$session_args,$default_source,$lockdir,$locktype,$expire_time) 
+	  = @args{'driver','id','args','source','lockdir','locktype','expires'};
 
-  $CGI::Session::NAME = 'gbrowse_sess';     # custom cookie
-  $CGI::Session::Driver::file::NoFlock = 1; # flocking unnecessary because we roll our own
+	$CGI::Session::NAME = 'gbrowse_sess';     # custom cookie
+	$CGI::Session::Driver::file::NoFlock = 1; # flocking unnecessary because we roll our own
 
-  unless ($id) {
-      my $cookie = CGI::Cookie->fetch();
-      $id        = $cookie->{$CGI::Session::NAME}->value 
-	  if $cookie && $cookie->{$CGI::Session::NAME};
-  }
-  my $self            = bless {
-      lockdir  => $lockdir,
-      locktype => $locktype,
-  },$class;
-  $self->lock_ex($id) if $id;
+	unless ($id) {
+	    my $cookie = CGI::Cookie->fetch();
+	    $id        = $cookie->{$CGI::Session::NAME}->value 
+		if $cookie && $cookie->{$CGI::Session::NAME};
+	}
+	my $self            = bless {
+	    lockdir  => $lockdir,
+	    locktype => $locktype,
+	},$class;
+	$self->lock_ex($id) if $id;
 
-  $self->{session}    = CGI::Session->new($driver,$id,$session_args);
+	$self->{session}    = CGI::Session->new($driver,$id,$session_args);
 
-  # never expire private (authenticated) sessions
-  $expire_time = 0 if $self->private;
-  $self->{session}->expire($expire_time) 
-      if defined $expire_time;
+	warn "CGI::Session->new($driver,$id,$session_args)=>",$self->{session}->id if DEBUG;
 
-  warn "[$$] session fetch for ",$self->id if DEBUG;
-  $self->source($default_source) unless defined $self->source;
-  $self->{pid} = $$;
-  $self;
+	# never expire private (authenticated) sessions
+	$expire_time = 0 if $self->private;
+	$self->{session}->expire($expire_time) 
+		if defined $expire_time;
+
+	warn "[$$] session fetch for ",$self->id if DEBUG;
+	$self->source($default_source) unless defined $self->source;
+	$self->{pid} = $$;
+	$self;
 }
 
 sub session_argv {
@@ -89,17 +91,32 @@ sub lock {
 
     warn "[$$] waiting on session lock..." if DEBUG_LOCK;
 
-    if ($locktype eq 'flock') {
-	$self->lock_flock($type,$id);
-    }
-    elsif ($locktype eq 'nfs') {
-	$self->lock_nfs($type,$id);
-    }
-    elsif ($locktype eq 'mysql') {
-	$self->lock_mysql($type,$id);
-    }
-    else {
-	die "unknown lock type $locktype";
+    eval {
+	local $SIG{ALRM} = sub {die "timeout\n"};
+	# timeout lock to avoid some process from keeping process open
+	# 1 sec is probably too short for some database searches
+	alarm(1); 
+
+	if ($locktype eq 'flock') {
+	    $self->lock_flock($type,$id);
+	}
+	elsif ($locktype eq 'nfs') {
+	    $self->lock_nfs($type,$id);
+	}
+	elsif ($locktype eq 'mysql') {
+	    $self->lock_mysql($type,$id);
+	}
+	else {
+	    die "unknown lock type $locktype";
+	}
+	alarm(0);
+    };
+    if ($@) {
+	die $@ unless $@ eq "timeout\n";
+	warn ("[$$] session lock timed out on request: ",
+	      CGI::request_method(),': ',
+	      CGI::url(-path=>1),' ',
+	      CGI::query_string());
     }
     warn "[$$] ...got session lock" if DEBUG_LOCK;
 }
@@ -161,7 +178,7 @@ sub lock_ex {
 sub unlock {
     my $self     = shift;
     my $lock = $self->lockobj or return;
-    warn "[$$] session unlock" if DEBUG;
+    warn "[$$] session unlock" if DEBUG_LOCK;
     if ($lock->isa('DBI::db')) {
 	my $lock_name = $self->mysql_lock_name($self->id);
 	$lock->do("SELECT RELEASE_LOCK('$lock_name')");
@@ -184,6 +201,12 @@ sub mysql_lock_name {
     my $self = shift;
     my $id   = shift;
     return "gbrowse_session_lock.$id";
+}
+
+sub delete {
+    my $self = shift;
+    $self->{session}->delete if $self->{session};
+    $self->unlock;
 }
 
 sub flush {
@@ -236,11 +259,31 @@ sub source {
   return $source;
 }
 
+sub uploadsid {
+  my $self = shift;
+  $self->{session}->param('.uploadsid' => shift() ) if @_;
+  my $id = $self->{session}->param('.uploadsid');
+  unless ($id) {
+      # uploadsid used to be stored in the settings, which was wrong
+      $id = $self->page_settings->{uploadid} ||
+	  Bio::Graphics::Browser2::Util->generate_id;
+      $self->{session}->param('.uploadsid' => $id);
+  }
+  return $id;
+}
+
 sub private {
     my $self = shift;
     my $private = $self->{session}->param('.private');
     $self->{session}->param('.private' => shift()) if @_;
     return $private;
+}
+
+sub remember_auth {
+    my $self = shift;
+    my $ra = $self->{session}->param('.remember_auth');
+    $self->{session}->param('.remember_auth' => shift()) if @_;
+    return $ra;
 }
 
 sub username {
@@ -263,11 +306,13 @@ sub set_nonce {
     warn "id=",$self->id," writing nonce = ",md5_hex($nonce,$salt) if DEBUG;
     $self->{session}->param('.nonce' => md5_hex($nonce,$salt));
 
-    # BUG: must handle session expiration
-    if($remember) {
-        $self->{session}->expire('.nonce' => '30d');
+    # handle session expiration
+    if ($remember) {
+        $self->{session}->expire('.nonce' => '30d'); # remembers authorization for 30 days
+	$self->remember_auth(1);
     } else {
-        $self->{session}->expire('.nonce' => '10m');
+        $self->{session}->expire('.nonce' => '1d');  # force reauthorization every day
+	$self->remember_auth(0);
     }
     $self->private(1);
 }
@@ -278,8 +323,8 @@ sub match_nonce {
     $self->private || return;
     my $nonce = $self->{session}->param('.nonce');
     warn "id=",$self->id," matching $nonce against ",$new_nonce,"|",$salt if DEBUG;
-    warn "$nonce eq ",md5_hex($new_nonce,$salt)                           if DEBUG;
-    return $nonce eq md5_hex($new_nonce,$salt);
+    warn "$nonce eq ",md5_hex($new_nonce, $salt)                          if DEBUG;
+    return $nonce eq md5_hex($new_nonce, $salt);
 }
 
 sub config_hash {

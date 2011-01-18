@@ -1,5 +1,8 @@
 #!/usr/bin/perl -w
 
+eval 'exec /usr/bin/perl -w -S $0 ${1+"$@"}'
+    if 0; # not running under some shell
+
 # $Id: gbrowse_img,v 1.7 2009-08-31 19:46:38 lstein Exp $
 
 use strict;
@@ -38,13 +41,17 @@ if ($fcgi) {
 
     my %sys_env = %ENV;
     while (!$FCGI_DONE) {
+	warn "waiting to accept";
 	my $status = $fcgi->Accept;
+	warn "accepted";
 	next unless $status >= 0;
         %ENV = ( %sys_env, %ENV );
 	my $globals = Bio::Graphics::Browser2->open_globals;
 	CGI->initialize_globals();
-	GBrowse_img->new($globals)->run();
-	$fcgi->Finish();
+	my $gbi = GBrowse_img->new($globals);
+	$gbi->run();
+	$gbi->destroy;
+#	$fcgi->Finish();
     }
 }
 
@@ -79,6 +86,7 @@ sub new {
 sub run {
     my $self   = shift;
     my $render = $self->render;
+    $render->set_details_multiplier(1);
 
     unless (param()) {
 	print $self->header();
@@ -88,6 +96,14 @@ sub run {
 
     $render->set_source() && exit;  # may cause a redirect and exit 
     $render->init();
+
+    if ($render->data_source->must_authenticate 
+	&& !$self->session->private) {
+	my $base = $render->globals->gbrowse_url;
+	print $self->header();
+	print CGI->h1('Authentication required. Please log into',CGI->a({-href=>$base},'GBrowse'),'from this computer.');
+	return;
+    }
 
     $render->add_user_tracks($render->data_source);
     $render->update_state();
@@ -115,6 +131,11 @@ sub render  { shift->{render}               }
 sub session { shift->render->session        }
 sub cookie  { shift->render->create_cookie  }
 sub source  { shift->render->data_source    }
+
+sub destroy { my $self = shift;
+	      $self->{render}->destroy;
+	      undef $self->{render};
+}
 
 sub header {
     my $self   = shift;
@@ -281,6 +302,7 @@ sub render_tracks {
 						      image_class       => $format,
 						      flip              => $flip,
 						      -key_style        => 'between',
+						      -suppress_key     => 0,
 						      }
 						  );
     

@@ -1,7 +1,10 @@
 bin/auto_install_databases.pl
+bin/bed2gff3.pl
 bin/bp_load_gff.pl
+bin/gbrowse_change_passwd.pl
 bin/gbrowse_clean.pl
-bin/gbrowse_create_useraccount_db.pl
+bin/gbrowse_create_account.pl
+bin/gbrowse_metadb_config.pl
 bin/gbrowse_netinstall.pl
 bin/gbrowse_netinstall2.pl
 bin/gbrowse_set_admin_passwd.pl
@@ -20,7 +23,6 @@ bin/report_missing_language_tags.pl
 bin/scan_gbrowse.pl
 bin/ucsc_genes2gff.pl
 bin/wiggle2gff3.pl
-bin/windows_install.pl
 Build.PL
 cgi-bin/das
 cgi-bin/gbgff
@@ -70,6 +72,7 @@ conf/plugins/FBTableDumper.pm
 conf/plugins/FilterTest.pm
 conf/plugins/GeneFinder.pm
 conf/plugins/OligoFinder.pm
+conf/plugins/PamAuthenticate.pm
 conf/plugins/PrimerDesigner.pm
 conf/plugins/ProteinDumper.pm
 conf/plugins/RandomGene.pm
@@ -81,6 +84,8 @@ conf/plugins/SourceTrackFinder.pm
 conf/plugins/Spectrogram.pm
 conf/plugins/Submitter.pm
 conf/plugins/test.pm
+conf/plugins/TestAuthenticator.pm
+conf/plugins/TestAuthorizer.pm
 conf/plugins/TestFinder.pm
 conf/plugins/TrackDumper.pm
 conf/plugins/TrackFinder.pm
@@ -230,6 +235,7 @@ htdocs/images/balloons/GPlain/down_right.png
 htdocs/images/balloons/GPlain/up_left.png
 htdocs/images/balloons/GPlain/up_right.png
 htdocs/images/buttons/ajax-loader.gif
+htdocs/images/buttons/cursor-ewmove.cur
 htdocs/images/buttons/dark_0.4_pixel.png
 htdocs/images/buttons/download.png
 htdocs/images/buttons/ex.png
@@ -271,6 +277,8 @@ htdocs/images/buttons/red5.gif
 htdocs/images/buttons/red6.gif
 htdocs/images/buttons/red7.gif
 htdocs/images/buttons/red8.gif
+htdocs/images/buttons/ruler-icon.png
+htdocs/images/buttons/ruler.png
 htdocs/images/buttons/share.png
 htdocs/images/buttons/sortable.gif
 htdocs/images/buttons/sorted_down.gif
@@ -306,27 +314,24 @@ htdocs/images/help/worm_telomeric_spec.png
 htdocs/images/help/yeast_I_genes_spec.png
 htdocs/images/openid/aim-logo.png
 htdocs/images/openid/blogspot-logo.png
+htdocs/images/openid/google-logo.gif
 htdocs/images/openid/livejournal-logo.png
 htdocs/images/openid/myopenid-logo.png
 htdocs/images/openid/openid-logo.gif
 htdocs/images/openid/yahoo-logo.png
 htdocs/index.html
 htdocs/js/ajax_upload.js
-htdocs/js/animation.js
 htdocs/js/autocomplete.js
 htdocs/js/balloon.config.js
 htdocs/js/balloon.js
 htdocs/js/box.js
 htdocs/js/builder.js
 htdocs/js/buttons.js
-htdocs/js/connection.js
 htdocs/js/controller.js
 htdocs/js/controls.js
 htdocs/js/detailSelect.js
-htdocs/js/dom.js
 htdocs/js/dragdrop.js
 htdocs/js/effects.js
-htdocs/js/event.js
 htdocs/js/GBox.js
 htdocs/js/karyotype.js
 htdocs/js/login.js
@@ -335,6 +340,7 @@ htdocs/js/overviewSelect.js
 htdocs/js/prototype.js
 htdocs/js/regionSelect.js
 htdocs/js/rubber.js
+htdocs/js/ruler.js
 htdocs/js/scriptaculous.js
 htdocs/js/scrollfix.js
 htdocs/js/slider.js
@@ -345,10 +351,9 @@ htdocs/js/tabs.js
 htdocs/js/toggle.js
 htdocs/js/track.js
 htdocs/js/track_configure.js
+htdocs/js/track_pan.js
 htdocs/js/unittest.js
 htdocs/js/x_cook.js
-htdocs/js/yahoo-dom-event.js
-htdocs/js/yahoo.js
 htdocs/tutorial/bin/expression_levels.pl
 htdocs/tutorial/bin/make_exon.pl
 htdocs/tutorial/bin/random_dna.pl
@@ -542,6 +547,7 @@ lib/Bio/Graphics/Browser2/Markup.pm
 lib/Bio/Graphics/Browser2/OptionPick.pm
 lib/Bio/Graphics/Browser2/PadAlignment.pm
 lib/Bio/Graphics/Browser2/Plugin.pm
+lib/Bio/Graphics/Browser2/Plugin/AuthPlugin.pm
 lib/Bio/Graphics/Browser2/PluginSet.pm
 lib/Bio/Graphics/Browser2/Realign.pm
 lib/Bio/Graphics/Browser2/Region.pm
@@ -549,6 +555,7 @@ lib/Bio/Graphics/Browser2/RegionSearch.pm
 lib/Bio/Graphics/Browser2/RemoteSet.pm
 lib/Bio/Graphics/Browser2/Render.pm
 lib/Bio/Graphics/Browser2/Render/HTML.pm
+lib/Bio/Graphics/Browser2/Render/Login.pm
 lib/Bio/Graphics/Browser2/Render/Slave.pm
 lib/Bio/Graphics/Browser2/Render/Slave/Status.pm
 lib/Bio/Graphics/Browser2/RenderPanels.pm
@@ -556,7 +563,10 @@ lib/Bio/Graphics/Browser2/Session.pm
 lib/Bio/Graphics/Browser2/Shellwords.pm
 lib/Bio/Graphics/Browser2/SubtrackTable.pm
 lib/Bio/Graphics/Browser2/TrackDumper.pm
+lib/Bio/Graphics/Browser2/UserDB.pm
 lib/Bio/Graphics/Browser2/UserTracks.pm
+lib/Bio/Graphics/Browser2/UserTracks/Database.pm
+lib/Bio/Graphics/Browser2/UserTracks/Filesystem.pm
 lib/Bio/Graphics/Browser2/Util.pm
 lib/Bio/Graphics/GBrowseFeature.pm
 lib/Bio/Graphics/Karyotype.pm
@@ -575,7 +585,7 @@ libalign/README
 libalign/realign.h
 LICENSE
 Makefile.PL
-MANIFEST			This list of files
+MANIFEST
 META.yml
 README
 README.fedora_and_selinux

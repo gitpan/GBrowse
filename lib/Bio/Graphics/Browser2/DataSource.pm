@@ -167,6 +167,14 @@ sub userdata {
     return $globals->user_dir($self->name,@path);
 }
 
+sub admindata {
+    my $self = shift;
+    my @path = @_;
+    my $globals = $self->globals;
+    return $self->userdata(@path) unless $globals->admin_dbs;
+    return $globals->admin_dir($self->name,@path);
+}
+
 sub taxon_id {
     my $self = shift;
     my $meta = $self->metadata or return;
@@ -241,6 +249,38 @@ sub cache_time {
 sub config {
   my $self = shift;
   return $self;
+}
+
+sub must_authenticate {
+    my $self = shift;
+    my $restrict = $self->global_setting('restrict') ||
+	           $self->globals->data_source_restrict($self->name)
+		   or return;
+    return $restrict =~ /require\s+(valid-user|user|group)/;
+}
+
+sub auth_plugin { shift->globals->auth_plugin }
+
+sub details_multiplier {
+    my $self  = shift;
+    my $state = shift;
+
+    my $value = $self->global_setting('details multiplier') || 1;
+    $value = 1  if ($value < 1);  #lower limit 
+    $value = 25 if ($value > 25); #set upper limit for performance reasons (prevent massive image files)
+    
+    return $value unless $state;
+    foreach (qw(seg_min seg_max view_start view_stop)) {
+	return $value unless defined $state->{$_};
+    }
+
+    my $max_length     = $state->{seg_max}   - $state->{seg_min};
+    my $request_length = $state->{view_stop} - $state->{view_start};
+    if (($max_length > 0) && ($request_length > 0) && (($request_length * $value) > $max_length)) {
+	return $max_length / $request_length; #limit details multiplier so that region does not go out of bounds
+    }
+
+    return $value;
 }
 
 sub unit_label {
@@ -410,12 +450,13 @@ sub show_summary {
     my $self = shift;
     my ($label,$length,$settings) = @_;
     $settings ||= {};
+    return 0 if defined $settings->{features}{$label}{summary_mode_len} &&
+	!$settings->{features}{$label}{summary_mode_len};
     my $c  = $settings->{features}{$label}{summary_mode_len}
           || $self->semantic_fallback_setting($label=>'show summary',$length);
     my $g  = $self->semantic_fallback_setting($label=>'glyph',$length);
     my $class = 'Bio::Graphics::Glyph::'.$g;
     eval "require $class" unless $class->can('new');
-
     return 0 if    $class->isa('Bio::Graphics::Glyph::xyplot')
 	        or $class->isa('Bio::Graphics::Glyph::minmax');
     return 0 if $self->semantic_fallback_setting($label=>'global feature',$length);
@@ -450,6 +491,14 @@ sub is_usertrack {
     my $self  = shift;
     my $label = shift;
     return exists $self->{_user_tracks}{config}{$label};
+}
+
+sub is_remotetrack {
+    my $self  = shift;
+    my $label = shift;
+    (my $base = $label) =~ s/:\w+$//;
+    return exists $self->{config}{$base}{'remote feature'} 
+        || exists $self->{config}{$label}{'remote feature'};
 }
 
 sub category_open {
@@ -632,7 +681,8 @@ sub type2label {
 sub _type2label {
     my $self = shift;
     my ($storage_hash,$type,$dbid) = @_;
-    my $type2label = $storage_hash->{_type2label} 
+
+    my $type2label = $storage_hash->{_type2label}{$storage_hash}
                  ||= $self->invert_types($storage_hash->{config});
     $dbid =~ s/:database$//;
     my @labels = keys %{$type2label->{lc $type}{$dbid}};
@@ -666,12 +716,12 @@ sub invert_types {
 
   my %inverted;
   for my $label (keys %{$config}) {
-    my $feature = $self->setting($label => 'feature') or next;
-    my ($dbid)  = $self->db_settings($label) or next;
-    $dbid =~ s/:database$//;
-    foreach (shellwords($feature||'')) {
-      $inverted{lc $_}{$dbid}{$label}++;
-    }
+      my $feature = $self->setting($label => 'feature') or next;
+      my ($dbid)  = $self->db_settings($label) or next;
+      $dbid =~ s/:database$//;
+      foreach (shellwords($feature||'')) {
+	  $inverted{lc $_}{$dbid}{$label}++;
+      }
   }
   \%inverted;
 }

@@ -1,5 +1,8 @@
 #!/usr/bin/perl 
 
+eval 'exec /usr/bin/perl  -S $0 ${1+"$@"}'
+    if 0; # not running under some shell
+
 use strict;
 use CGI;
 use Bio::Graphics::Browser2;
@@ -26,7 +29,9 @@ if ($fcgi) {
         %ENV = (%sys_env, %ENV);
 	my $globals = Bio::Graphics::Browser2->open_globals;
 	CGI->initialize_globals();
-	Bio::Graphics::Browser2::Render::HTML->new($globals)->run();
+	my $render =Bio::Graphics::Browser2::Render::HTML->new($globals);
+	$render->run();
+	$render->destroy;
     }
 } else {
     $SIG{TERM} = sub { warn "gbrowse going down..."; CORE::exit 0 };
