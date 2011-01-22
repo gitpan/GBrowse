@@ -11,7 +11,7 @@ var Ajax_Status_Updater;
 AIM = {
 	frame: function(c) {
 		var n = 'f' + Math.floor(Math.random() * 99999);
-		var d = document.createElement('DIV');
+		var d = Element.extend(document.createElement('DIV'));
 		d.update( new Element("iframe", {src: "about:blank", id: n, name: n}).observe("load", function() { AIM.loaded(n) }).setStyle({display: "none"}));
 		document.body.appendChild(d);
  
@@ -51,14 +51,17 @@ AIM = {
 }
 
 function selectUpload(upload_id) {
-    if (upload_container = $$("div[id=" + upload_id + "]")[0].down("div.upload_field")) // We're dealing with an upload field.
+    var containers = $$("div[id=" + upload_id + "]");
+    if (containers.length == 0) return false;
+
+    if (containers[0].down("div.upload_field")) // We're dealing with an upload field.
 		status_selector = "*#" + upload_id + "_status";
 	else if(upload_container = $$("div[class~=custom_track][id=" + upload_id + "]")[0])	// We're dealing with an uploaded file in the main listing.
 		status_selector = "div[id$='_status']";
 	else    // Couldn't find the item, return false.
 		return false;
     var status_container = upload_container.down(status_selector);
-	return {upload: upload_container, status: status_container};
+    return {upload: upload_container, status: status_container};
 }
 
 // Visually indicates an upload (whether uploaded already, or in the process of uploading) as "busy".
@@ -66,17 +69,18 @@ function showUploadBusy(upload_id, message) {
 	message = typeof(message) != 'undefined' ? message : Controller.translate('WORKING');
 	var spinner = new Element("img", {src: Controller.button_url('spinner.gif'), alt: Controller.translate('WORKING'), "class": "busy_signal"});
 	var containers = selectUpload(upload_id);
+	if (!containers) return;
 	
 	// If it's condensed, just show the spinner. If the details are shown, show the message too.
 	if (!containers.upload.down("div.details").visible())
-    	containers.upload.down("h1").insert({top: spinner});
-    else {
+	    containers.upload.down("h1").insert({top: spinner});
+	else {
 	    containers.status.update();
-        containers.status.insert({bottom: spinner});
-        containers.status.insert({bottom: "&nbsp;"});
-        containers.status.insert({bottom: message});
-        if (!containers.status.visible())
-		    Effect.BlindDown(containers.status, {duration: 0.25});
+	    containers.status.insert({bottom: spinner});
+	    containers.status.insert({bottom: "&nbsp;"});
+	    containers.status.insert({bottom: message});
+	    if (!containers.status.visible())
+		Effect.BlindDown(containers.status, {duration: 0.25});
 	}
 	return true;
 }
@@ -114,18 +118,24 @@ function showUploadError(upload_id, message) {
 
 // Cleanly removes an element, with a nice blinds-up effect.
 function cleanRemove(element, speed) {
-	speed = (typeof(speed) != 'undefined')? speed : 0.25;
-	Effect.BlindUp(element, {duration: speed, afterFinish: function() { element.remove() } });
+    speed = (typeof(speed) != 'undefined')? speed : 0.25;
+    Effect.BlindUp(element, {duration: speed, afterFinish: function() { 
+		try {
+		    element.remove() 
+			} catch (e) { } }});
 }
 
 // Start AJAX Upload - Sends the AJAX request and sets the busy indicator.
 function startAjaxUpload(upload_id) {
 	var status       = $(upload_id + '_status');
 	var upload_form  = $(upload_id + '_form');
-	upload_form.hide();
+	if ($(upload_form))
+	    upload_form.hide();
 	
 	// Create & insert the status update elements.
-	status.update(new Element("img", {href: Controller.button_url('spinner.gif')}) );
+	var spinner = Controller.button_url('spinner.gif');
+	// var img = new Element('img', {'href': spinner}); // broken in IE; don't know why
+	status.update('<img src="'+spinner+'" />');
 	status.insert(new Element("span").update(Controller.translate('UPLOADING')));
 	var cancel = new Element("a", {href: 'javascript:void(0)'}).update("[" + Controller.translate('CANCEL') + "]");
 	cancel.observe("click", function() {
@@ -140,12 +150,11 @@ function startAjaxUpload(upload_id) {
 		Ajax_Status_Updater = new Hash();
 	
 	var updater = new Ajax.PeriodicalUpdater(
-		{
-			success: status.down('span'),
-			frequency: 2	// Don't set this too low, otherwise the first status request will happen before the uploads hash (in $state) is updated.
-		},
+	        status,
 		document.URL,
-		{	parameters: {
+		{	method: 'post',
+			frequency: 2,  // Don't set this too low, otherwise the first status request will happen before the uploads hash (in $state) is updated.
+			parameters: {
 				action: 'upload_status',
 				upload_id: upload_id
 			},
@@ -154,7 +163,8 @@ function startAjaxUpload(upload_id) {
 				if (transport.responseText.match(/complete/)) {
 					Ajax_Status_Updater.get(upload_id).stop();
 					var sections = new Array(custom_tracks_id, track_listing_id);
-					if (using_database()) sections.push(community_tracks_id);
+					if (using_database())
+						sections.push(community_tracks_id);
 					Controller.update_sections(sections);
 				}
 			}
@@ -174,48 +184,56 @@ function completeAjaxUpload(response, upload_id, field_type) {
 		r = response.evalJSON(true);
 	} catch(e) { 
     	r = {
-	    success:     false, 
+       		success:     false, 
             uploadName: 'Uploaded file',
             error_msg:  Controller.translate('UPLOAD_ERROR')
     	}
     }
-	
+    
 	if (r.success) {
-	    var fields = new Array(track_listing_id, custom_tracks_id);
-	    var updater = Ajax_Status_Updater.get(upload_id);
-	    if (updater != null) updater.stop();
-	    cleanRemove($(upload_id));
-
-	    if (using_database()) fields.push(community_tracks_id);
-
-	    // Add any tracks returned to the Controller.
-	    if (r.tracks != null && r.tracks.length > 0) {
-		Controller.add_tracks(
-				      r.tracks,
-				      function() {
-					  Controller.update_sections(
-								     fields,
-								     '',
-								     false,
-								     false);
-					      }
-				      );
-	    }
+		var fields = new Array(track_listing_id, custom_tracks_id)
+		if (using_database())
+			fields.push(community_tracks_id);
+		// Add any tracks returned to the Controller.
+		if (r.tracks != null && r.tracks.length > 0) {
+			Controller.add_tracks(
+				r.tracks,
+				function() { 
+					Controller.update_sections(
+						fields,
+						'',
+						false,
+						false,
+						function() {
+							var updater = Ajax_Status_Updater.get(upload_id);
+							if (updater != null)
+								updater.stop()
+							cleanRemove($(upload_id));
+						}
+					)
+				}
+			);
+		} else {
+			// If no tracks were returned, just stop the updater & remove the upload field.
+			var updater = Ajax_Status_Updater.get(upload_id);
+			if (updater != null) updater.stop();
+			cleanRemove($(upload_id));
+		}
 	} else {
-	    // Remove the updater, and display the error returned.
-	    if (Ajax_Status_Updater.get(upload_id) !=null)
-		Ajax_Status_Updater.get(upload_id).stop();
-	    Ajax_Status_Updater.unset(upload_id);
-	    var status = $(upload_id + '_status');
-	    var msg =  new Element("div").setStyle({"background-color": "pink", "padding": "5px"});
-	    msg.insert({bottom: new Element("b").update(r.uploadName) });
-	    msg.insert({bottom: "&nbsp;" + r.error_msg + "&nbsp;"});
-	    var remove_link = new Element("a", {href: "javascript:void(0)"}).update(Controller.translate('REMOVE_MESSAGE'));
-	    remove_link.observe("click", function() {
-		    Effect.BlindUp($(upload_id), {duration: 0.25, afterFinish: function() { $(upload_id).remove() } });
+		// Remove the updater, and display the error returned.
+		if (Ajax_Status_Updater.get(upload_id) !=null)
+		     Ajax_Status_Updater.get(upload_id).stop();
+		Ajax_Status_Updater.unset(upload_id);
+		var status = $(upload_id + '_status');
+		var msg =  new Element("div").setStyle({"background-color": "pink", "padding": "5px"});
+		msg.insert({bottom: new Element("b").update(r.uploadName) });
+		msg.insert({bottom: "&nbsp;" + r.error_msg + "&nbsp;"});
+		var remove_link = new Element("a", {href: "javascript:void(0)"}).update(Controller.translate('REMOVE_MESSAGE'));
+		remove_link.observe("click", function() {
+			Effect.BlindUp($(upload_id), {duration: 0.25, afterFinish: function() { $(upload_id).remove() } });
 		});
-	    msg.insert({bottom: remove_link});
-	    status.update(msg);
+		msg.insert({bottom: remove_link});
+		status.update(msg);
 	}
 	return true;
 }
@@ -254,35 +272,41 @@ function editUploadConf (fileid) {
 
 function editUpload (fileid, sourceFile) {
     var container = selectUpload(fileid);
-	var editDiv = container.upload.down("*[id$=_form]").id;
-	var editID  = 'edit_' + Math.floor(Math.random() * 99999);
-	$(editDiv).hide();
+    var editDiv = container.upload.down("*[id$=_form]").id;
+    var editID  = 'edit_' + Math.floor(Math.random() * 99999);
+    $(editDiv).hide();
 	
-	//Add the fields, cancel link and submit button.
-	$(editDiv).update("<p><b>" + Controller.translate('EDITING_FILE', sourceFile) + "</b></p>");
-	$(editDiv).insert({bottom: new Element("textarea", {id: editID, cols: "120", rows: "20", wrap: "off"}).update(Controller.translate('FETCHING')) });
-	$(editDiv).insert({bottom: new Element("p")});
+    //Add the fields, cancel link and submit button.
+    $(editDiv).update("<p><b>" + Controller.translate('EDITING_FILE', sourceFile) + "</b></p>");
+    $(editDiv).insert({bottom: new Element("textarea", {id: editID, cols: "120", rows: "20", wrap: "off"}).update(Controller.translate('FETCHING')) });
+    $(editDiv).insert({bottom: new Element("p")});
 	
-	var cancel = new Element("a", {href: "javascript:void(0)"}).update(Controller.translate('CANCEL'))
+    var cancel = new Element("a", {href: "javascript:void(0)"}).update(Controller.translate('CANCEL'))
 	cancel.observe("click", function() {
-	    Effect.BlindUp($(editDiv), {duration: 0.5 })
-	});
-	$(editDiv).down("p", 1).update("&nbsp;").insert({bottom: cancel});
+		Effect.BlindUp($(editDiv), {duration: 0.5 })
+	    });
+    $(editDiv).down("p", 1).update("&nbsp;").insert({bottom: cancel});
 	
-	var submit = new Element("button").update(Controller.translate('SUBMIT'));
-	submit.observe("click", function() {
-		Controller.uploadUserTrackSource(editID, fileid, sourceFile, editDiv);
+    var submit = new Element("button").update(Controller.translate('SUBMIT'));
+    submit.observe("click", function() {
+	    Controller.uploadUserTrackSource(editID, fileid, sourceFile, editDiv);
 	});
-	$(editDiv).down("p", 1).insert("&nbsp;").insert({bottom: submit });
-	
-	Effect.BlindDown($(editDiv), {duration: 0.5});
-	Controller.downloadUserTrackSource(editID, fileid, sourceFile);
+    $(editDiv).down("p", 1).insert("&nbsp;").insert({bottom: submit });
+    
+    Effect.BlindDown($(editDiv), {duration: 0.5});
+    Controller.downloadUserTrackSource(editID, fileid, sourceFile);
+}
+
+function loadURL (fileid, mirrorURL, gothere) {
+    var container = new Element('div',{id:fileid});
+    $('custom_list_start').insert(container);
+    Controller.mirrorTrackSource(mirrorURL, fileid, container, gothere, true);
 }
 
 function reloadURL (fileid, mirrorURL) {
     showUploadBusy(fileid, "Reloading...");
-	var statusDiv = fileid + "_editfield";
-	Controller.mirrorTrackSource(mirrorURL, fileid, statusDiv);
+    var statusDiv = fileid + "_editfield";
+    Controller.mirrorTrackSource(mirrorURL, fileid, statusDiv);
 }
 
 function addAnUploadField(after_element, action, upload_prompt, remove_prompt, field_type, help_link) {
@@ -399,28 +423,28 @@ function shareFile(fileid, userid) {
 
 // Unshares a file with the specific userid (or the logged-in user, if userid is blank). A front-end to UserTracks::unshare().
 function unshareFile(fileid, userid) {
-    showUploadBusy(fileid, Controller.translate('REMOVING'));
-    var cdo    = $('community_display_offset');
-    var offset = cdo ? cdo.value : 0;
-    new Ajax.Request(
-		     document.URL,
-		     {
-			 method: 'post',
-			     parameters: {
-			     action: 'unshare_file',
-				 fileid: fileid,
-				 userid: userid
-				 },
-			     onSuccess: function (transport) {
-			     var sections = new Array(custom_tracks_id, track_listing_id);
-			     if (using_database())
-				 sections.push(community_tracks_id);
-			     Controller.update_sections(sections, "&offset=" + offset);
-			     var tracks = transport.responseText.evalJSON(true).tracks;
-			     if (tracks != null)
-				 tracks.each(function(tid) { Controller.delete_tracks(tid) });
-			 }
-		     });
+	showUploadBusy(fileid, Controller.translate('REMOVING'));
+	var offset = $("community_display_offset").value;
+	new Ajax.Request(
+		document.URL,
+		{
+			method: 'post',
+			parameters: {
+				action: 'unshare_file',
+				fileid: fileid,
+				userid: userid
+			},
+			onSuccess: function (transport) {
+				var sections = new Array(custom_tracks_id, track_listing_id);
+				if (using_database())
+					sections.push(community_tracks_id);
+				Controller.update_sections(sections, "&offset=" + offset);
+				var tracks = transport.responseText.evalJSON(true).tracks;
+				if (tracks != null)
+					tracks.each(function(tid) { Controller.delete_tracks(tid) });
+			}
+		}
+	);
 }
 
 // Updates the public file listing. If given, searches by keyword or provides and offset.

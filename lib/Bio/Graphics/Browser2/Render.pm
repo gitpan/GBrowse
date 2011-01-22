@@ -998,7 +998,7 @@ sub get_post_load_functions {
     if (my $url = param('eurl')) {
 	    my $trackname = $self->user_tracks->escape_url($url);
 	    push @fun,'Controller.select_tab("custom_tracks_page")';
-	    push @fun,"reloadURL('$trackname','$url',true)";
+	    push @fun,"loadURL('$trackname','$url',true)";
     }
     return @fun;
 }
@@ -1556,7 +1556,7 @@ sub add_remote_tracks {
     for my $url (@$urls) {
 	my $name = $user_tracks->create_track_folder($url);
 	my ($result,$msg,$tracks) 
-	    = $user_tracks->mirror_url($name,$url,1);
+	    = $user_tracks->mirror_url($name,$url,1,$self);
 	warn "[$$] $url: result=$result, msg=$msg, tracks=@$tracks" if DEBUG;
 	push @tracks,@$tracks;
     }
@@ -1614,7 +1614,7 @@ sub write_auto {
 
 sub handle_download_userdata {
     my $self = shift;
-    my $ftype    = param('userdata_download')    or return;
+    my $ftype   = param('userdata_download')    or return;
     my $file   = param('track')                or return;
 
     my $userdata = $self->user_tracks;
@@ -1635,11 +1635,11 @@ sub handle_download_userdata {
     if ($is_text) {
 	# try to make the file match the native line endings
 	# not necessary?
-	# my $eol = $self->guess_eol();
+	my $eol = $self->guess_eol();
 	while (<$f>) {
-	    print;
-         #	chomp;
-	 #      print $_,$eol;
+	    # print;
+	    s/[\r\n]+$//;
+	    print $_,$eol;
 	}
     } else {
 	my $buffer;
@@ -2011,7 +2011,6 @@ sub add_track_to_state {
   return unless $potential_tracks{$label};
 
   my %current = map {$_=> 1} @{$state->{tracks}};
-#  push @{$state->{tracks}},$label unless $current{$label};   # on bottom
   unshift @{$state->{tracks}},$label unless $current{$label}; # on top (better)
 
   warn "[$$]ADD TRACK TO STATE WAS: ",
@@ -3877,6 +3876,10 @@ sub fork {
     else {
 	Bio::Graphics::Browser2::DataBase->clone_databases();
 	Bio::Graphics::Browser2::Render->prepare_fcgi_for_fork('child');
+	if (ref $self) {
+	    $self->userdb->clone_database()      if $self->userdb;
+	    $self->user_tracks->clone_database() if $self->user_tracks;
+	}
     }
 
     return $child;

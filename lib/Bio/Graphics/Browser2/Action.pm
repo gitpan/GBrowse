@@ -1,6 +1,6 @@
 package Bio::Graphics::Browser2::Action;
 
-#$Id: Action.pm 24381 2011-01-18 22:33:05Z lstein $
+#$Id: Action.pm 24408 2011-01-22 17:14:49Z lstein $
 # dispatch
 
 use strict;
@@ -480,7 +480,7 @@ sub ACTION_upload_file {
 	($result,$msg,$tracks,$pid) = (1,'shared track added to your session',$t,$$);
     }
     else {
-	($result, $msg, $tracks, $pid) = $url  ? $usertracks->mirror_url($track_name, $url, 1)
+	($result, $msg, $tracks, $pid) = $url  ? $usertracks->mirror_url($track_name, $url, 1,$self->render)
                                         :$data ? $usertracks->upload_data($track_name, $data, $content_type, 1)
                                                : $usertracks->upload_file($track_name, $fh, $content_type, $overwrite);
     }
@@ -501,9 +501,12 @@ sub ACTION_upload_file {
 		tracks		=> $tracks,
 		uploadName	=> $name,
     };
-    
-    return (200, 'text/html', JSON::to_json($return_object));
-    #return (200, 'application/json', $return_object);
+
+    if ($q->param('forcejson')) {
+	return (200, 'application/json', $return_object);
+    } else {
+	return (200, 'text/html', JSON::to_json($return_object));
+    }
 }
 
 sub ACTION_import_track {
@@ -580,12 +583,13 @@ sub ACTION_upload_status {
     my $render     = $self->render;
 	
     if ($file_name = $state->{uploads}{$upload_id}[0]) {
-		my $usertracks = $render->user_tracks;
-		my $file = $usertracks->database? $usertracks->get_file_id($file_name) : $file_name;
-		$status		   = $usertracks->status($file);
-		return (200,'text/html', "<b>$file_name:</b> <i>$status</i>");
+	my $usertracks = $render->user_tracks;
+	my $file = $usertracks->database? $usertracks->get_file_id($file_name) : $file_name;
+	$status		   = $usertracks->status($file);
+	return (200,'text/html', "<b>$file_name:</b> <i>$status</i>");
     } else {
-		return (500,'text/html', "not found");
+	my $waiting = $render->translate('PENDING');
+	return (200,'text/html', "<i>$waiting</i>");
     }
 }
 
@@ -628,7 +632,7 @@ sub ACTION_set_upload_title {
 
     my $state       = $self->state;
     my $render      = $self->render;
-    my $file = $q->param('upload_id') or confess "No file given to set_upload_title.";
+    my $file = $q->param('upload_id')  or confess "No file given to set_upload_title.";
     my $new_title = $q->param('title') or confess "No new title given to set_upload_title.";
 
     my $usertracks = $render->user_tracks;

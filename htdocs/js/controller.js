@@ -3,7 +3,7 @@
 
  Lincoln Stein <lincoln.stein@gmail.com>
  Ben Faga <ben.faga@gmail.com>
- $Id: controller.js 24365 2011-01-14 15:39:25Z lstein $
+ $Id: controller.js 24408 2011-01-22 17:14:49Z lstein $
 
 Indentation courtesy of Emacs javascript-mode 
 (http://mihai.bazon.net/projects/emacs-javascript-mode/javascript.el)
@@ -453,7 +453,7 @@ var GBrowseController = Class.create({
     },
 
     add_tracks:
-    function(track_names, onSuccessFunc, force) {
+    function(track_names, onSuccessFunc, force, onTop) {
 
         if (force == null)
             force = false;
@@ -499,7 +499,7 @@ var GBrowseController = Class.create({
                     var html           = this_track_data.track_html;
                     var panel_id       = this_track_data.panel_id;
 
-                    Controller.append_child_from_html(html,$(panel_id));
+                    Controller.append_child_from_html(html,$(panel_id),onTop);
 
                     if (this_track_data.display_details == 0) {
                         $(ret_gbtrack.track_image_id).setOpacity(0);
@@ -910,56 +910,6 @@ var GBrowseController = Class.create({
             detailsdiv.show();
         }
     },
-
-    show_info_message:
-    function (action,width) {
-        if (width == null) width=300;
-	var dim     = document.body.getDimensions();
-	var info = $('info_container');
-	if (info == null) {
-	    info        = new Element('div',{id:'info_container'});
-	    info.setStyle({position: 'absolute',
-			   zIndex:   100000,
-			   display:'none'});
-	    document.body.appendChild(info);
-
-	    var abs_container = new Element('div',{id:'abs_info_container'});
-	    info.appendChild(abs_container);
-
-	    var content = new Element('div',{id:'info_content'});
-	    abs_container.appendChild(content);
-	    var button = new Element('input',{type:'button',
-					      style:'float:right',
-					      id:'info_button',
-					      value:this.translate('OK')});
-	    // button.insert('&nbsp;'); // needed to close tag
-	    button.observe('click',function(ev) {$('info_container').hide()});
-	    content.insert({after:button});
-	}
-	// double containment necessary to avoid IE zindex bug!
-	$('info_container').setStyle( {
-		position: 'absolute',
-		backgroundColor: 'white',
-	        top:      '50px',
-		left:     Math.round((dim.width-width)/4)+'px',
-		zIndex:   10000,
-		width:   width+'px'
-	    });
-        $('abs_info_container').setStyle( {
-		position: 'absolute',
-		backgroundColor: 'white',
-	        top:      '0px',
-		left:     '0px',
-		border:   'double',
-		padding: '5px',
-		zIndex:  100001
-	    });
-	new Ajax.Updater('info_content',
-			 document.URL,{ 
-			     parameters: { action: action } ,
-			     onSuccess: function (t) { $('info_container').show()}
-	});
-    },
     
     edit_upload_title:
     function(upload_name, title_element) {
@@ -1081,19 +1031,21 @@ var GBrowseController = Class.create({
     // with source or configuration data for the track
     downloadUserTrackSource:
     function (destination, fileid, sourceFile) {
-        new Ajax.Updater(
-            destination,
+        new Ajax.Request (
             document.URL, 
             {
                 method: 'post',
                 parameters: {
                     userdata_download: sourceFile,
                     track: fileid
-                }
+                },
+		onSuccess: function (t) { $(destination).value=t.responseText }
             }
         );
     },
 
+
+    // This is really messed up and should be moved to ajax_upload.js
     _modifyUserTrackSource:
     function (param, statusElement, displayWhenDone) {
         var upload_id  = 'upload_' + Math.floor(Math.random() * 99999);
@@ -1125,7 +1077,12 @@ var GBrowseController = Class.create({
 				Controller.update_sections(sections);
                 if (displayWhenDone != null && displayWhenDone)
                     Controller.select_tab('main_page');
-            }
+		},
+	    onComplete: function (transport) { 
+		    var updater = Ajax_Status_Updater.get(upload_id);
+		    if (updater != null)       updater.stop();
+		    if (statusElement != null) cleanRemove(statusElement);
+		}
         });
 
     },
@@ -1147,12 +1104,14 @@ var GBrowseController = Class.create({
 
     // mirrorTrackSource() is called to mirror a URL to a track
     mirrorTrackSource:
-    function (sourceURL, fileid, statusElement, displayWhenDone) {
+    function (sourceURL, fileid, statusElement, displayWhenDone, forcejson) {
+	if (forcejson == null) forcejson=false;
         this._modifyUserTrackSource(
             {
-                action: 'upload_file',
+                action:     'upload_file',
                 mirror_url: sourceURL,
-                overwrite: 1
+                overwrite: 1,
+		forcejson: forcejson
             },
             statusElement,
             displayWhenDone

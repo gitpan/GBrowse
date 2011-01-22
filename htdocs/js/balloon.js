@@ -1,7 +1,7 @@
 /*
  balloon.js -- a DHTML library for balloon tooltips
 
- $Id: balloon.js 24365 2011-01-14 15:39:25Z lstein $
+ $Id: balloon.js 24406 2011-01-21 20:00:49Z lstein $
 
  See http://www.gmod.org/wiki/index.php/Popup_Balloons
  for documentation.
@@ -345,10 +345,6 @@ Balloon.prototype.doShowTooltip = function() {
   wrapper.id = 'contentWrapper';
   self.contents.appendChild(wrapper);
   wrapper.innerHTML = helpText;
-
-  // this partially fixes a bug in IE in which sticky balloons
-  // start failing to appear.
-  window.blur();
 
   // run any javascript in the thing -- sorry Sheldon
   if (self.evalScripts) {
