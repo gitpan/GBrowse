@@ -1,6 +1,6 @@
 package Bio::Graphics::Browser2::UserTracks;
 
-# $Id: UserTracks.pm 24406 2011-01-21 20:00:49Z lstein $
+# $Id: UserTracks.pm 24441 2011-01-29 16:03:07Z lstein $
 use strict;
 use Bio::Graphics::Browser2::DataSource;
 use Bio::Graphics::Browser2::DataLoader;
@@ -456,8 +456,8 @@ sub mirror_url {
     };
 
     if ($@ =~ /cancelled/) {
-		$self->delete_file($file);
-		return (0,'Upload process terminated',[]);
+	$self->delete_file($file);
+	return (0,'Upload process terminated',[]);
     }
 
     my $msg = $@;
