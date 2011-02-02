@@ -1,6 +1,6 @@
 package Bio::Graphics::Browser2::DataLoader::generic;
 
-# $Id: generic.pm 24319 2010-12-29 21:24:32Z lstein $
+# $Id: generic.pm 24451 2011-01-31 22:21:26Z lstein $
 use strict;
 use Bio::DB::SeqFeature::Store;
 use Carp 'croak';
@@ -71,6 +71,7 @@ sub finish_load {
 db_adaptor = Bio::DB::SeqFeature::Store
 db_args    = -adaptor $backend
              -dsn     $dsn
+search options = default +wildcard +stem
 
 #>>>>>>>>>> cut here <<<<<<<<
 END
