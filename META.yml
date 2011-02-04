@@ -38,7 +38,7 @@ provides:
     file: lib/Bio/DB/Tagger/mysql.pm
   Bio::Graphics::Browser2:
     file: lib/Bio/Graphics/Browser2.pm
-    version: 2.25
+    version: 2.26
   Bio::Graphics::Browser2::Action:
     file: lib/Bio/Graphics/Browser2/Action.pm
   Bio::Graphics::Browser2::AdminTracks:
@@ -173,7 +173,6 @@ provides:
   MyFeatureFileLoader:
     file: lib/Bio/Graphics/Browser2/DataLoader/featurefile.pm
 recommends:
-  Ace: 0
   Bio::DB::BigFile: 1
   Bio::DB::Sam: 1.2
   Bio::Das: 0
@@ -207,4 +206,4 @@ requires:
   perl: 5.008
 resources:
   license: http://dev.perl.org/licenses/
-version: 2.25
+version: 2.26
