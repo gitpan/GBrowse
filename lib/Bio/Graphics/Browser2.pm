@@ -1,8 +1,8 @@
 package Bio::Graphics::Browser2;
-# $Id: Browser2.pm 24577 2011-03-03 20:33:48Z lstein $
+# $Id: Browser2.pm 24798 2011-04-10 21:27:32Z lstein $
 # Globals and utilities for GBrowse and friends
 
-our $VERSION = '2.27';
+our $VERSION = '2.28';
 
 use strict;
 use warnings;
