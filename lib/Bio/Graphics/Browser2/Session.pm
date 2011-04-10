@@ -1,6 +1,6 @@
 package Bio::Graphics::Browser2::Session;
 
-# $Id: Session.pm 24441 2011-01-29 16:03:07Z lstein $
+# $Id: Session.pm 24785 2011-04-06 20:38:34Z lstein $
 
 use strict;
 use warnings;
@@ -14,6 +14,7 @@ use Digest::MD5 'md5_hex';
 use Carp 'carp';
 use constant LOCK_TIMEOUT => 10;
 eval "require Time::HiRes;";
+
 
 my $HAS_NFSLOCK;
 my $HAS_MYSQL;
@@ -66,6 +67,7 @@ sub new {
 sub load_session {
     my $self = shift;
     $self->session_argv(@_);
+#     print Dumper("session = "(\%{$self->session_argv(@_)});
     return CGI::Session->new($self->session_argv);
 }
 
@@ -368,6 +370,7 @@ sub config_hash {
   my $self = shift;
   my $source  = $self->source;
   my $session = $self->{session};
+
   $session->param($source=>{}) unless $session->param($source);
   return $session->param($source);
 }

@@ -1,5 +1,5 @@
 package Bio::Graphics::Browser2::DataLoader;
-# $Id: DataLoader.pm 24370 2011-01-14 20:01:01Z lstein $
+# $Id: DataLoader.pm 24786 2011-04-06 21:32:17Z lstein $
 
 use strict;
 use IO::File;
@@ -343,7 +343,7 @@ sub load_line {
 
 sub category {
     my $self = shift;
-    return $self->force_category || Bio::Graphics::Browser2::Util->translate('UPLOADED_TRACKS').':'.$self->track_name;
+    return $self->force_category || (Bio::Graphics::Browser2::Util->translate('UPLOADED_TRACKS')||'').':'.$self->track_name;
 }
 
 sub backend {

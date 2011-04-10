@@ -100,13 +100,15 @@ sub session {
     my $self = shift;
     my $d = $self->{session};
     $self->{session} = shift if @_;
+    warn "d= $d" if DEBUG;
+    warn "self->session= $self->{session}" if DEBUG;
     $d;
 }
 
 sub state {
   my $self = shift;
   my $d = $self->{state};
-  $STATE = $self->{state} = shift if @_;
+  $STATE = $self->{state}= shift if @_;
   $d;
 }
 
@@ -236,19 +238,20 @@ sub run {
 
   $self->set_source() && return;
 
-  warn "private session = ",$self->session->private  if $debug;
-  warn "username = ",       $self->session->username if $debug;
+  my $session = $self->session;
+  my $source  = $self->data_source;
+  $source->set_username($session->username) if $session->private;
 
-  if ($self->data_source->must_authenticate) {
-      if ($self->session->private && 
-	  $self->user_authorized_for_source($self->session->username))
+  if ($source->must_authenticate) {
+      if ($session->private && 
+	  $self->user_authorized_for_source($session->username))
       {
 	  # login session - make sure that the data source has the information needed
 	  # to restrict tracks according to policy
       } else {
 	  # authentication required, but not a login session, so initiate authentication request
 	  $self->force_authentication;
-	  $self->session->flush;
+	  $session->flush;
 	  return;
       }
   }
@@ -833,6 +836,7 @@ sub render_body {
   }
 
   $main_page .= $self->render_select_track_link;
+;
 
   my $tracks        = $self->render_tracks_section;
   my $community     = $self->user_tracks->database? $self->render_community_tracks_section : "";
@@ -2014,8 +2018,12 @@ sub add_track_to_state {
   warn "invalid track $label" if DEBUG && !$potential_tracks{$label};
   return unless $potential_tracks{$label};
 
-  my %current = map {$_=> 1} @{$state->{tracks}};
-  unshift @{$state->{tracks}},$label unless $current{$label}; # on top (better)
+#  my %current = map {$_=> 1} @{$state->{tracks}};
+#  unshift @{$state->{tracks}},$label unless $current{$label}; # on top (better)
+
+  # experimental -- force track to go to top
+  @{$state->{tracks}} = grep {$_ ne $label} @{$state->{tracks}};
+  unshift @{$state->{tracks}},$label;
 
   warn "[$$]ADD TRACK TO STATE WAS: ",
     join ' ',grep {$state->{features}{$_}{visible}} sort keys %{$state->{features}},"\n" if DEBUG;
@@ -2046,7 +2054,7 @@ sub track_visible {
 sub update_state_from_cgi {
   my $self  = shift;
   my $state = $self->state;
-
+warn "state = $state" if DEBUG;
   $self->update_options($state);
   $self->update_coordinates($state);
   $self->update_region($state);
@@ -2499,12 +2507,12 @@ sub asynchronous_update_sections {
             }
             else {
                 $return_object->{'plugin_configure_div'}
-                    = $self->translate('NOT_RECOGNIZED_PLUGIN',$plugin_base) . "\n";
+                    = $self->translate('NOT_RECOGNIZED_PLUGIN',$plugin_base)||'' . "\n";
             }
         }
         else {
             $return_object->{'plugin_configure_div'}
-                = $self->translate('NO_PLUGIN_SPECIFIED') . "\n";
+                = $self->translate('NO_PLUGIN_SPECIFIED')||'' . "\n";
         }
     }
 
@@ -3807,6 +3815,7 @@ sub image_link {
     my $width    = param('view_width') || $settings->{width};
     my $start    = param('view_start') || $settings->{view_start};
     my $stop     = param('view_stop')  || $settings->{view_stop};
+    $stop++;
     my $name     = "$settings->{ref}:$start..$stop";
     my $selected = $self->join_selected_tracks;
     my $options  = join '+',map { join '+', CGI::escape($_),$settings->{features}{$_}{options}

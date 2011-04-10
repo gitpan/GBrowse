@@ -11,6 +11,7 @@ use gbrowse_login;
 DROP TABLE IF EXISTS users;
 CREATE TABLE users (
     userid            integer not null PRIMARY KEY auto_increment,
+    gecos         varchar(64) not null,
     email         varchar(64) not null UNIQUE,
     pass          varchar(32) not null,
     remember          boolean not null,
@@ -27,13 +28,20 @@ CREATE TABLE openid_users (
     openid_url   varchar(128)          PRIMARY KEY
 ) ENGINE=InnoDB;
 
-DROP TABLE IF EXISTS sessions;
-CREATE TABLE sessions (
+DROP TABLE IF EXISTS session;
+CREATE TABLE session (
     userid            integer not null PRIMARY KEY auto_increment,
     username      varchar(32) not null,
     sessionid        char(32) not null UNIQUE,
     uploadsid        char(32) not null UNIQUE
+
 ) ENGINE=InnoDB;
+DROP TABLE IF EXISTS favorites; 
+CREATE TABLE favorites (
+    userid            integer not null PRIMARY KEY auto_increment,
+    username      varchar(32) not null, 
+    favorite	  varchar(32) not null
+)ENGINE=InnoDB;
 
 DROP TABLE IF EXISTS uploads;
 CREATE TABLE uploads (

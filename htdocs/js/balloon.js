@@ -1,7 +1,7 @@
 /*
  balloon.js -- a DHTML library for balloon tooltips
 
- $Id: balloon.js 24406 2011-01-21 20:00:49Z lstein $
+ $Id: balloon.js 24785 2011-04-06 20:38:34Z lstein $
 
  See http://www.gmod.org/wiki/index.php/Popup_Balloons
  for documentation.
@@ -41,6 +41,7 @@ var balloonIsSticky;
 var balloonInvisibleSelects;
 var balloonIsSuppressed;
 var tooltipIsSuppressed;
+var supportsTouch = ('createTouch' in document);
 
 
 //////////////////////////////////////////////////////////////////////////
@@ -344,7 +345,11 @@ Balloon.prototype.doShowTooltip = function() {
   var wrapper = document.createElement('div');
   wrapper.id = 'contentWrapper';
   self.contents.appendChild(wrapper);
-  wrapper.innerHTML = helpText;
+  if ('createTouch' in document) {
+  wrapper.innerHTML = helpText + Controller.translate('IPAD_BALLOON');
+  }else{
+    wrapper.innerHTML = helpText;
+  }
 
   // run any javascript in the thing -- sorry Sheldon
   if (self.evalScripts) {

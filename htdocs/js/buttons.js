@@ -28,12 +28,9 @@ function gbCheck (button,state) {
     }
     added_tracks = Controller.add_tracks(track_names);
   }
-
-  if  (!added_tracks) {
-    for (var i=0; i<checkboxes.length; i++) {
+  for (var i=0; i<checkboxes.length; i++) {
       checkboxes[i].checked = state;
       gbToggleTrack(checkboxes[i]);
-    }
   }
   gbTurnOff(a);
   button.checked = true;
@@ -49,6 +46,16 @@ function gbToggleTrack (button) {
 
 // ShowHideTrack toggles the visibility of "track", based on the "visible" flag.
 function ShowHideTrack(track_name,visible) {
+  var track_link  = $('link_'+track_name);
+  var ancestor   = track_link.ancestors().find(
+					function (el) {
+					    return el.nodeName == 'TD'
+					});
+  if (visible)
+      ancestor.addClassName('activeTrack');
+  else
+      ancestor.removeClassName('activeTrack');
+
   if (visible && !Controller.track_exists(track_name)) {
       Controller.add_track(track_name);
       return false;
@@ -57,11 +64,12 @@ function ShowHideTrack(track_name,visible) {
   Controller.each_track(track_name,function(gbtrack) {
        var el_id   = gbtrack.track_div_id;
        var element = $(el_id);
-
+       
        if (visible) {
            if (element.style.display == "none") { 
              element.style.display="block";
              Controller.set_track_visibility(gbtrack.track_id, 1);
+	     
            }
        }
        else {

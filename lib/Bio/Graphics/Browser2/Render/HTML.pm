@@ -189,7 +189,8 @@ sub render_navbar {
 				    ),
 				    td({-align=>'left'},
 				       $sliderform || '&nbsp;'
-				    )
+				    ),
+# 			
 				 )
 			   ),
 			   $self->html_frag('html3',$self->state)
@@ -349,7 +350,7 @@ sub render_html_head {
   push @scripts,{src=>"$js/$_"}
     foreach qw(
       buttons.js 
-      toggle.js 
+      trackFavorites.js
       karyotype.js
       rubber.js
       overviewSelect.js
@@ -641,14 +642,18 @@ sub render_instructions {
   : '';
 }
 
+
+
+
 # Renders the HTML for the spinning "busy" signal on the top-left corner of the page.
 sub render_busy_signal {
     my $self = shift;
+    
     return img({
         -id    => 'busy_indicator',
         -src   => $self->data_source->button_url.'/spinner.gif',
         -style => 'position: fixed; top: 5px; left: 5px; display: none',
-        -alt   => $self->translate('WORKING')
+        -alt   => ($self->translate('WORKING')||'')
        });
 }
 
@@ -790,11 +795,14 @@ sub galaxy_form {
 sub render_track_filter {
     my $self   = shift;
     my $plugin = shift;
-
+    
     my $form         = $plugin->configure_form();
     my $plugin_type  = $plugin->type;
     my $action       = $self->translate('Configure_plugin');
     my $name         = $plugin->name;
+
+    my $showfav   = $self->translate('FAVORITES');
+    my $showall   = $self->translate('SHOWALL');
 
     return
  	div({-id=>'track select',-style=>'padding-top:8px'},
@@ -810,221 +818,264 @@ sub render_track_filter {
 	    ),
 	    end_form(),
 	  script({-type=>'text/javascript'},
-		 "function doPluginUpdate() { Controller.reconfigure_plugin('$action',null,null,'$plugin_type',\$('track_filterform')) }")
+		 "function doPluginUpdate() { Controller.reconfigure_plugin('$action',null,null,'$plugin_type',\$('track_filterform'));updateTitle(\$('show_all_link'),0);}")
 	);
 }
 
 # This surrounds the track table with a toggle
 sub render_toggle_track_table {
   my $self     = shift;
-  my $html;
+  my $source   = $self->data_source;
+  my $filter = $self->track_filter_plugin;
+  my $settings = $self->state;
+  # $settings->{show_favorites} =0;
 
-  $html .= div({-style=>'font-weight:bold'},'<<',$self->render_select_browser_link('link'));
+  ## adding javascript array at the top so we can pass it into a js array -- ugly but it works
+  my $html = '';
+
+  $html .= div({-style=>'font-weight:bold'},
+	       span({-style=>'padding-right:80px'},'<<',$self->render_select_browser_link('link')),
+	       span({-id => 'showfavoritestext',-style=>'padding-right:80px'},
+		    $self->render_select_favorites_link('link')),
+	       span({-id => 'clearfavs'},
+		    $self->render_select_clear_link('link')));
 
   if (my $filter = $self->track_filter_plugin) {
       $html .= $self->toggle({tight=>1},'track_select',div({class=>'searchtitle',
-							    style=>"text-indent:2em;padding-top:8px"},
+							    style=>"text-indent:2em;padding-top:8px; display:block;"},
 							   $self->render_track_filter($filter)));
   }
+
   $html .= $self->toggle('Tracks',$self->render_track_table);
   $html .= div({-style=>'text-align:center'},$self->render_select_browser_link('button'));
-
   return $html;
 }
 
 # Render Track Table - Invoked to draw the checkbox group in the "Select Tracks" tab. It creates a hyperlinked set of feature names.
 sub render_track_table {
-  my $self     = shift;
-  my $settings = $self->state;
-  my $source   = $self->data_source;
+    my $self     = shift;
+    my $settings = $self->state;
+    my $source   = $self->data_source;
 
-  # read category table information
-  my $category_table_labels = $self->category_table();
-
-  # tracks beginning with "_" are special, and should not appear in the
-  # track table.
-  my @labels     = $self->potential_tracks;
-
-  warn "potential tracks = @labels" if DEBUG;
-
-  my ($filter_active,@hilite);
-  if (my $filter = $self->track_filter_plugin) {
-      $filter_active++;
-      eval {@labels    = $filter->filter_tracks(\@labels,$source)};
-      warn $@ if $@;
-      eval {@hilite    = $filter->hilite_terms};
-      warn $@ if $@;
-  }
-
-  # add citation link and markup
-  my %labels;
-  for my $label (@labels) {
-   my $key = $self->label2key($label);
-   my ($link,$mouseover);
-   if ($label =~ /^plugin:/) {
-       $labels{$label} = $self->plugin_name($label);
-       next;
-   }
-   elsif ($label =~ /^file:/){
-       $link = "?Download%20File=$key";
-   }
-   else {
-       $link = "?display_citation=$label";#;source=" . $settings->{source};
-       my $cit_txt = citation( $source, $label, $self->language ) || '';
-       if ( length $cit_txt > 100) {
-	   $cit_txt =~ s/\<[^\>]+\>//g;     # truncate and strip tags for preview
-	   $cit_txt =~ s/(.{100}).+/$1/; 
-	   $cit_txt =~ s/\s+\S+$//; 
-	   $cit_txt =~ s/\'/\&\#39;/g;
-	   $cit_txt =~ s/\"/\&\#34;/g;
-	   $cit_txt .= '... <i>' . $self->translate('CLICK_FOR_MORE') . '</i>';
-       }
-       $mouseover = "<b>$key</b>";
-       $mouseover .= ": $cit_txt"                           if $cit_txt;
-   }
-   
-   my $balloon = $source->setting('balloon style') || 'GBubble';
-   
-   my @args = ( -href => $link, -target => 'citation');
-   push @args, -style => 'Font-style: italic' if $label =~ /^(http|ftp|file):/;
-   push @args, -onmouseover => "$balloon.showTooltip(event,'$mouseover')" if $mouseover;
-
-   # add hilighting if requested
-   for my $h (@hilite) {
-       $key =~ s!($h)!<span style="background-color:yellow">$1</span>!gi;
-   }
-   
-   $labels{$label} = a({@args},$key);
-
-   if (my ($selected,$total) = $self->subtrack_counts($label)) {
-       my $escaped_label = CGI::escape($label);
-       $labels{$label} .= ' ['. span({-class       =>'clickable',
-				      -onMouseOver  => "GBubble.showTooltip(event,'".$self->translate('CLICK_MODIFY_SUBTRACK_SEL')."')",
-				      -onClick      => "GBox.showTooltip(event,'url:?action=select_subtracks;track=$escaped_label',true)"
-				     },i($self->translate('SELECT_SUBTRACKS',$selected,$total))).']';
-   }
-  }
-
-  my @defaults   = grep {$settings->{features}{$_}{visible}  }   @labels;
-
-  # Sort the tracks into categories:
-  # Overview tracks
-  # Region tracks
-  # Regular tracks (which may be further categorized by user)
-  # Plugin tracks
-  # External tracks
-  my %track_groups;
-  foreach (@labels) {
-    my $category = $self->categorize_track($_);
-    push @{$track_groups{$category}},$_;
-  }
-
-  autoEscape(0);
-
-  # Get the list of all the categories needed.
-  my %exclude = map {$_=>1} map {$self->translate($_)} qw(OVERVIEW REGION ANALYSIS EXTERNAL);
-
-  (my $usertrack_cat = $self->translate('UPLOADED_TRACKS_CATEGORY')||'') =~ s/:.+$//;
-  $usertrack_cat    ||= '';
-  my @user_tracks    = grep {/^$usertrack_cat/i} keys %track_groups;
-  $exclude{$_}++ foreach @user_tracks;
-
-  my @user_keys = grep {!$exclude{$_}} sort keys %track_groups;
-
-  my $all_on  = $self->translate('ALL_ON');
-  my $all_off = $self->translate('ALL_OFF');
-
-  my (%seenit,%section_contents);
-
-  my @categories = (@user_keys,
-		    $self->translate('OVERVIEW'),
-		    $self->translate('REGION'),
-		    $self->translate('ANALYSIS'),
-      );
-  unshift @categories,@user_tracks if @user_tracks;
-
-  my $c_default = $source->category_default;
-
-  my @titles; # for sorting
+    # read category table information
+    my $category_table_labels = $self->category_table();
+    my $an;
+    # tracks beginning with "_" are special, and should not appear in the
+    # track table.
+    my @labels=$self->potential_tracks;
     
-  # For each category, create the appropriately-nested node. "My Tracks" node positions comes from the track's config file.
-  my $usertracks = $self->user_tracks;
-  foreach my $category (@categories) {
-    next if $seenit{$category}++;
-    my $id = "${category}_section";
-    my $category_title   = (split m/(?<!\\):/,$category)[-1];
-    $category_title      =~ s/\\//g;
-    $category_title      =~ s!($_)!<span style="background-color:yellow">$1</span>!gi foreach @hilite;    
+    warn "favorites = {$settings->{show_favorites}} " if DEBUG;
 
+    if( $settings->{show_favorites}){
+	warn "favorites = @labels = $settings->{show_favorites}" if DEBUG;	
+	@labels= grep {$settings->{favorites}{$_}} @labels;
+    }
+
+    warn "label = @labels" if DEBUG;
+
+    my ($filter_active,@hilite);
+    if (my $filter = $self->track_filter_plugin) {
+	my $tracks = @labels;
+	eval {@labels    = $filter->filter_tracks(\@labels,$source)};
+	warn $@ if $@;
+	eval {@hilite    = $filter->hilite_terms};
+	warn $@ if $@;
+	$filter_active = @labels<$tracks;  # mark filter active if the filter has changed the track count
+    }
+
+    # add citation link, favorite stars and other markup
+    my $button_url = $self->data_source->button_url;
+    my (%labels,$class);
+    for my $label (@labels) {
+	my $key = $self->label2key($label);
+	my ($link,$mouseover);
+	if ($label =~ /^plugin:/) {
+	    $labels{$label} = $self->plugin_name($label);
+	    next;
+	}
+	elsif ($label =~ /^file:/){
+	    $link = "?Download%20File=$key";
+	}
+	elsif ($self->data_source->setting($label=>'citation')){
+	    $link = "?display_citation=$label";#;source=" . $settings->{source};
+	    my $cit_txt = citation( $source, $label, $self->language ) || '';
+	    if ( length $cit_txt > 100) {
+		$cit_txt =~ s/\<[^\>]+\>//g;     # truncate and strip tags for preview
+		$cit_txt =~ s/(.{100}).+/$1/; 
+		$cit_txt =~ s/\s+\S+$//; 
+		$cit_txt =~ s/\'/\&\#39;/g;
+		$cit_txt =~ s/\"/\&\#34;/g;
+		$cit_txt .= '... <i>' . ($self->translate('CLICK_FOR_MORE')||'') . '</i>';
+	    }
+	    $mouseover = "<b>$key</b>";
+	    $mouseover .= ": $cit_txt"                           if $cit_txt;
+	    $class      = '';
+	} else {
+	    $class = 'track_title';
+	    $link = 'javascript:void(0)';
+	}
+
+	my $balloon = $source->setting('balloon style') || 'GBubble';
+	my $cellid = 'datacell';
+	my @args = ( -href => $link, -target => 'citation',-class=>$class);
+	push @args, -style => 'Font-style: italic' if $label =~ /^(http|ftp|file):/;
+	push @args, -onmouseover => "$balloon.showTooltip(event,'$mouseover')" if $mouseover;
+
+	# add hilighting if requested
+	for my $h (@hilite) {
+	    $key =~ s!($h)!<span style="background-color:yellow">$1</span>!gi;
+	}
+
+	my $checkid = "notselectedcheck_${label}";
+
+	my $name =  $self->{$category_table_labels}->{label};
+	warn "section = $name" if DEBUG;
+
+	#if the track has already been favorited, the image source is made into the yellow star
+	my $star      = $settings->{favorites}{$label} ? 'ficon_2.png' : 'ficon.png';
+	my $class     = $settings->{favorites}{$label} ? 'star favorite' : 'star';
+	my $favoriteicon  = img({-class =>  $class,
+				-id      => "star_$label",
+				-onClick => "togglestars('$label')",
+				-style => 'cursor:pointer;',
+				-src   => "$button_url/$star"}
+	    );
+
+	my $weight = $settings->{favorites}{$label}         ? 'bold'   : 'normal';
+	my $title  = a({-id=>"link_${label}",@args},$key);
+	$labels{$label} = span({-class => 'selectrackname',
+				-id => "selectrackname_${label}", 
+				-style=>"display:inline;font-weight:$weight"},
+			       $title,$favoriteicon);
+	
+	if (my ($selected,$total) = $self->subtrack_counts($label)) {
+	    my $escaped_label = CGI::escape($label);
+	    $labels{$label} .= ' ['. span({-class       =>'clickable',
+					   -onMouseOver  => "GBubble.showTooltip(event,'".$self->translate('CLICK_MODIFY_SUBTRACK_SEL')."')",
+					   -onClick      => "GBox.showTooltip(event,'url:?action=select_subtracks;track=$escaped_label',true)"
+					  },i($self->translate('SELECT_SUBTRACKS',$selected,$total))).']';
+	}
+    }
+
+    my @defaults   = grep {$settings->{features}{$_}{visible}  }   @labels;
     
-    my $file_id;
-
-    if ($category eq $self->translate('REGION') 
-	&& !$self->setting('region segment')) {
-     next;
+    # Sort the tracks into categories:
+    # Overview tracks
+    # Region tracks
+    # Regular tracks (which may be further categorized by user)
+    # Plugin tracks
+    # External tracks
+    my %track_groups;
+    foreach (@labels) {
+	my $category = $self->categorize_track($_);
+	push @{$track_groups{$category}},$_;
     }
 
-    elsif  (exists $track_groups{$category}) {
-      my @track_labels = @{$track_groups{$category}};
+    autoEscape(0);
 
-      $settings->{sk} ||= 'sorted'; # get rid of annoying warning
+    # Get the list of all the categories needed.
+    my %exclude = map {$_=>1} map {$self->translate($_)} qw(OVERVIEW REGION ANALYSIS EXTERNAL);
 
-      # if these tracks are in a grid, then don't sort them
-      my %ids;
-    BLOCK: {
-	no warnings;  # kill annoying uninit warnings under modperl
-	@track_labels = sort {lc ($labels{$a}) cmp lc ($labels{$b})} @track_labels
-	    if $settings->{sk} eq 'sorted' && !defined $category_table_labels->{$category};
-	%ids        = map {$_=>{id=>"${_}_check"}} @track_labels;
-      }
+    (my $usertrack_cat = $self->translate('UPLOADED_TRACKS_CATEGORY')||'') =~ s/:.+$//;
+    $usertrack_cat    ||= '';
+    my @user_tracks    = grep {/^$usertrack_cat/i} keys %track_groups;
+    $exclude{$_}++ foreach @user_tracks;
 
-      my @checkboxes = checkbox_group(-name       => 'l',
-				      -values     => \@track_labels,
-				      -labels     => \%labels,
-				      -defaults   => \@defaults,
-				      -onClick    => "gbTurnOff('$id');gbToggleTrack(this)",
-				      -attributes => \%ids,
-				      -override   => 1,
-				     );
-      my $table      = $self->tableize(\@checkboxes,$category);
+    my @user_keys = grep {!$exclude{$_}} sort keys %track_groups;
 
-      my $visible =  $filter_active                            ? 1
-                   : exists $settings->{section_visible}{$id}  ? $settings->{section_visible}{$id} 
-                   : $c_default;
-                        
-      # Get the content for this track.
-      my ($control,$section)=$self->toggle_section({on=>$visible,nodiv => 1},
-						   $id,
-						   b(ucfirst $category_title),
-						   div({-style=>'padding-left:1em'},
-						       span({-id=>$id},$table)));
-      $control .= '&nbsp;'.i({-class=>'nojs'},
-			     checkbox(-id=>"${id}_a",-name=>"${id}_a",
-				      -label=>$all_on,-onClick=>"gbCheck(this,1);"),
-			     checkbox(-id=>"${id}_n",-name=>"${id}_n",
-				      -label=>$all_off,-onClick=>"gbCheck(this,0);")
-			    )."&nbsp;".span({-class => "list",
-			            -id => "${id}_list",
-			            -style => "display: " . ($visible? "none" : "inline") . ";"},"")
-			    .br()   if exists $track_groups{$category};
-      $section_contents{$category} = div($control.$section);
+    my $all_on  = $self->translate('ALL_ON');
+    my $all_off = $self->translate('ALL_OFF');
+
+    my (%seenit,%section_contents);
+
+    my @categories = (@user_keys,
+		      $self->translate('OVERVIEW'),
+		      $self->translate('REGION'),
+		      $self->translate('ANALYSIS'),
+	);
+    unshift @categories,@user_tracks if @user_tracks;
+
+    my $c_default = $source->category_default;
+
+    my @titles; # for sorting
+    
+    # For each category, create the appropriately-nested node. "My Tracks" node positions comes from the track's config file.
+    my $usertracks = $self->user_tracks;
+    foreach my $category (@categories) {
+	next if $seenit{$category}++;
+	my $id = "${category}_section";
+	my $category_title   = (split m/(?<!\\):/,$category)[-1];
+	$category_title      =~ s!($_)!<span style="background-color:yellow">$1</span>!gi foreach @hilite;    
+
+	my $file_id;
+
+	if ($category eq $self->translate('REGION') 
+	    && !$self->setting('region segment')) {
+	    next;
+	}
+
+	elsif  (exists $track_groups{$category}) {
+	    my @track_labels = @{$track_groups{$category}};
+
+	    $settings->{sk} ||= 'sorted'; # get rid of annoying warning
+
+	    # if these tracks are in a grid, then don't sort them
+	    my %ids;
+	  BLOCK: {
+	      no warnings;  # kill annoying uninit warnings under modperl
+	      @track_labels = sort {lc ($labels{$a}) cmp lc ($labels{$b})} @track_labels
+		  if $settings->{sk} eq 'sorted' && !defined $category_table_labels->{$category};
+	      %ids        = map {$_=>{id=>"${_}_check"}} @track_labels;
+	    }
+
+
+
+	    my @checkboxes = checkbox_group(-name       => 'l',
+					    -values     => \@track_labels,
+					    -labels     => \%labels,
+					    -defaults   => \@defaults,
+					    -onClick    => "gbTurnOff('$id');gbToggleTrack(this)",
+					    -attributes => \%ids,
+					    -override   => 1,
+					    
+		);
+	    my $table      = $self->tableize(\@checkboxes,$category,undef, \@track_labels);
+
+	    my $visible =  $filter_active                            ? 1
+		         : exists $settings->{section_visible}{$id}  ? $settings->{section_visible}{$id} 
+	                 : $c_default;
+	    
+	    # Get the content for this track.
+	    my ($control,$section)=$self->toggle_section({on=>$visible,nodiv => 1},
+							 $id,
+							 b(ucfirst $category_title),
+							 div({-style=>'padding-left:1em'},
+							     span({-id=>$id},$table)));
+	    $control .= '&nbsp;'.i({-class=>'nojs'},
+				   checkbox(-id=>"${id}_a",-name=>"${id}_a",
+					    -label=>$all_on,-onClick=>"gbCheck(this,1);"),
+				   checkbox(-id=>"${id}_n",-name=>"${id}_n",
+					    -label=>$all_off,-onClick=>"gbCheck(this,0);")
+		)."&nbsp;".span({-class => "list",
+				 -id => "${id}_list",
+				 -style => "display: " . ($visible? "none" : "inline") . ";"},"")
+		.br()   if exists $track_groups{$category};
+	    $section_contents{$category} = div($control.$section);
+	}
+	else {
+	    next;
+	}
     }
 
-    else {
-      next;
-    }
-
-  }
-
-  autoEscape(1);
-  my $slice_and_dice = $self->indent_categories(\%section_contents,\@categories,$filter_active);
-  return join( "\n",
-	       start_form(-name=>'trackform',
-			  -id=>'trackform'),
-	       div({-class=>'searchbody',-style=>'padding-left:1em'},$slice_and_dice),
-	       end_form,
-	       $self->html_frag('html5',$settings),
-	       );
+    autoEscape(1);
+    my $slice_and_dice = $self->indent_categories(\%section_contents,\@categories,$filter_active);
+    return join( "\n",
+		 start_form(-name=>'trackform',
+			    -id=>'trackform'),
+		 div({-class=>'searchbody',-id=> 'range', -style=>'padding-left:1em'},$slice_and_dice),
+		 end_form,
+		 $self->html_frag('html5',$settings),
+	);
 }
 
 # Category Table - This returns the hash of the category table.
@@ -1151,7 +1202,9 @@ sub render_global_config {
         . div(
 	       table ({-border => 0, -cellspacing=>0, -width=>'100%'},
 		      TR(
+			  
 			  td( b(  checkbox(
+				      
 				      -name     => 'grid',
 				      -label    => $self->translate('SHOW_GRID'),
 				      -override => 1,
@@ -1259,7 +1312,10 @@ sub render_global_config {
 		      )
 	       )
 	) . end_form();
+
+
     return div($content);
+
 }
 
 # Clear Hilights - Returns the HTML for the "Clear Highligting" link.
@@ -1277,20 +1333,58 @@ sub render_select_track_link {
     my $self  = shift;
     my $title = $self->translate('SELECT_TRACKS');
     return button({-name=>$title,
-		    -onClick => "Controller.select_tab('track_page')"
+		    -onClick => "Controller.select_tab('track_page')",
+		  
 		  }
 	  );
 }
+
+sub render_select_clear_link {
+    my $self  = shift;
+
+    my $title = $self->translate('CLEAR_FAV');
+    my $settings = $self->state;
+    my $clear = 1;
+
+    warn "settings  $settings->{show_favorites}" if DEBUG;
+    my $showicon =  img({-src   => $self->data_source->button_url."/ficon_2.png",-border=>0});
+    return span(a({-href=>'javascript:void(0)',
+		  -onClick => "clearallfav($clear);",
+		 },
+		 $title),$showicon);
+}
+
+sub render_select_favorites_link {
+    my $self  = shift;
+
+    my $showfav   = $self->translate('FAVORITES');
+    my $showall   = $self->translate('SHOWALL');
+    my $refresh   = 'showrefresh';
+    my $settings  = $self->state;
+    
+    my $ison      = $settings->{show_favorites}; 
+    my $title     = $ison ? $showall : $showfav;
+    my $showicon =  img({-src   => $self->data_source->button_url."/ficon_2.png",-border=>0});
+ 
+    warn "settings  $settings->{show_favorites}" if DEBUG;
+    warn "ison = $settings->{show_favorites}" if DEBUG;
+    return span(a({-id      => 'show_all_link',
+		   -class  => $settings->{show_favorites} ? 'favorites_only' : '',
+		   -href    =>'javascript:void(0)',
+		   -onClick => "updateTitle(this)"
+		  },$title),$showicon);
+}
+
 
 # Render Select Browser Link - Returns the HTML for the "Back to Browser" button/link.
 sub render_select_browser_link {
     my $self  = shift;
     my $style  = shift || 'button';
-
+    my $settings = $self->state;
     my $title = $self->translate('BACK_TO_BROWSER');
     if ($style eq 'button') {
 	    return button({-name=>$title,
-		           -onClick => "Controller.select_tab('main_page')"
+		           -onClick => "Controller.select_tab('main_page')",
 		          }
 	        );
     } elsif ($style eq 'link') {
@@ -1881,8 +1975,9 @@ sub segment2link {
 
 sub tableize {
   my $self              = shift;
-  my ($array,$category,$cols) = @_;
+   my ($array,$category,$cols,$labelnames) = @_;
   return unless @$array;
+  my $settings = $self->state;
 
   my $columns = $cols || 
        $self->data_source->global_setting('config table columns') || 3;
@@ -1899,28 +1994,33 @@ sub tableize {
   }
 
   my $cwidth = int(100/$columns+0.5) . '%';
-
+ 
   my $html = start_table({-border=>0,-width=>'100%'});
 
   if (@column_labels) {
       $html.="<tr><td></td>";
       for (my $column=0;$column<$columns;$column++) {
-	  $html .= "<td><b>$column_labels[$column]</b></td>";
+	  $html .= "<td><b>$column_labels[$column]</b> </td>";
       }
       $html.="</tr>";
   }
 
   for (my $row=0;$row<$rows;$row++) {
     # do table headers
-    $html .= qq(<tr class="searchtitle">);
+    $html .= qq(<tr class="searchtitle";display=block>);
     $html .= "<td><b>$row_labels[$row]</b></td>" if @row_labels;
     for (my $column=0;$column<$columns;$column++) {
-      my $checkbox = $array->[$column*$rows + $row] || '&nbsp;';
+	my $label    = $labelnames->[$column*$rows + $row] || '&nbsp;';
+	my $checkbox = $array->[$column*$rows + $row] || '&nbsp;';
+  
+	# de-couple the checkbox and label click behaviors
+	$checkbox =~ s/\<\/?label\>//gi;
 
-      # de-couple the checkbox and label click behaviors
-      $checkbox =~ s/\<\/?label\>//gi;
+	my $class = $settings->{features}{$label}{visible} ? 'activeTrack' : '';
 
-      $html .= td({-width=>$cwidth},$checkbox);
+	$html .=td({-width=>$cwidth,-style => 'visibility:visible',-class=>$class},
+		   span({ -id => "notselectedcheck_${label}", 
+			  -class => 'notselected_check'},$checkbox));
     }
     $html .= "</tr>\n";
   }
@@ -3232,7 +3332,7 @@ sub can_generate_pdf {
     # see whether we have the needed .inkscape and .gnome2 directories
     my $home = (getpwuid($<))[7];
     my $user = (getpwuid($<))[0];
-    my $inkscape_dir = File::Spec->catfile($home,'.inkscape');
+    my $inkscape_dir = File::Spec->catfile($home,'.config','inkscape');
     my $gnome2_dir   = File::Spec->catfile($home,'.gnome2');
     if (-e $inkscape_dir && -w $inkscape_dir
 	&&  -e $gnome2_dir   && -w $gnome2_dir) {
@@ -3242,8 +3342,8 @@ sub can_generate_pdf {
 	    join(' ',
 		 qq(GBROWSE NOTICE: To enable PDF generation, please enter the directory "$home"),
 		 qq(and run the commands:),
-		 qq("sudo mkdir .inkscape .gnome2"),
-		 qq(and "sudo chown $user .inkscape .gnome2". ),
+		 qq("sudo mkdir -p .config/inkscape .gnome2"),
+		 qq(and "sudo chown $user .config/inkscape .gnome2". ),
 		 qq(To turn off this message add "generate pdf = 0"),
 		 qq(to the [GENERAL] section of your GBrowse.conf configuration file.)
 	    );
@@ -3326,4 +3426,3 @@ sub format_upload_autocomplete {
     return $html;
 }
 1;
-

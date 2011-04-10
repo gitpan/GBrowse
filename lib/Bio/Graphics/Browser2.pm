@@ -1,8 +1,8 @@
 package Bio::Graphics::Browser2;
-# $Id: Browser2.pm 24474 2011-02-04 18:39:52Z lstein $
+# $Id: Browser2.pm 24577 2011-03-03 20:33:48Z lstein $
 # Globals and utilities for GBrowse and friends
 
-our $VERSION = '2.26';
+our $VERSION = '2.27';
 
 use strict;
 use warnings;
@@ -105,9 +105,21 @@ sub url_base    {eval{shift->setting(general=>'url_base')}
 sub tmp_base    {eval{shift->setting(general=>'tmp_base')}
                      || GBrowse::ConfigData->config('tmp')
 			|| '/tmp' }
-sub db_base     {eval{shift->setting(general=>'db_base')}
-                    || GBrowse::ConfigData->config('databases')
-			|| '//var/www/gbrowse2/databases' }
+sub persistent_base    {
+    my $self = shift;
+    my $base = $self->setting(general=>'persistent_base');
+    return $base || $self->tmp_base;  # for compatibility with pre 2.27 installs
+}
+sub db_base        { 
+    my $self = shift;
+    my $base = $self->setting(general=>'db_base');
+    return $base || File::Spec->catfile(shift->persistent_base,'databases');
+}
+sub userdata_base  { 
+    my $self = shift;
+    my $base = $self->setting(general=>'userdata_base');
+    return $base ||  File::Spec->catfile($self->persistent_base,'userdata');
+}
 
 # these are url-relative options
 sub button_url  { shift->url_path('buttons')            }
@@ -158,7 +170,8 @@ sub tmpdir {
 sub user_dir {
     my $self       = shift;
     my @components = @_;
-    return $self->tmpdir('userdata',@components);
+    my $base       = $self->userdata_base;
+    return File::Spec->catfile($base,@components);
 }
 
 sub admin_dir {
@@ -204,7 +217,7 @@ sub session_locktype {
 
 sub session_dir {
     my $self = shift;
-    my $path  = File::Spec->catfile($self->tmp_base,'sessions',@_);
+    my $path  = File::Spec->catfile($self->persistent_base,'sessions',@_);
     $self->make_path($path) unless -d $path;
     return $path;
 }

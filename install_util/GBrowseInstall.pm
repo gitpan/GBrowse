@@ -21,6 +21,7 @@ use constant REGISTRATION_SERVER => 'http://modencode.oicr.on.ca/cgi-bin/gbrowse
 my @OK_PROPS = (conf          => 'Directory for GBrowse\'s config and support files?',
 		htdocs        => 'Directory for GBrowse\'s static images & HTML files?',
 		tmp           => 'Directory for GBrowse\'s temporary data',
+		persistent    => 'Directory for GBrowse\'s sessions, uploaded tracks and other persistent data',
 		databases     => 'Directory for GBrowse\'s example databases',
 		cgibin        => 'Directory for GBrowse\'s CGI script executables?',
 		portdemo      => 'Internet port to run demo web site on (for demo)?',
@@ -46,7 +47,10 @@ sub ACTION_demo {
 	|| GBrowseGuessDirectories->portdemo();
     my $modules = $self->config_data('apachemodules')
 	|| GBrowseGuessDirectories->apachemodules;
+    my $db      = $self->config_data('databases')
+	|| GBrowseGuessDirectories->databases;
     my $cgiurl  = $self->cgiurl;
+    my $persistent = $self->config_data('persistent');
 
     mkdir "$dir/conf";
     mkdir "$dir/htdocs";
@@ -91,6 +95,7 @@ sub ACTION_demo {
 	    s!\$CONF!$dir/conf!g;
 	    s!\$HTDOCS!$dir/htdocs!g;
 	    s!\$DATABASES!$dir/htdocs/databases!g;
+	    s!\$PERSISTENT!$dir/$persistent!g;
 	    s!\$TMP!$dir/tmp!g;
 	    s/\$CGIURL/$cgiurl/g;
 	    s!\$VERSION!$self->dist_version!eg;
@@ -100,6 +105,7 @@ sub ACTION_demo {
 	    s/\$USER_ACCOUNT_DB/$self->guess_user_account_db/eg;
 	    s/\$SMTP_GATEWAY/$self->guess_smtp_gateway/eg;
 	    s!^url_base\s*=.+!url_base               = /!g;
+	    s!^user_accounts[^=]+=.*!user_accounts = 0!;
 	    $out->print($_);
 	}
 	close $out;
@@ -329,13 +335,13 @@ END
 
 sub apache_conf {
     my $self = shift;
-    my $dir     = $self->config_data('htdocs');
-    my $conf    = $self->config_data('conf');
-    my $cgibin  = $self->config_data('cgibin');
-    my $tmp     = $self->config_data('tmp');
+    my $dir       = $self->config_data('htdocs');
+    my $conf      = $self->config_data('conf');
+    my $cgibin    = $self->config_data('cgibin');
+    my $tmp       = $self->config_data('tmp');
+    my $databases = $self->config_data('databases');
     my $cgiroot = basename($cgibin);
     my $perl5lib= $self->added_to_INC;
-    warn $perl5lib;
     my $inc      = $perl5lib ? "SetEnv PERL5LIB \"$perl5lib\"" : '';
     my $fcgi_inc = $perl5lib ? "-initial-env PERL5LIB=$perl5lib"        : '';
     my $fcgid_inc= $perl5lib ? "DefaultInitEnv PERL5LIB $perl5lib"        : '';
@@ -355,13 +361,23 @@ ScriptAlias  "/gb2"      "$cgibin"
   Allow from all
 </Directory>
 
+<Directory "$dir/tutorial">
+  Options +Indexes
+</Directory>
+
 <Directory "$tmp/images/">
   Order allow,deny
   Allow from all
 </Directory>
 
+<Directory "$databases">
+  Order allow,deny
+  Deny from all
+</Directory>
+
 <Directory "$cgibin">
   ${inc}
+  Options ExecCGI
   SetEnv GBROWSE_CONF   "$conf"
 </Directory>
 
@@ -369,7 +385,6 @@ ScriptAlias  "/gb2"      "$cgibin"
   Alias /fgb2 "$cgibin"
   <Location /fgb2>
     SetHandler   fcgid-script
-    Options      ExecCGI
   </Location>
   DefaultInitEnv GBROWSE_CONF $conf
   # these directives prevent idle/busy timeouts and may need to be
@@ -384,7 +399,6 @@ ScriptAlias  "/gb2"      "$cgibin"
   Alias /fgb2 "$cgibin"
   <Location /fgb2>
     SetHandler   fastcgi-script
-    Options      ExecCGI
   </Location>
   # Note: you may need to increase -idle-timeout if file uploads are timing out and returning server
   # errors.
@@ -422,6 +436,9 @@ sub ACTION_install {
     $self->install_path->{'databases'} 
         ||= $self->config_data('databases')
 	    || GBrowseGuessDirectories->databases;
+    $self->install_path->{'persistent'} 
+        ||= $self->config_data('persistent')
+	    || GBrowseGuessDirectories->persistent;
     
     $self->SUPER::ACTION_install();
 
@@ -451,6 +468,12 @@ sub ACTION_install {
 	symlink($images,$htdocs_i);  # so symlinkifowner match works!
     }
     chown $>,-1,$self->install_path->{htdocs};
+
+    my $persistent = $self->install_path->{'persistent'};
+    my $sessions   = File::Spec->catfile($persistent,'sessions');
+    my $userdata   = File::Spec->catfile($persistent,'userdata');
+    mkpath([$sessions,$userdata],0711);
+    system 'sudo','chown','-R',"$uid.$gid",$sessions,$userdata;
 
     my $databases = $self->install_path->{'databases'};
     
@@ -669,15 +692,18 @@ sub substitute_in_place {
     my $htdocs     = $self->config_data('htdocs');
     my $conf       = $self->config_data('conf');
     my $cgibin     = $self->config_data('cgibin');
+    my $persistent = $self->config_data('persistent');
     my $databases  = $self->config_data('databases');
     my $tmp        = $self->config_data('tmp');
-    my $wwwuser  = $self->config_data('wwwuser');
-    my $perl5lib = $self->perl5lib || '';
-    my $installscript = $self->scriptdir;
+    my $wwwuser    = $self->config_data('wwwuser');
+    my $perl5lib   = $self->perl5lib || '';
+    my $installscript =  $self->install_destination('script');
+    my $etc         =  $self->install_path->{'etc'} ||= GBrowseGuessDirectories->etc;
     my $cgiurl        = $self->cgiurl;
 
     while (<$in>) {
 	s/\$INSTALLSCRIPT/$installscript/g;
+	s/\$ETC/$etc/g;
 	s/\$PERL5LIB/$perl5lib/g;
 	s/\$HTDOCS/$htdocs/g;
 	s/\$CONF/$conf/g;
@@ -685,6 +711,7 @@ sub substitute_in_place {
 	s/\$CGIURL/$cgiurl/g;
 	s/\$WWWUSER/$wwwuser/g;
 	s/\$DATABASES/$databases/g;
+	s/\$PERSISTENT/$persistent/g;
 	s/\$VERSION/$self->dist_version/eg;
 	s/\$CAN_USER_ACCOUNTS_OPENID/$self->has_openid/eg;
 	s/\$CAN_USER_ACCOUNTS_REG/$self->has_smtp/eg;

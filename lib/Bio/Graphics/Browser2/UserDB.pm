@@ -219,8 +219,6 @@ sub do_sendmail {
 	      )
 	      or die "Could not connect to outgoing mail server $server";
 	  
-	  warn "HERE I AM";
-
 	  if ($username) {
 	      $smtp_obj->auth($username, $password) 
 		  or die "Could not authenticate with outgoing mail server $server"
@@ -234,6 +232,9 @@ sub do_sendmail {
 	  $smtp_obj->datasend("To: $args->{to}\n")           or die $smtp_obj->message;
 	  $smtp_obj->datasend("Reply-to: $args->{from}\n")   or die $smtp_obj->message;
 	  $smtp_obj->datasend("Subject: $args->{subject}\n") or die $smtp_obj->message;
+	  $smtp_obj->datasend("Content-type: text/html; charset=ISO-8859-1\n") 
+	                                                     or die $smtp_obj->message
+							     if $args->{HTML};
 	  $smtp_obj->datasend("\n")                          or die $smtp_obj->message;
 	  $smtp_obj->datasend($args->{msg})                  or die $smtp_obj->message;
 	  $smtp_obj->datasend("\n")                          or die $smtp_obj->message;
@@ -712,6 +713,12 @@ sub do_add_user_check {
 sub do_add_user {
   my $self = shift;
   my ($user,$email,$fullname,$pass,$sessionid,$allow_admin) = @_;
+
+  # for debugging front end, uncomment as needed
+#  return $self->string_result('Session Error');
+#  return $self->string_result('Username already in use, please try another.');
+#    return $self->string_result("Invalid e-mail address (",$email,") provided.");
+#  return $self->string_result('Success');
   
   my $userdb = $self->dbi;
   
@@ -773,27 +780,39 @@ END
 sub do_send_confirmation {
   my $self = shift;
   my ($email,$confirm,$user,$pass) = @_;
-  my $globals = $self->{globals};
-  my $link = $globals->gbrowse_url()."?confirm=1;code=$confirm";
 
-  my $message  = $self->get_header();
-     $message .= "\n\n    Username: $user\n    Password: $pass\n    E-mail:   $email\n\n";
-     $message .= "To activate your account and complete the sign up process, please click ";
-     $message .= "on the following link:\n    $link\n\n\n";
-     $message .= $self->get_footer();
+  my $globals = $self->{globals};
+  my $link = $globals->gbrowse_url()."/?confirm=1&code=$confirm";
+
+  my $message  = '<HTML><BODY>'.$self->get_header();
+  $message    .= <<END;
+  <p>
+  <table>
+      <tr><th align="right">Username</th><td>$user</td></tr>
+      <tr><th align="right">Password</th><td>$pass</td></tr>
+      <tr><th align="right">Email</th><td>$email</td></tr>
+   </table>
+   </p>
+   <p>
+   To activate your account and complete the sign up process, please click
+   on the following link: <a href="$link">$link</a>
+   </p>
+END
+     $message .= '<p style="font-size:small">'.$self->get_footer().'</p></BODY></HTML>';
 
   my ($status,$err) = $self->do_sendmail({
      from       => $globals->email_address,
      from_title => $globals->application_name,
      to         => $email,
      subject    => $globals->application_name . " Account Activation",
-     msg        => $message
+     msg        => $message,
+     HTML       => 1,
   });
   unless ($status) {
       warn $err;
        return $self->string_result('Mail Error');
   }
-  return (204,'text/plain','');
+  return $self->string_result('Success');
 }
 
 # Edit Confirmation - Deletes or resends unconfirmed information based on "option"
@@ -830,8 +849,8 @@ END
   }
 
   elsif ($option == 1) {
-      my $pass = '';
-      return $self->do_send_confirmation($email,$confirm,$userid,$pass);
+      my $pass = '******';
+      return $self->do_send_confirmation($email,$confirm,$username,$pass);
       # return $self->string_result("Success");
   }
 
@@ -1443,7 +1462,7 @@ CREATE TABLE openid_users (
     openid_url varchar(128) not null PRIMARY key, 
     userid varchar(32) not null, 
     username varchar(32) not null
-);
+ );
 
 CREATE TABLE "uploads" (
     trackid varchar(32) not null PRIMARY key, 
@@ -1460,4 +1479,3 @@ CREATE TABLE "uploads" (
     title text, 
     imported boolean not null
 );
-

@@ -3,7 +3,7 @@
  rubber.js -- a base class for drag/rubber-band selection in gbrowse
 
  Sheldon McKay <mckays@cshl.edu>
- $Id: rubber.js 24407 2011-01-21 22:33:02Z lstein $
+ $Id: rubber.js 24785 2011-04-06 20:38:34Z lstein $
 
 */
 
@@ -397,7 +397,7 @@ SelectArea.prototype.addSelectBox = function(view) {
                  left: '0px',
                  zIndex: 100,
                  border: this.border||'none' });
-
+// 
  /* // click on scalebar initializes selection
   this.scalebar.onmousedown      = this.startSelection;
 
@@ -502,12 +502,12 @@ SelectArea.prototype.showMenu = function(event) {
   var menuYHalf  = Math.round(menuHeight/2); 
   
   if ('createTouch' in document){
-  var left = lefttemp;
-  var top = 360;
+  var left = lefttemp+50;
+  var top = 440;
   } else {
-  var left = self.eventLocation(event,'x') + 5;
+  var left = self.eventLocation(event,'x') + 20;
   if ((left+menuWidth) > pageWidth) left -= menuWidth + 10;
-  var top  = self.eventLocation(event,'y') - menuYHalf;
+  var top  = self.eventLocation(event,'y')+30;
   }
   menu = Element.extend(menu);
   menu.setStyle({ top:  top+'px' }); 

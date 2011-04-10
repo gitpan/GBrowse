@@ -2,7 +2,7 @@
  track.js -- The GBrowse track object
 
  Ben Faga <faga.cshl@gmail.com>
- $Id: track.js 23937 2010-10-08 16:16:06Z tonydecat $
+ $Id: track.js 24785 2011-04-06 20:38:34Z lstein $
 
 Method structure
  - Class Utility Methods
@@ -23,7 +23,7 @@ var GBrowseTrack = Class.create({
     this.track_image_id  = track_id + "_image";
     this.last_update_key = 0;
     this.expired_count   = 0;
-
+//  alert(track_section);
     if (track_type == 'scale_bar') {
       this.standard_track  = false;
     }
@@ -36,6 +36,7 @@ var GBrowseTrack = Class.create({
   set_last_update_key:
   function (time_key) {
     this.last_update_key = time_key;
+   
   },
 
   get_last_update_key:
