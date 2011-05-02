@@ -1,6 +1,6 @@
 package Bio::Graphics::Browser2::Action;
 
-#$Id: Action.pm 24795 2011-04-10 21:00:18Z lstein $
+#$Id: Action.pm 24868 2011-04-28 21:38:16Z lstein $
 # dispatch
 
 use strict;
@@ -98,7 +98,6 @@ sub ACTION_navigate {
 	= $render->asynchronous_update_detail_scale_bar() if $source->show_section('detail');
 
     my $segment_info_object = $render->segment_info_object();
-#    warn Data::Dumper::Dumper($segment_info_object);
 
     warn "navigate() returning track keys = ",join ' ',%$track_keys if DEBUG;
 
@@ -721,6 +720,22 @@ sub ACTION_set_upload_title {
     my $usertracks = $render->user_tracks;
     $usertracks->title($file, $new_title);
     return (204,'text/plain',undef);
+}
+
+sub ACTION_set_upload_track_key {
+    my $self = shift;
+    my $q    = shift;
+    $self->session->unlock;
+
+    my $state       = $self->state;
+    my $render      = $self->render;
+    my $file      = $q->param('upload_id')  or confess "No file given to set_upload_track_key.";
+    my $label     = $q->param('label')      or confess "No label given to set_upload_track_key.";
+    my $new_key   = $q->param('key')        or confess "No new key given to set_upload_track_key.";
+
+    my $usertracks = $render->user_tracks;
+    $new_key       = $usertracks->set_key($file, $label, $new_key);
+    return (200,'text/plain',$new_key);
 }
 
 sub ACTION_share_file {

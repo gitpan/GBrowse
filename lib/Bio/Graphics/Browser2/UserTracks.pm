@@ -1,6 +1,6 @@
 package Bio::Graphics::Browser2::UserTracks;
 
-# $Id: UserTracks.pm 24758 2011-04-01 15:05:22Z lstein $
+# $Id: UserTracks.pm 24857 2011-04-27 21:14:56Z lstein $
 use strict;
 use Bio::Graphics::Browser2::DataSource;
 use Bio::Graphics::Browser2::DataLoader;
@@ -546,6 +546,31 @@ sub upload_file {
 	$self->delete_file($file);
     }
     return ($result, $msg, \@tracks);
+}
+
+# set title of upload- implemented in subclasses
+sub title { } 
+
+# set the key of a labeled track - this involves rewriting the track config
+sub set_key {
+    my $self = shift;
+    my ($file,$label,$new_key) = @_;
+    my $old_path = $self->track_conf($file);
+    my $new_path = "$old_path.bak";
+    open my $in,$old_path      or croak "$old_path: $!";
+    open my $out,'>',$new_path or croak "$new_path: $!";
+    my $in_stanza;
+    while (<$in>) {
+	$in_stanza = undef if /^\[.+\]/; 
+	$in_stanza ||= /^\[$label\]/;
+	next unless $in_stanza;
+	$_ = "key = $new_key\n" if /^key/;
+    } continue {
+	print $out $_;
+    }
+    close $in; close $out;
+    rename $new_path,$old_path;
+    return $new_key; # in case we want to change it later
 }
 
 # Merge Conf (File, New Data) - Merges new data into a track's configuration file.

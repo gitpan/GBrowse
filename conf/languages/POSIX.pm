@@ -217,7 +217,7 @@ END
 
    REMOTE_TITLE => 'Add remote annotations',
 
-   IPAD_BALLOON => '\nTap feature again to see more details',
+   IPAD_BALLOON => 'Tap features twice to see more details',
 
    REMOTE_URL   => 'Enter remote track URL',
 
@@ -388,6 +388,7 @@ END
 
  ADD_DESCRIPTION    => 'Click to add a description',
  ADD_TITLE          => 'Click to edit the title',
+ EDIT_LABEL         => 'Click to view track. Shift or control-click to edit.',
  NO_DESCRIPTION     => 'No description',
 
  CONFIGURATION     => 'Configuration',

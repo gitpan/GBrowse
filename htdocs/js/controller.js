@@ -3,7 +3,7 @@
 
  Lincoln Stein <lincoln.stein@gmail.com>
  Ben Faga <ben.faga@gmail.com>
- $Id: controller.js 24785 2011-04-06 20:38:34Z lstein $
+ $Id: controller.js 24861 2011-04-28 17:37:09Z lstein $
 
 Indentation courtesy of Emacs javascript-mode 
 (http://mihai.bazon.net/projects/emacs-javascript-mode/javascript.el)
@@ -34,9 +34,12 @@ var search_form_objects_id  = 'search_form_objects';
 var userdata_table_id       = 'userdata_table_div';
 var custom_tracks_id        = 'custom_tracks';
 var community_tracks_id     = 'community_tracks';
+var GlobalDrag;
 
 //  Sorta Constants
 var expired_limit  = 1;
+
+
 
 var GBrowseController = Class.create({
 
@@ -569,7 +572,7 @@ var GBrowseController = Class.create({
                         Controller.get_remaining_tracks(track_keys,1000,1.1,time_key);
                     } 
                     if (scroll_there)
-                        new Effect.ScrollTo(gbtrack.track_div_id);
+                        new Effect.ScrollTo(gbtrack.track_div_id,{queue: 'end'});
                 } // end onSuccess
             }); // end Ajax.Request
         }); //end each_track()
@@ -584,7 +587,9 @@ var GBrowseController = Class.create({
             return result;
         });
         if (first_track != null) {
-            new Effect.ScrollTo(first_track.id);
+	    new Effect.ScrollTo(first_track,
+				{  queue:'end' }
+				);
         }
     },
 
@@ -918,6 +923,7 @@ var GBrowseController = Class.create({
     function(upload_name, title_element) {
         if (title_element == null)
             return true;
+	Element.extend(title_element);
         title_element.setStyle({
             border: '2px',
 	    cursor: 'text',
@@ -935,35 +941,30 @@ var GBrowseController = Class.create({
     set_upload_title:
     function(event) {
         var title_element = event.findElement();
-        if (event.type == 'blur' || event.keyCode == Event.KEY_RETURN) {
+        if (event.type == 'blur' || event.keyCode == Event.KEY_RETURN || event.keyCode == Event.KEY_ESC) {
             var file = title_element.up("div.custom_track").id;
             var title = title_element.innerHTML;
             title_element.update(new Element("img", {src: Controller.button_url('spinner.gif'), alt: Controller.translate('WORKING')}) );
-            new Ajax.Request(Controller.url, {
-                method:      'post',
-                parameters:{  
-                    action: 'set_upload_title',
-                    upload_id: file,
-                    title: title
-                },
-                onSuccess: function(transport) {
-                    var sections = new Array(custom_tracks_id, track_listing_id);
-                    if (using_database())
-                        sections.push(community_tracks_id);
-                    Controller.update_sections(sections);
-                }
-            });
-            title_element.stopObserving('keypress');
-            title_element.stopObserving('blur');
-            title_element.blur();
-            return true;
-        }
-        if (event.keyCode == Event.KEY_ESC) {
-            title_element.update(new Element("img", {src: Controller.button_url('spinner.gif'), alt: Controller.translate('WORKING')}) );
-            var sections = new Array(custom_tracks_id);
-            if (using_database())
-                sections.push(community_tracks_id);
-            Controller.update_sections(sections);
+
+	    if (event.keyCode == Event.KEY_ESC) { // backing out changes
+		var sections = new Array(custom_tracks_id);
+		if (using_database())  sections.push(community_tracks_id);
+		Controller.update_sections(sections);
+	    } else {
+		new Ajax.Request(Controller.url, {
+			method:      'post',
+			    parameters:{  
+			    action: 'set_upload_title',
+				upload_id: file,
+				title: title
+				},
+			    onSuccess: function(transport) {
+			    var sections = new Array(custom_tracks_id, track_listing_id);
+			    if (using_database()) sections.push(community_tracks_id);
+			    Controller.update_sections(sections);
+			}
+		});
+	    }
             title_element.stopObserving('keypress');
             title_element.stopObserving('blur');
             title_element.blur();
@@ -971,6 +972,68 @@ var GBrowseController = Class.create({
         }
         return false;
     },
+
+    edit_upload_track_key:
+	function(upload_name, upload_label, key_element) {
+        if (key_element == null)
+            return true;
+	Element.extend(key_element);
+        key_element.setStyle({
+            border: '2px',
+	    cursor: 'text',
+            inset:  'black',
+            backgroundColor:'beige',
+            padding:'5px 5px 5px 5px'
+        });
+	key_element.upload_name  = upload_name;
+	key_element.upload_label = upload_label;
+	key_element.onclick = null;
+	Event.stopObserving(key_element);
+        Event.observe(key_element, 'keypress', this.set_upload_track_key);
+        Event.observe(key_element, 'blur',     this.set_upload_track_key);
+    },
+
+    set_upload_track_key:
+	function(event) {
+	    var key_element  = event.findElement();
+	    var file  = key_element.upload_name;
+	    var label = key_element.upload_label;
+	    var value = key_element.innerHTML.stripTags();
+
+	    // the following code is cut-and-paste from set_upload_title and is largely redundant
+	    if (event.type == 'blur' || event.keyCode == Event.KEY_RETURN || event.keyCode == Event.KEY_ESC) {
+		key_element.update(new Element("img", {src: Controller.button_url('spinner.gif'), alt: Controller.translate('WORKING')}) );
+		if (event.keyCode == Event.KEY_ESC) { // backing out
+		    var sections = new Array(custom_tracks_id);
+		    if (using_database()) sections.push(community_tracks_id);
+		    Controller.update_sections(sections);
+		} else {
+		    new Ajax.Request(Controller.url, {
+			    method:      'post',
+				parameters:{  
+				action: 'set_upload_track_key',
+				    upload_id: file,
+				    label:     label,
+				    key:       value
+				    },
+				onSuccess: function(transport) {
+				  var new_key  = transport.responseText;
+				  var sections = new Array(custom_tracks_id, track_listing_id);
+				  if (using_database()) sections.push(community_tracks_id);
+				  Controller.update_sections(sections);
+				  //alert($(label+'_title').select('span.drag_region').innerHTML);
+				  var titles = $(label+'_title').select('span.drag_region');
+				  titles[0].innerHTML='<b>'+new_key+'</b>';
+			    }
+		    });
+		}
+		key_element.stopObserving('keypress');
+		key_element.stopObserving('blur');
+		key_element.blur();
+		return true;
+	    }
+	    return false;
+	},
 
     edit_upload_description:
     function(upload_name,container_element) {
@@ -1137,9 +1200,9 @@ var GBrowseController = Class.create({
   },
 
   select_tab:
-  function (tab_id) {
+  function (tab_id,animate) {
      if (this.tabs != null) {
-       this.tabs.select_tab(tab_id);
+	 this.tabs.select_tab(tab_id,animate);
      }
   },
 
@@ -1295,5 +1358,26 @@ function actually_remove (element_name) {
     if (element==null) return;
     var parent = element.parentNode;
     parent.removeChild(element);
+}
+
+function create_drag (div_name) {
+   GlobalDrag = div_name;
+   Sortable.create(
+		  div_name,
+		  {
+		      tag:     'div',
+		      constraint:  'vertical',
+  		      only:    'track',
+		      handle:  'drag_region',
+		      scroll:   window,
+		      onUpdate: function() {
+		      var items   = $(div_name).select('[class="track"]');
+		      var ids     = items.map(function(e){return e.id});
+		      ids         = ids.map(function(i) {return 'label[]='+escape(i.sub(/^track_/,''))});
+		      var postData= ids.join('&')+';action=change_track_order';
+		      new Ajax.Request(document.URL,{method:'post',postBody:postData});
+		    }
+		  }
+		 );
 }
 

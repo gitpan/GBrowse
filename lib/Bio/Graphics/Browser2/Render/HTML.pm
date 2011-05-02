@@ -862,7 +862,7 @@ sub render_track_table {
     my $an;
     # tracks beginning with "_" are special, and should not appear in the
     # track table.
-    my @labels=$self->potential_tracks;
+    my @labels = $self->potential_tracks;
     
     warn "favorites = {$settings->{show_favorites}} " if DEBUG;
 
@@ -885,13 +885,14 @@ sub render_track_table {
 
     # add citation link, favorite stars and other markup
     my $button_url = $self->data_source->button_url;
-    my (%labels,$class);
+    my (%labels,%label_sort);
     for my $label (@labels) {
 	my $key = $self->label2key($label);
 	my ($link,$mouseover);
 	if ($label =~ /^plugin:/) {
-	    $labels{$label} = $self->plugin_name($label);
-	    next;
+	    $key   = $self->plugin_name($label);
+	    #$labels{$label} = $self->plugin_name($label);
+	    #next;
 	}
 	elsif ($label =~ /^file:/){
 	    $link = "?Download%20File=$key";
@@ -908,45 +909,60 @@ sub render_track_table {
 		$cit_txt .= '... <i>' . ($self->translate('CLICK_FOR_MORE')||'') . '</i>';
 	    }
 	    $mouseover = "<b>$key</b>";
-	    $mouseover .= ": $cit_txt"                           if $cit_txt;
-	    $class      = '';
-	} else {
-	    $class = 'track_title';
-	    $link = 'javascript:void(0)';
+	    $mouseover .= ": $cit_txt"  if $cit_txt;
 	}
 
+	my $track_on    = $settings->{features}{$label}{visible};
+	my $favorite    = $settings->{favorites}{$label};
 	my $balloon = $source->setting('balloon style') || 'GBubble';
 	my $cellid = 'datacell';
-	my @args = ( -href => $link, -target => 'citation',-class=>$class);
-	push @args, -style => 'Font-style: italic' if $label =~ /^(http|ftp|file):/;
-	push @args, -onmouseover => "$balloon.showTooltip(event,'$mouseover')" if $mouseover;
+
+	my @classes = 'track_title';
+	push @classes,'activeTrack' if $track_on;
+	push @classes,'favorite'    if $favorite;
+	push @classes,'remote'      if $label =~ /^(http|ftp|file):/;
 
 	# add hilighting if requested
 	for my $h (@hilite) {
-	    $key =~ s!($h)!<span style="background-color:yellow">$1</span>!gi;
+	    $key =~ s!($h)!<span class='text_match'>$1</span>!gi;
 	}
-
-	my $checkid = "notselectedcheck_${label}";
 
 	my $name =  $self->{$category_table_labels}->{label};
 	warn "section = $name" if DEBUG;
 
 	#if the track has already been favorited, the image source is made into the yellow star
-	my $star      = $settings->{favorites}{$label} ? 'ficon_2.png' : 'ficon.png';
-	my $class     = $settings->{favorites}{$label} ? 'star favorite' : 'star';
+	my $star      = $favorite ? 'ficon_2.png' : 'ficon.png';
+	my $class     = $favorite ? 'star favorite' : 'star';
 	my $favoriteicon  = img({-class =>  $class,
 				-id      => "star_$label",
 				-onClick => "togglestars('$label')",
 				-style => 'cursor:pointer;',
 				-src   => "$button_url/$star"}
 	    );
+	my $category = $self->categorize_track($label);
+	my @args;
+	push @args, (-class => "@classes");
+	push @args, (-onClick     => "gbTurnOff('${category}_section');gbToggleTrack('$label')");
+	push @args, (-onmouseover => "$balloon.showTooltip(event,'$mouseover')") if $mouseover;
 
-	my $weight = $settings->{favorites}{$label}         ? 'bold'   : 'normal';
-	my $title  = a({-id=>"link_${label}",@args},$key);
-	$labels{$label} = span({-class => 'selectrackname',
-				-id => "selectrackname_${label}", 
-				-style=>"display:inline;font-weight:$weight"},
-			       $title,$favoriteicon);
+	my $title  = span({-id=>"${label}_check",@args},$key);
+
+	my $checkicon =   img({-id=>"${label}_img",
+			       -onClick => "gbToggleTrack('$label')",
+			       -src=>$track_on ? "$button_url/check.png" 
+				               : "$button_url/empty.png"});
+	my $help     = $link ?
+	    a({-href=>$link,
+	       -target=>'_new',
+	      },
+	      img({-border=>0,
+		   -src=>"$button_url/query.png",
+		   -onmouseover => "$balloon.showTooltip(event,'$mouseover')",
+		   -style=>'padding-left:0.5em'}))
+	    : '';
+	
+	$label_sort{$label}  = $key;
+	$labels{$label}      = join(' ',$checkicon,$favoriteicon,$title,$help);
 	
 	if (my ($selected,$total) = $self->subtrack_counts($label)) {
 	    my $escaped_label = CGI::escape($label);
@@ -1020,31 +1036,19 @@ sub render_track_table {
 	    $settings->{sk} ||= 'sorted'; # get rid of annoying warning
 
 	    # if these tracks are in a grid, then don't sort them
-	    my %ids;
 	  BLOCK: {
 	      no warnings;  # kill annoying uninit warnings under modperl
-	      @track_labels = sort {lc ($labels{$a}) cmp lc ($labels{$b})} @track_labels
+	      @track_labels = sort {lc ($label_sort{$a}) cmp lc ($label_sort{$b})} @track_labels
 		  if $settings->{sk} eq 'sorted' && !defined $category_table_labels->{$category};
-	      %ids        = map {$_=>{id=>"${_}_check"}} @track_labels;
 	    }
-
-
-
-	    my @checkboxes = checkbox_group(-name       => 'l',
-					    -values     => \@track_labels,
-					    -labels     => \%labels,
-					    -defaults   => \@defaults,
-					    -onClick    => "gbTurnOff('$id');gbToggleTrack(this)",
-					    -attributes => \%ids,
-					    -override   => 1,
-					    
-		);
-	    my $table      = $self->tableize(\@checkboxes,$category,undef, \@track_labels);
 
 	    my $visible =  $filter_active                            ? 1
 		         : exists $settings->{section_visible}{$id}  ? $settings->{section_visible}{$id} 
 	                 : $c_default;
 	    
+	    my @entries = map {$labels{$_}} @track_labels;
+	    my $table   = $self->tableize(\@entries,$category,undef, \@track_labels);
+
 	    # Get the content for this track.
 	    my ($control,$section)=$self->toggle_section({on=>$visible,nodiv => 1},
 							 $id,
@@ -1534,7 +1538,7 @@ sub render_custom_track_listing {
 	my $html = h1($self->translate('UPLOADED_TRACKS'));
 
 	$html .= a( {
-	    -href => $self->annotation_help.'#remote',
+	    -href => $self->annotation_help,
 	    -target => '_blank'
 		    },
 		    i('['.$self->translate('HELP_FORMAT_UPLOAD').']')
@@ -1605,7 +1609,6 @@ sub render_track_list_title {
     $type =~ s/\s?available//;
     my $userdata = $self->user_tracks;
     my $globals = $self->globals;
-    my $userdb  = $self->userdb if $globals->user_accounts;
 	
     my $short_name = $userdata->title($fileid);
     if ($short_name =~ /http_([^_]+).+_gbgff_.+_t_(.+)_s_/) {
@@ -1614,6 +1617,10 @@ sub render_track_list_title {
     } elsif (length $short_name > 40) {
 	$short_name =~ s/^(.{40}).+/$1.../;
     }
+
+    my $is_mine = $userdata->is_mine($fileid);
+    my $cursor  = $is_mine ? 'cursor:pointer' : 'cursor:auto';
+    my $uploaddb  = $userdata->database;
 	
     my @track_labels = $userdata->labels($fileid);
     my $track_labels = join '+', map {CGI::escape($_)} @track_labels;
@@ -1621,14 +1628,19 @@ sub render_track_list_title {
     my $go_there = join(' ',
 			map {
 			    my $label = $_;
+			    my $go_there_script    = "Controller.select_tab('main_page',false);Controller.scroll_to_matching_track('$label')";
+			    my $edit_label_script  = "Controller.edit_upload_track_key('$fileid', '$label', this)";
+			    my $script             = $is_mine ? "if (event.shiftKey || event.ctrlKey) {$edit_label_script} else {$go_there_script}"
+				                              : $go_there_script;
 			    my $key   = $self->data_source->setting($label=>'key');
 			    $key? (
 				'['.
-				a( {
-				    -href    => 'javascript:void(0)',
-				    -onClick => qq(Controller.select_tab('main_page');Controller.scroll_to_matching_track("$label"))
-				   },
-				   b($key)
+				span({-class => 'clickable',
+				      $is_mine ? (-title => $self->tr('EDIT_LABEL')) : (),
+				      -onClick         => $script,
+				      -contentEditable => $is_mine ? 'true' : 'false',
+				     },
+				     b($key)
 				).
 				']'
 				) : ''
@@ -1640,14 +1652,12 @@ sub render_track_list_title {
 	},
 	''
 	);
-    my $is_mine = $userdata->is_mine($fileid);
-    my $cursor  = $is_mine ? 'cursor:pointer' : 'cursor:auto';
     my $title = h1(
 	{
 	    ($is_mine ? (-title => $self->tr('ADD_TITLE')) : ()),
 	    -style => "display: inline; font-size: 14pt;$cursor",
-	    -onClick         => ($userdata->database && $is_mine)? "Controller.edit_upload_title('$fileid', this)" : "",
-	    -contentEditable => ($userdata->database && $is_mine)? 'true' : 'false',
+	    -onClick         => ($uploaddb && $is_mine)? "Controller.edit_upload_title('$fileid', this)" : "",
+	    -contentEditable => ($uploaddb && $is_mine)? 'true' : 'false',
 	},
 	$short_name
 	);
@@ -1995,7 +2005,7 @@ sub tableize {
 
   my $cwidth = int(100/$columns+0.5) . '%';
  
-  my $html = start_table({-border=>0,-width=>'100%'});
+  my $html = start_table({-border=>0,-width=>'100%',-cellpadding=>0,-cellspacing=>0});
 
   if (@column_labels) {
       $html.="<tr><td></td>";
@@ -2018,9 +2028,9 @@ sub tableize {
 
 	my $class = $settings->{features}{$label}{visible} ? 'activeTrack' : '';
 
-	$html .=td({-width=>$cwidth,-style => 'visibility:visible',-class=>$class},
-		   span({ -id => "notselectedcheck_${label}", 
-			  -class => 'notselected_check'},$checkbox));
+	$html .= td({-width=>$cwidth,-style => 'visibility:visible',-class=>$class},
+		    span({ -id => "notselectedcheck_${label}", 
+			   -class => 'notselected_check'},$checkbox));
     }
     $html .= "</tr>\n";
   }
@@ -3063,24 +3073,47 @@ sub download_track_menu {
     my $byebye      = 'Balloon.prototype.hideTooltip(1)';
 
     my $segment_str = segment_str($segment);
-
+    
+    my @format_options = Bio::Graphics::Browser2::TrackDumper->available_formats($data_source,$track);
+    my %foptions       = map {$_=>1} @format_options;
+    my $default     = $foptions{$state->{preferred_dump_format}} ? $state->{preferred_dump_format}
+                                                                 : $foptions{gff3}  ? 'gff3'
+								 : $foptions{bed}   ? 'bed'
+								 : $foptions{sam}   ? 'sam'
+								 : $foptions{vista} ? 'vista'
+								 : 'fasta';
+    my @radios      = radio_group(-name   => 'format',
+				  -values => \@format_options,
+				  -default => $default,
+				  -labels => {fasta => 'FASTA',
+					      gff3  => 'GFF3',
+					      genbank => 'Genbank',
+					      vista        => 'WIG (peaks+signal)',
+					      vista_wiggle => 'WIG (signal)',
+					      vista_peaks  => 'WIG (peaks)',
+					      bed   => 'WIG',
+					      sam   => 'SAM alignment format'});
+    my $options = "gbgff=1;l=$track;s=0;f=save+gff3;'+\$('dump_form').serialize()";
     my $html = '';
     $html   .= div({-align=>'center'},
-		   div({-style => 'background:gainsboro;padding:5px;font-weight:bold'},$key),br(),
-
+		   div({-style => 'background:gainsboro;padding:5px;font-weight:bold'},$key).
+		   hr().
+		   start_form({-id=>'dump_form'}).
+		   div($self->tableize(\@radios,undef,3,undef)).
+		   end_form().
+		   hr().
 		   button(-value   => $self->translate('DOWNLOAD_TRACK_DATA_REGION',$segment_str),
-			  -onClick => "$unload;window.location='?gbgff=1;q=$seqid:$start..$end;l=$track;s=0;f=save+gff3';$byebye",
+			  -onClick => "$unload;window.location='?q=$seqid:$start..$end;$options;$byebye",
 		   ),br(),
 
 		   button(-value   => $self->translate('DOWNLOAD_TRACK_DATA_CHROM',$seqid),
-			  -onClick => "$unload;window.location='?gbgff=1;q=$seqid;l=$track;s=0;f=save+gff3';$byebye",
+			  -onClick => "$unload;window.location='?q=$seqid;$options;$byebye",
 		   ),br(),
 
 		   button(-value=> $self->translate('DOWNLOAD_TRACK_DATA_ALL'),
-			  -onClick => "$unload;location.href='?gbgff=1;l=$track;s=0;f=save+gff3';$byebye",
+			  -onClick => "$unload;location.href='?$options;$byebye",
 		   )).
-
-		   button(-style=>"background:pink",-onClick=>"$byebye",-name=>$self->translate('CANCEL'));
+		   button(-style=>"background:pink;float:right",-onClick=>"$byebye",-name=>$self->translate('CANCEL'));
     return $html;
 }
 

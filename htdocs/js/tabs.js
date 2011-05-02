@@ -1,4 +1,4 @@
-// $Id: tabs.js 24790 2011-04-08 18:18:32Z lstein $
+// $Id: tabs.js 24860 2011-04-28 16:22:58Z lstein $
 
 var TabbedSection = Class.create( {
 
@@ -25,12 +25,13 @@ var TabbedSection = Class.create( {
   },
 
   select_tab:
-  function(tabname) {
-     this.do_select_tab(tabname+'_select');
+  function(tabname,animate) {
+      this.do_select_tab(tabname+'_select',animate);
   },
 
   do_select_tab:
-  function(tab_id) {
+  function(tab_id,animate) {
+      if (animate==null) animate=true;
       var whichOne;
       for (var i=0;i<this.tab_menus.length;i++) {
 	  if (this.tab_menus[i].id == tab_id)
@@ -47,12 +48,18 @@ var TabbedSection = Class.create( {
 			      e.className='tabmenu_inactive';
 			  });
       this.tab_menus[whichOne].className='tabmenu_active';
+      var  tab = this.tab_divs[whichOne];
 	  
       if (current != null) current.hide();
-      Effect.BlindDown( this.tab_divs[whichOne],{ duration: 0.5,
-		  afterFinish: function() { onTabLoad(tab_id) }
-	  }
-	  );
+      if (animate)
+	  new Effect.BlindDown( this.tab_divs[whichOne],{ 
+			  queue:      'front',
+			  duration:    0.5,
+			  afterFinish: function() { onTabLoad(tab_id); 
+			  }
+	  });
+      else
+	  this.tab_divs[whichOne].show();
   }
 
 });  // end Class.create
