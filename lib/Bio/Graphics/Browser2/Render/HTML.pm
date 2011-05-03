@@ -1351,7 +1351,7 @@ sub render_select_clear_link {
     my $clear = 1;
 
     warn "settings  $settings->{show_favorites}" if DEBUG;
-    my $showicon =  img({-src   => $self->data_source->button_url."/ficon_2.png",-border=>0});
+    my $showicon =  img({-src   => $self->data_source->button_url."/ficon.png",-border=>0});
     return span(a({-href=>'javascript:void(0)',
 		  -onClick => "clearallfav($clear);",
 		 },
@@ -3021,7 +3021,7 @@ sub track_citation {
 
     # citation info:
     my $cit_txt = citation( $data_source, $label, $self->language ) 
-	|| 'There is no additional information about this track.';
+	|| $self->tr('NO_TRACK_CITATION');
     my $cit_html;
     my $cit_link = '';
      
@@ -3039,8 +3039,10 @@ sub track_citation {
        $cit_link = p($cit_link);
     }
     $cit_html = p($cit_link||br,$cit_txt);
-    my $title   = div({-style => 'background:gainsboro;padding:5px;font-weight:bold'},$key);
-    return  p($title,$cit_html);
+    my $title    = div({-style => 'background:gainsboro;padding:5px;font-weight:bold'},$key);
+    my $download = a({-href=>"?l=$label;f=save+datafile"},$self->tr('DOWNLOAD_ALL'));
+    my $id       = $self->tr('TRACK_ID',$label);
+    return  p(div({-style=>'text-align:center;font-size:small'},$title,$id,"[$download]"),$cit_html);
 }
 
 sub download_track_menu {
