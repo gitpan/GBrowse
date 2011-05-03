@@ -2,7 +2,7 @@
 
  track_pan.js -- The GBrowse track panning object
 
- $Id: track_pan.js 24397 2011-01-21 05:07:53Z lstein $ 
+ $Id: track_pan.js 24399 2011-01-21 05:26:15Z lstein $ 
 
 */
 
