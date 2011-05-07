@@ -40,7 +40,11 @@ if ($fcgi) {
 	my $globals = Bio::Graphics::Browser2->open_globals;
 	CGI->initialize_globals();
 	my $render =Bio::Graphics::Browser2::Render::HTML->new($globals);
-	$render->run();
+	eval {
+	    local $SIG{PIPE} = sub {die "pipe"};
+	    $render->run();
+	};
+	warn $@ if $@;
 	$render->destroy;
     }
 } else {

@@ -7,7 +7,7 @@ package Bio::Graphics::Browser2::TrackDumper;
 #
 ###################################################################
 
-# $Id: TrackDumper.pm 24879 2011-05-03 02:56:45Z lstein $
+# $Id: TrackDumper.pm 24897 2011-05-07 03:24:15Z lstein $
 
 # Simple track dumper, suitable for a lightweight replacement to DAS.
 # Call this way:
@@ -90,7 +90,7 @@ sub dump_track {
     my @types  = shellwords($source->setting($label=>'feature'));
 
     my $dump_method = $self->guess_dump_method($db,$label);
-    local $SIG{PIPE} = sub {die 'sigPIPE!'};
+    local $SIG{PIPE} = sub {die 'aborted track dump due to sigPIPE'};
     $self->$dump_method($db,$segment,\@types,$label);
 }
 
@@ -114,22 +114,34 @@ sub dump_vista {
     shift->_dump_gff3(@_,1,3); # magic number==3 means print peaks + signal data
 }
 
-
-
 sub dump_fasta {
     my $self = shift;
     my ($db,$segment,$types,$label) = @_;
     my $out = new Bio::SeqIO(-format=>'fasta',-fh=>\*STDOUT);
-    my $seq = $segment->seq;
-    $out->write_seq($seq);
+    for my $seg ($self->get_segs($db,$segment)) {
+	my $seq = $seg->seq;
+	$out->write_seq($seq);
+    }
 }
 
 sub dump_genbank {
     my $self = shift;
     my ($db,$segment,$types,$label) = @_;
-    my $seq = $self->get_rich_seq($db,$segment,$types);
     my $out = new Bio::SeqIO(-format=>'genbank',-fh=>\*STDOUT);
-    $out->write_seq($seq);
+    for my $seg ($self->get_segs($db,$segment)) {
+	my $seq = $self->get_rich_seq($db,$seg,$types);
+	$out->write_seq($seq);
+    }
+}
+
+sub get_segs {
+    my $self = shift;
+    my ($db,$segment) = shift;
+    return $segment if $segment;
+    return eval {
+	my @ids = $db->seq_ids;
+	map {$db->segment($_)} @ids;
+    };
 }
 
 sub get_rich_seq {
