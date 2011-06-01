@@ -1,6 +1,6 @@
 package Bio::Graphics::Browser2::DataLoader::featurefile;
 
-# $Id: featurefile.pm 22574 2010-01-19 16:39:45Z lstein $
+# $Id$
 use strict;
 use base 'Bio::Graphics::Browser2::DataLoader::generic';
 

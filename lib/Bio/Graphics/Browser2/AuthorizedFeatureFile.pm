@@ -55,6 +55,7 @@ sub set_username {
     my $username = shift;
     $self->{'.authenticated_username'} = $username;
 }
+
 sub username     { 
     my $self = shift;
     return $self->{'.authenticated_username'} || CGI->remote_user;

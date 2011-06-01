@@ -270,7 +270,6 @@ sub make_requests {
 
 	my $format_option = $settings->{features}{$label}{options};
 
-
 	my $filter     = $settings->{features}{$label}{filter};
 	@filter_args   = %{$filter->{values}} if $filter->{values};
 	@subtrack_args = @{$settings->{subtracks}{$label}} 
@@ -281,7 +280,8 @@ sub make_requests {
 	(my $track = $label) =~ s/:(overview|region|details?)$//;
 	if ($feature_files && exists $feature_files->{$track}) {
 
-	    my $feature_file = $feature_files->{$track};
+	    # some broken logic here...
+	    my $feature_file = $feature_files->{$track} || $feature_files->{$label};
 
 	    unless (ref $feature_file) { # upload problem!
 		my $cache_object = Bio::Graphics::Browser2::CachedTrack->new(
@@ -301,8 +301,9 @@ sub make_requests {
 		$d{$track} = $cache_object;
 		next;
 	    }
-
-	    next unless $label =~ /:$args->{section}$/;
+	    
+	    # broken logic here?
+	    # next unless $label =~ /:$args->{section}$/;
 	    @featurefile_args =  eval {
 		$feature_file->isa('Bio::Das::Segment')||$feature_file->types, 
 		$feature_file->mtime;
@@ -326,7 +327,6 @@ sub make_requests {
 			     $label ],
 	    -cache_time => $cache_time
         );
-#       warn "object= $format_option";
         $d{$label} = $cache_object;
     }
 
@@ -523,7 +523,7 @@ sub wrap_rendered_track {
     my $favorite      = $settings->{favorites}{$label};
     my $starIcon      = $favorite ? $favicon_2 : $favicon;
     my $starclass     = $favorite ? "toolbarStar favorite" : "toolbarStar";
-    (my $l = $label) =~ s/:(overview|detail|regionview)$//;     
+    (my $l = $label) =~ s/:(overview|detail|regionview)$//;
     my @images = (
         $fav_click ? img({   	-src         => $starIcon,
 				-id          =>"barstar_${label}",
@@ -543,7 +543,7 @@ sub wrap_rendered_track {
 
 	img({   -src         => $kill,
                 -id          => "${label}_kill",
-		-onClick     => "ShowHideTrack('$l',false)",
+		-onClick     => "ShowHideTrack('$label',false)",
                 -style       => 'cursor:pointer',
                 $self->if_not_ipad(-onMouseOver => "$balloon_style.showTooltip(event,'$kill_this_track')"),
             }
@@ -595,17 +595,29 @@ sub wrap_rendered_track {
 			   -id    => "${label}_icon", 
 			   -onClick =>  "collapse('$label')",
 			  },
-			  div({-class => 'linkbg', -onClick => "swap(this,'Collapse','Expand')", -id => "${label}_expandcollapse", },$ipad_collapse)),
+			  div({-class => 'linkbg', 
+			       -onClick => "swap(this,'Collapse','Expand')", 
+			       -id => "${label}_expandcollapse", },$ipad_collapse)),
 		      div({-class => 'ipadcollapsed',
 			   -id => "${label}_kill",
 			   -onClick     => "ShowHideTrack('$label',false)",
 			  }, div({-class => 'linkbg',},
 				 $cancel_ipad)),
-		      div({-class => 'ipadcollapsed',  -onMousedown => "Controller.get_sharing(event,'url:?action=share_track;track=$escaped_label',true)",}, div({-class => 'linkbg',},$share_ipad)),
-		      div({-class => 'ipadcollapsed',  -onmousedown => $config_click,}, div({-class => 'linkbg',},$configure_ipad)),
-		      div({-class => 'ipadcollapsed',  -onmousedown => $fav_click,}, div({-class => 'linkbg', -onClick => "swap(this,'Favorite','Unfavorite')"},$bookmark)),
-		      div({-class => 'ipadcollapsed',  -onmousedown => $download_click,}, div({-class => 'linkbg',},$download_ipad)),
-		      div({-class => 'ipadcollapsed', -style => 'width:200px',  -onmousedown => $help_click,}, div({-class => 'linkbg', -style => 'position:relative; left:30px;',},$about_ipad)),
+		      div({-class => 'ipadcollapsed',  
+			   -onMousedown => "Controller.get_sharing(event,'url:?action=share_track;track=$escaped_label',true)",}, 
+			  div({-class => 'linkbg',},$share_ipad)),
+		      div({-class => 'ipadcollapsed',  -
+			       onmousedown => $config_click,}, div({-class => 'linkbg',},$configure_ipad)),
+		      div({-class => 'ipadcollapsed',  
+			   -onmousedown => $fav_click,}, 
+			  div({-class => 'linkbg', -onClick => "swap(this,'Favorite','Unfavorite')"},$bookmark)),
+		      div({-class => 'ipadcollapsed',  
+			   -onmousedown => $download_click,}, 
+			  div({-class => 'linkbg',},$download_ipad)),
+		      div({-class => 'ipadcollapsed', 
+			   -style => 'width:200px',  
+			   -onmousedown => $help_click,}, 
+			  div({-class => 'linkbg', -style => 'position:relative; left:30px;',},$about_ipad)),
  		  );
     
     # modify the title if it is a track with subtracks
@@ -1351,12 +1363,6 @@ sub run_local_requests {
     my %feature_file_offsets;
 
     my @labels_to_generate = @$labels;
-
-    # this is now done in the subprocess
-#    foreach (@labels_to_generate) {
-#	$requests->{$_}->lock();   # flag that request is in process
-#    }
-
     my @ordinary_tracks    = grep {!$feature_files->{$_}} @labels_to_generate;
     my @feature_tracks     = grep {$feature_files->{$_} } @labels_to_generate;
 
@@ -1364,9 +1370,6 @@ sub run_local_requests {
     my $filters = $self->generate_filters($settings,$source,\@labels_to_generate);
 
     my (%children,%reaped);
-
-
-
 
     local $SIG{CHLD} = sub {
 	while ((my $pid = waitpid(-1, WNOHANG)) > 0) {
@@ -2059,25 +2062,26 @@ sub create_track_args {
   
   my $state            = $self->settings;
 
-
-
-  my ($semantic_override) = sort {$b<=>$a} grep {$_ < $length} 
-                    keys %{$state->{features}{$label}{semantic_override}};
-  $semantic_override ||= 0;
-  my $override         = $is_summary ? $state->{features}{$label}{summary_override}
-                                     : $state->{features}{$label}{semantic_override}{$semantic_override};
+  my $semantic_override = Bio::Graphics::Browser2::Render->find_override_region(
+      $state->{features}{$label}{semantic_override},
+      $length/$self->details_mult);
+  my $override  = $is_summary           ? $state->{features}{$label}{summary_override}
+                   : $semantic_override ? $state->{features}{$label}{semantic_override}{$semantic_override}
+                   : {};
 
   my @override        = map {'-'.$_ => $override->{$_}} keys %$override;
+
   push @override,(-feature_limit => $override->{limit}) if $override->{limit};
   push @override,(-record_label_positions => 0) unless $args->{section} && $args->{section} eq 'detail';
 
   if ($is_summary) {
-      unshift @override,(-glyph     => 'wiggle_density',
-			 -height    => 15,
-			 -bgcolor   => 'black',
-			 -min_score => 0,
-			 -autoscale => 'local'
+      unshift @override,(
+	  -glyph     => 'wiggle_density',
+	  -height    => 15,
+	  -min_score => 0,
+	  -autoscale => 'local',
       );
+      push @override, $source->i18n_style("$label:summary",$lang);
   }
   my $hilite_callback = $args->{hilite_callback};
 
@@ -2121,16 +2125,13 @@ sub create_track_args {
       @args = ($segment,
 	       @default_args,
 	       $source->default_style,
-	       $source->i18n_style($label,
-				   $lang),
+	       $source->i18n_style($label,$lang),
 	       @override,
 	  );
   } else {
     @args = (@default_args,
 	     $source->default_style,
-	     $source->i18n_style($label,
-			       $lang,
-			       $length),
+	     $source->i18n_style($label,$lang,$length),
 	     @override,
 	    );
   }
@@ -2564,7 +2565,6 @@ sub details_mult {
     return $render->details_mult if $render;
 
     # workaround for Slave processes, which have no render object
-    # 
     return $self->source->details_multiplier($self->settings);
 }
 

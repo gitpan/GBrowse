@@ -16,12 +16,10 @@ function gbCheck (button,state) {
   if (!checkboxes)
     return false;
 
-  //  var track_names = new Array();
   for (var i=0; i<checkboxes.length; i++) {
-      var track_name = checkboxes[i].id.split('_',1);
+      var track_name = checkboxes[i].id.substring(0,checkboxes[i].id.lastIndexOf("_"));
       ShowHideTrack(track_name,state);
   }
-  //  var added_tracks = Controller.add_tracks(track_names);
   gbTurnOff(a);
   button.checked = true;
   updateList($(a));
@@ -36,6 +34,7 @@ function gbToggleTrack (track_name) {
 function ShowHideTrack(track_name,visible) {
   var track_title = $(track_name+'_check');
   var track_img   = $(track_name+'_img');
+  if (track_title == null) return;
   var ancestor    = track_title.ancestors().find(
 					function (el) {
 					    return el.nodeName == 'TD'
@@ -50,7 +49,7 @@ function ShowHideTrack(track_name,visible) {
   }  else {
       ancestor.removeClassName('activeTrack');
       track_title.removeClassName('activeTrack');
-      track_img.src=Controller.button_url('empty.png');
+      track_img.src=Controller.button_url('square.png');
   }
 
   checkSummaries();

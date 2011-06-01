@@ -3,7 +3,7 @@
  rubber.js -- a base class for drag/rubber-band selection in gbrowse
 
  Sheldon McKay <mckays@cshl.edu>
- $Id: rubber.js 24785 2011-04-06 20:38:34Z lstein $
+ $Id$
 
 */
 

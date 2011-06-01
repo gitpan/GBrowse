@@ -1,6 +1,6 @@
 package Bio::Graphics::Browser2::DataLoader::bam;
 
-# $Id: bam.pm 24319 2010-12-29 21:24:32Z lstein $
+# $Id$
 use strict;
 use base 'Bio::Graphics::Browser2::DataLoader';
 

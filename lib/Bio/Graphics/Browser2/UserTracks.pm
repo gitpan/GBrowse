@@ -1,6 +1,6 @@
 package Bio::Graphics::Browser2::UserTracks;
 
-# $Id: UserTracks.pm 24857 2011-04-27 21:14:56Z lstein $
+# $Id$
 use strict;
 use Bio::Graphics::Browser2::DataSource;
 use Bio::Graphics::Browser2::DataLoader;

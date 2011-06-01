@@ -1,5 +1,5 @@
 package Bio::Graphics::Browser2::Plugin;
-# $Id: Plugin.pm 24345 2011-01-10 07:52:07Z lstein $
+# $Id$
 # base class for plugins for the Generic Genome Browser
 
 =head1 NAME
@@ -344,8 +344,8 @@ configuration section.
 You can now access these settings from within the plugin by using the
 following idiom:
 
-   my $traverse_isa   = $browser_config->setting('traverse_isa');
-   my $server         = $browser_config->setting('use_server');
+   my $traverse_isa   = $self->setting('traverse_isa');
+   my $server         = $self->setting('use_server');
 
 This facility is intended to be used for any settings that should not
 be changed by the end user.  Persistent user preferences should be

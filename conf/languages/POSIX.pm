@@ -108,6 +108,8 @@ END
     
    CLEAR_FAV     => 'Clear All Favorites',
 
+   ADDED_TO     => 'Add track to favorites',
+
 #############
 
 
@@ -149,7 +151,7 @@ END
 
    SUBTRACK_INSTRUCTIONS   => 'Select the tracks you wish to display. Sort the tracks by clicking on the column headings, or by clicking and dragging rows into position.',
 
-   SELECT_SUBTRACKS   => '%d of %d subtracks selected',
+   SELECT_SUBTRACKS   => 'showing %d/%d subtracks',
 
    NO_TRACK_CITATION => 'There is no additional information about this track.',
 
@@ -437,11 +439,16 @@ END
 
  SCALE_MAX        => 'Maximum scale value',
 
+ MIN              => 'Min',
+ MAX              => 'Max',
+
  SHOW_VARIANCE    => 'Show variance band',
 
- APPLY_CONFIG     => 'Apply this config when region >=',
+ APPLY_CONFIG     => 'Apply config when view between',
 
- SHOW_SUMMARY     => 'Show summary when region >=',
+ SHOW_SUMMARY     => 'Show summary when region >',
+
+ FEATURE_SUMMARY     => 'Feature Density Summary',
 
  LINEWIDTH        => 'Line width',
 

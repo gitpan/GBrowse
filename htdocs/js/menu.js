@@ -1,4 +1,4 @@
-// $Id: menu.js 22257 2009-11-16 15:11:04Z lstein $
+// $Id$
 
 var PopupMenu = Class.create( {
     initialize:

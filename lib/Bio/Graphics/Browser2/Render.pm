@@ -240,7 +240,11 @@ sub run {
 
   my $session = $self->session;
   my $source  = $self->data_source;
-  $source->set_username($session->username) if $session->private;
+  if ($session->private) {
+      $source->set_username($session->username);
+  } else {
+      $source->set_username(undef);
+  }
 
   if ($source->must_authenticate) {
       if ($session->private && 
@@ -659,6 +663,7 @@ sub background_individual_track_render {
     my $details_msg = '';
 
     my $external    = $self->external_data;
+    my $source      = $self->data_source;
     
     my $section;
     my $segment;
@@ -683,7 +688,7 @@ sub background_individual_track_render {
         $details_msg     = h1(
             $self->translate(
                 'TOO_BIG',
-                scalar $self->data_source()->unit_label(MAX_SEGMENT),
+                scalar $source->unit_label(MAX_SEGMENT),
             )
         );
         my %track_keys = ( $label => 0 );
@@ -705,8 +710,9 @@ sub background_individual_track_render {
     my %track_keys;
     foreach my $cache_track_hash ( $cache_track_hash, ) {
         foreach my $track_label ( keys %{ $cache_track_hash || {} } ) {
-	    my $unique_label = $external->{$track_label} 
-	        ? "$track_label:$section"
+	    my $unique_label = 
+		$source->is_remotetrack($track_label) ? $track_label
+		: $external->{$track_label}           ? "$track_label:$section"
 		: $track_label;
             $track_keys{ $unique_label }
                 = $cache_track_hash->{$track_label}->key();
@@ -2111,17 +2117,21 @@ sub reconfigure_track {
     my $dynamic = $self->translate('DYNAMIC_VALUE');
     my $mode    = param('mode');
 
-    my $length          = param('segment_length')  || 0;
-    my $semantic_len    = param('apply_semantic')  || 0;
-    my $delete_semantic = param('delete_semantic');
-    my $summary         = param('summary_mode');
+    my $length            = param('segment_length')       || 0;
+    my $semantic_low      = param('apply_semantic_low')   || 0;
+    my $semantic_hi       = param('apply_semantic_hi')    || 0;
+    my $delete_semantic   = param('delete_semantic');
+    my $summary           = param('summary_mode');
 
     $state->{features}{$label}{summary_mode_len} = $summary if defined $summary;
 
-    delete $state->{features}{$label}{semantic_override}{$delete_semantic} if $delete_semantic;
+    ($semantic_low,$semantic_hi) = ($semantic_hi,$semantic_low) if $semantic_low > $semantic_hi;
+    $self->clip_override_ranges($state->{features}{$label}{semantic_override},
+				$semantic_low,
+				$semantic_hi);
 
-    my $o = $mode eq 'summary' ? $state->{features}{$label}{summary_override}                ={}
-                               : $state->{features}{$label}{semantic_override}{$semantic_len}={};
+    my $o = $mode eq 'summary' ? $state->{features}{$label}{summary_override}                                = {}
+                               : $state->{features}{$label}{semantic_override}{"$semantic_low:$semantic_hi"} = {};
 
     my $glyph = param('conf_glyph') || '';
   
@@ -2145,7 +2155,8 @@ sub reconfigure_track {
 	    $s = 'autoscale';
 	}
 
-	my $configured_value = $source->semantic_fallback_setting($label=>$s,$semantic_len);
+	# semantic setting for this configured length
+	my $configured_value = $source->semantic_fallback_setting($label=>$s,$semantic_low+1);
 
 	if ($value eq $dynamic) {
 	    delete $o->{$s};
@@ -2164,6 +2175,99 @@ sub reconfigure_track {
 	undef $o->{min_score}; 
 	undef $o->{max_score} 
     }
+}
+
+#        low                    hi
+#          <--------------------->  current
+#  <-----------> A
+#                            <-------------> B
+#   <--------------------------------------------->  C
+#                <--------->  D
+#
+sub clip_override_ranges {
+    my $self = shift;
+    my ($semconf,$low,$hi) = @_;
+
+    # legacy representation of bounds
+    for my $k (keys %$semconf) {
+	unless ($k =~ /:/) {
+	    $semconf->{"$k:999999999"} = $semconf->{$k};
+	    delete $semconf->{$k};
+	}
+    }
+
+    my @ranges = map {
+	my ($l,$h) = split ':';
+	$l ||= 0;
+	$h ||= 1_000_000_000;
+	[$l,$h];
+    } keys %$semconf;
+    @ranges = sort {$a->[0]<=>$b->[0]} @ranges;
+    for my $r (@ranges) {
+	my $key  = "$r->[0]:$r->[1]";
+	my $conf = $semconf->{$key};
+	delete $semconf->{$key};
+	my $overlap;
+
+	if ($r->[0] <= $low && $r->[1] >= $hi) {   # case C
+	    $semconf->{$r->[0]  . ':' . ($low-1)} = $conf unless $r->[0] >= $low-1;
+	    $semconf->{($hi+1)  . ':' . $r->[1] } = $conf unless $hi+1   >= $r->[1];
+	    $overlap++;
+	}
+
+	if ($r->[0] > $low && $r->[1] < $hi) {   # case D
+	    $overlap++;
+	    # delete
+	}
+	
+	if ($r->[1] >= $low && $r->[0] <= $low) { # case A
+	    $r->[1] =  $low-1;
+	    $semconf->{"$r->[0]:$r->[1]"} = $conf
+		unless $r->[0] >= $r->[1];
+	    $overlap++;
+	} 
+
+	if ($r->[1] >= $hi && $r->[0] <= $hi) {   # case B
+	    $r->[0] =  $hi+1;
+	    $semconf->{"$r->[0]:$r->[1]"} = $conf
+		unless $r->[0] >= $r->[1];
+	    $overlap++;
+	}
+
+	unless ($overlap) {
+	    $semconf->{$key} = $conf;
+	}
+    }
+}
+
+sub find_override_bounds {
+    my $self = shift;
+    my ($semconf,$length) = @_;
+    my @ranges = sort {$a->[0]<=>$b->[0]} 
+    map { my @a = split ':';
+	  \@a
+    } keys %$semconf;
+    my ($low,$hi) = (0,999999999);
+    for my $r (@ranges) {
+	next unless @$r == 2;
+	if ($length >= $r->[0] && $length <= $r->[1]) {
+	    return @$r;
+	}
+	$low = $r->[1]+1 if $r->[1] < $length;
+	$hi  = $r->[0]-1 if $r->[0] > $length;
+    }
+    return ($low,$hi);
+}
+
+sub find_override_region {
+    my $self = shift;
+    my ($semconf,$length) = @_;
+    my @ranges = keys %$semconf;
+    for my $r (@ranges) {
+	my ($low,$hi) = split ':',$r;
+	return $r if $length >= $low && (!defined $hi || $length <= $hi);
+    }
+    return;
 }
 
 sub update_options {
@@ -2292,8 +2396,6 @@ sub update_coordinates {
   my $self  = shift;
   my $state = shift || $self->state;
 
-  warn "update_coordinates, session id = ",$self->session->id if DEBUG;
-
   delete $self->{region}; # clear cached region
   my $position_updated;
 
@@ -2303,14 +2405,6 @@ sub update_coordinates {
     $state->{view_stop}  = param('stop')  if defined param('stop')  && param('stop')  =~ /^[\d-]+/;
     $state->{view_stop}  = param('end')   if defined param('end')   && param('end')   =~ /^[\d-]+/;
     $position_updated++;
-  }
-
-  elsif (param('q')) {
-      warn "param(q) = ",param('q') if DEBUG;
-      $state->{search_str} = param('q');
-      @{$state}{'ref','view_start','view_stop'} 
-          = Bio::Graphics::Browser2::Region->parse_feature_name($state->{search_str});
-      $position_updated++;
   }
 
   # quench uninit variable warning
@@ -2361,14 +2455,15 @@ sub update_coordinates {
       warn "name = $state->{name}" if DEBUG;
   }
 
-  elsif (param('name')) {
-      $state->{backup_region} = [$state->{ref},$state->{start},$state->{stop},$state->{view_start},$state->{view_stop}] if $state->{ref};
+  elsif (param('name') || param('q')) {
+      $state->{backup_region} = 
+	  [$state->{ref},$state->{start},$state->{stop},$state->{view_start},$state->{view_stop}] if $state->{ref};
       undef $state->{ref};  # no longer valid
       undef $state->{start};
       undef $state->{stop};
       undef $state->{view_start};
       undef $state->{view_stop};
-      $state->{name}       = $state->{search_str} = param('name');
+      $state->{name}       = $state->{search_str} = param('name') || param('q');
       $state->{dbid}       = param('dbid'); # get rid of this
   }
 }
@@ -3245,11 +3340,15 @@ sub expand_track_names {
     my @results;
 
     for my $t (@tracks) {
-	if ($external->{$t} || $source->code_setting($t=>'remote feature')) {
+	if ($source->code_setting($t=>'remote feature')) {
+	    push @results,$t;
+	}
+	elsif ($external->{$t}) {
 	    my @sections = $self->featurefile_sections($t);
 	    @sections    = ('detail') unless @sections;
 	    push @results,"$t:$_" foreach @sections;
-	} else {
+	}
+	else {
 	    push @results,$t;
 	}
     }
@@ -3279,9 +3378,9 @@ sub get_section_from_label {
 sub trackname_to_id {
     my $self = shift;
     my ($name,$section) = @_;
-    $self->external_data->{$name}
-                   ? "$name:$section"
-		   : $name;
+    $self->data_source->is_remotetrack($name) ? $name
+   :$self->external_data->{$name}             ? "$name:$section"
+   : $name;
 }
 
 ################## get renderer for this segment #########
@@ -3428,7 +3527,6 @@ sub render_deferred {
     
     warn '(render_deferred(',join(',',@$labels),') for section ',$section,' nocache=',$nocache if DEBUG;
 
-    
     my $renderer   = $self->get_panel_renderer($seg,
 					       $self->thin_whole_segment,
 					       $self->thin_region_segment
@@ -3656,7 +3754,6 @@ sub external_data {
     my $search       = $self->get_search_object;
     my $meta_segment = $search->segment($segment);
     my $too_big      =  $segment && ($self->get_panel_renderer($segment)->vis_length > $max_segment);
-    #$segment->length > $max_segment);
     if (!$too_big && $segment) {
 	my $search       = $self->get_search_object;
 	my $rel2abs      = $search->coordinate_mapper($segment,1);
@@ -3946,8 +4043,6 @@ sub chrom_sizes {
 sub generate_chrom_sizes {
     my $self  = shift;
     my $sizes = shift;
-
-    warn "creating $sizes";
 
     my $source = $self->data_source;
 

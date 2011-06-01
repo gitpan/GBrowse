@@ -1,4 +1,4 @@
-// $Id: tabs.js 24860 2011-04-28 16:22:58Z lstein $
+// $Id$
 
 var TabbedSection = Class.create( {
 

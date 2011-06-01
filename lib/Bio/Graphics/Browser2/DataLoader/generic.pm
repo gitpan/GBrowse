@@ -1,6 +1,6 @@
 package Bio::Graphics::Browser2::DataLoader::generic;
 
-# $Id: generic.pm 24451 2011-01-31 22:21:26Z lstein $
+# $Id$
 use strict;
 use Bio::DB::SeqFeature::Store;
 use Carp 'croak';

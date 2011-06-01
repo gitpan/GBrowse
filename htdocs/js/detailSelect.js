@@ -4,7 +4,7 @@
                       This class handles details-specific configuration.
 
  Sheldon McKay <mckays@cshl.edu>
- $Id: detailSelect.js 24406 2011-01-21 20:00:49Z lstein $
+ $Id$
 
 */
 

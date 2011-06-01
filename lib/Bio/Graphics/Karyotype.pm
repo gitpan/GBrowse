@@ -1,6 +1,6 @@
 package Bio::Graphics::Karyotype;
 
-# $Id: Karyotype.pm 23143 2010-05-07 04:59:55Z lstein $
+# $Id$
 # Utility class to create a display of a karyotype and a series of "hits" on the individual chromosomes
 # Used for searching
 
@@ -347,7 +347,7 @@ sub hits_table {
     my $na   = $self->trans('NOT_APPLICABLE') || '-';
 
     my $sort_order = $self->seqid_order;
-    my $url  = url(-path_info=>1)."?name=";
+    my $url  = url(-absolute=>1,-path_info=>1)."?name=";
 
     # a way long map call here
     my @rows      = map {

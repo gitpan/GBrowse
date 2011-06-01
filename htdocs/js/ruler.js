@@ -2,7 +2,7 @@
 
  ruler.js -- GBrowse ruler
 
- $Id: ruler.js 24240 2010-11-25 19:31:26Z tonydecat $ 
+ $Id$ 
 
 */
 

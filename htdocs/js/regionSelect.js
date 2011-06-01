@@ -4,7 +4,7 @@
                       This class handles region-specific configuration.
 
  Sheldon McKay <mckays@cshl.edu>
- $Id: regionSelect.js 24247 2010-11-26 20:16:54Z tonydecat $
+ $Id$
 
 */
 

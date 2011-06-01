@@ -1,6 +1,6 @@
 package Bio::Graphics::Browser2::Action;
 
-#$Id: Action.pm 24868 2011-04-28 21:38:16Z lstein $
+#$Id$
 # dispatch
 
 use strict;

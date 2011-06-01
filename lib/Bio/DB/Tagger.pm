@@ -1,5 +1,5 @@
 package Bio::DB::Tagger;
-# $Id: Tagger.pm 22257 2009-11-16 15:11:04Z lstein $
+# $Id$
 
 use strict;
 use warnings;

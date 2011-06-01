@@ -1,4 +1,4 @@
-# $Id: GFFhelper.pm 22257 2009-11-16 15:11:04Z lstein $
+# $Id$
 
 =head1 NAME
 

@@ -1,5 +1,5 @@
 package Bio::Graphics::Browser2::Render::Slave::Status;
-# $Id: Status.pm 22257 2009-11-16 15:11:04Z lstein $
+# $Id$
 
 # This module keeps track of when slaves were last contacted and their
 # current status. If a slave is down and there are alternatives defined,

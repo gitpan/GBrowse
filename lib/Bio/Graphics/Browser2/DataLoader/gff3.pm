@@ -1,6 +1,6 @@
 package Bio::Graphics::Browser2::DataLoader::gff3;
 
-# $Id: gff3.pm 22257 2009-11-16 15:11:04Z lstein $
+# $Id$
 use strict;
 use base 'Bio::Graphics::Browser2::DataLoader::generic';
 
