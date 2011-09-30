@@ -25,6 +25,7 @@ use Bio::Graphics::Browser2::Util qw[modperl_request url_label];
 use Bio::Graphics::Browser2::UserTracks;
 use Bio::Graphics::Browser2::UserDB;
 use Bio::Graphics::Browser2::Session;
+use Bio::Graphics::Browser2::Render::SnapshotManager;
 use POSIX ":sys_wait_h";
 
 use constant VERSION              => 2.0;
@@ -215,7 +216,8 @@ sub destroy {
 	$lm->destroy;
 	delete $self->{login_manager};
     }
-    $self->session->flush if $self->session;
+    $self->session->unlock if $self->session;
+#    $self->session->flush if $self->session;
 }
 
 ###################################################################################
@@ -347,7 +349,7 @@ sub run_asynchronous_event {
     my $self = shift;
     my ($status, $mime_type, $data, %headers) = $self->asynchronous_event or return;
 
-    warn "[$$] asynchronous event returning status=$status, mime-type=$mime_type" if DEBUG;
+    warn "[$$] asynchronous event returning status=$status, mime-type=$mime_type" if TRACE_RUN;
 
     # add the cookies!
     $headers{-cookie} = [$self->state_cookie,$self->auth_cookie];
@@ -386,7 +388,7 @@ sub asynchronous_event {
     my $settings = $self->state;
     my $events;
 
-    warn "event(",(join ' ',param()),")" if DEBUG;
+    warn "[$$] asynchronous event(",query_string(),")" if TRACE_RUN;
 
     # TO ADD AN ASYNCHRONOUS REQUEST...
     # 1. Give the request a unique name, such as "foo"
@@ -552,7 +554,7 @@ sub add_tracks {
     my $self        = shift;
     my $track_names = shift;
 
-    warn "add_tracks(@$track_names)" if DEBUG;
+    warn "add_tracks(@$track_names)" if DEBUG; 
 
     my %track_data;
     my $segment = $self->segment;
@@ -565,7 +567,7 @@ sub add_tracks {
     }
 
     $self->init_remote_sources if $remote;
-    
+	
     if ($segment) {
 	foreach my $track_name ( @$track_names ) {
 
@@ -627,8 +629,7 @@ sub add_tracks {
 		};
 	    }
 	}
-    }
-
+    }	
     return \%track_data;
 }
 
@@ -842,11 +843,12 @@ sub render_body {
   }
   
   my $tracks        = $self->render_tracks_section;
+  my $snapshots     = $self->snapshot_manager->render_snapshots_section;
   my $community     = $self->user_tracks->database? $self->render_community_tracks_section : "";
   my $custom        = $self->render_custom_tracks_section;
   my $global_config = $self->render_global_config;
 
-  $output .= $self->render_tabbed_pages($main_page,$tracks,$community,$custom,$global_config);
+  $output .= $self->render_tabbed_pages($main_page,$tracks,$snapshots,$community,$custom,$global_config);
   $output .= $self->login_manager->render_confirm;
   $output .= $self->render_bottom($features);
 
@@ -947,16 +949,16 @@ sub render_panels {
         my $scale_bar_html = $self->scale_bar( $seg, 'overview', );
         my $panels_html    = $self->get_blank_panels( [$self->overview_tracks],
 						      'overview' );
-		my $drag_script    = $self->drag_script( 'overview_panels', 'track' );
-		$html .= div(
-			$self->toggle({tight=>1},
-	 			  'Overview',
-	 			  div({ -id => 'overview_panels', -class => 'track', -style=>'margin-bottom:3px; overflow: hidden; margin-left:auto; margin-right:auto; position:relative; width:'.$self->get_image_width($self->state).'px' },
-	 			      $scale_bar_html, $panels_html,
-	 			  ))
-	 	    ) . $drag_script;
+	my $drag_script    = $self->drag_script( 'overview_panels', 'track' );
+	$html .= div(
+	    $self->toggle({tight=>1},
+			  'Overview',
+			  div({ -id => 'overview_panels', -class => 'track', -style=>'margin-bottom:3px; overflow: hidden; margin-left:auto; margin-right:auto; position:relative; width:'.$self->get_image_width($self->state).'px' },
+			      $scale_bar_html, $panels_html,
+			  ))
+	    ) . $drag_script;
     }
-
+    
     if ( $section->{'regionview'} and $self->state->{region_size} ) {
 
         my $scale_bar_html = $self->scale_bar( $seg, 'region' );
@@ -966,12 +968,13 @@ sub render_panels {
 
         $html .= div(
             $self->toggle({tight=>1},
-                'Region',
-                div({ -id => 'region_panels', -class => 'track', -style=>'margin-bottom:3px; overflow: hidden; margin-left:auto; margin-right:auto; position:relative; width:'.$self->get_image_width($self->state).'px'  },
-                    $scale_bar_html, $panels_html,
-                )
+			  'Region',
+			  div({ -id => 'region_panels', -class => 'track', 
+				-style=>'margin-bottom:3px; overflow: hidden; margin-left:auto; margin-right:auto; position:relative; width:'.$self->get_image_width($self->state).'px'  },
+			      $scale_bar_html, $panels_html,
+			  )
             )
-        ) . $drag_script;
+	    ) . $drag_script;
     }
 
     if ( $section->{'detailview'} ) {
@@ -981,7 +984,7 @@ sub render_panels {
 						      'detail');
         my $drag_script    = $self->drag_script( 'detail_panels', 'track' );
         my $details_msg    = span({ -id => 'details_msg', },'');
-		my $clear_hilites  = $self->clear_highlights;
+	my $clear_hilites  = $self->clear_highlights;
         $html .= div(
             $self->toggle({tight=>1},
 			  'Details',
@@ -999,7 +1002,7 @@ sub render_panels {
             )
 	    ) . $drag_script;
     }
-    return $html;
+    return div({-id=>'panels'},$html);
 }
 
 sub get_post_load_functions {
@@ -1017,6 +1020,7 @@ sub scale_bar {
     my $self         = shift;
     my $seg          = shift;
     my $this_section = shift || 'detail';
+    my $extra_args   = shift; 
 
     my $label = '';
     my ( $url, $height, $width );
@@ -1044,7 +1048,8 @@ sub scale_bar {
         ( $url, $height, $width ) = $renderer->render_scale_bar(
             section => 'detail',
             segment => $seg,
-            state   => $self->state
+            state   => $self->state,
+	    @$extra_args 
         );
     }
     my $html = $renderer->wrap_rendered_track(
@@ -1863,7 +1868,8 @@ sub set_default_state {
 sub update_state {
   my $self   = shift;
   warn "[$$] update_state()" if DEBUG;
-  return if param('gbgff'); # don't let gbgff requests update our coordinates!!!
+  return if param('gbgff');          # don't let gbgff requests update our coordinates!!!
+#  return if url() =~ /gbrowse_img/;  # don't let gbrowse_img requests update our coordinates either!!
   $self->_update_state;
 }
 
@@ -2063,7 +2069,7 @@ sub track_visible {
 sub update_state_from_cgi {
   my $self  = shift;
   my $state = $self->state;
-warn "state = $state" if DEBUG;
+  warn "state = $state" if DEBUG;
   $self->update_options($state);
   $self->update_coordinates($state);
   $self->update_region($state);
@@ -2134,7 +2140,6 @@ sub reconfigure_track {
                                : $state->{features}{$label}{semantic_override}{"$semantic_low:$semantic_hi"} = {};
 
     my $glyph = param('conf_glyph') || '';
-  
     for my $s ( grep {/^conf_/} param()) {
         my @values = param($s);
 	my $value  = $values[-1]; # last one wins
@@ -2171,7 +2176,7 @@ sub reconfigure_track {
 	    }
 	}
     }
-    unless (defined $o->{autoscale} && $o->{autoscale} eq 'none') { 
+    if (defined $o->{autoscale} && $o->{autoscale} eq 'local') { 
 	undef $o->{min_score}; 
 	undef $o->{max_score} 
     }
@@ -2639,6 +2644,11 @@ sub asynchronous_update_sections {
 	$return_object->{'community_tracks'} = $self->render_community_track_listing(@_); #Passing on any search terms.
     }
 
+    # Saved Snapshot Section
+    if ( $handle_section_name{'snapshots_page'}) {
+	$return_object->{'snapshots_page'} = $self->snapshot_manager->render_snapshots_listing($self);
+    }
+
     # Handle Remaining and Undefined Sections
     foreach my $section_name ( keys %handle_section_name ) {
         next if ( defined $return_object->{$section_name} );
@@ -2726,9 +2736,6 @@ sub asynchronous_update_coordinates {
 
     my $state  = $self->state;
 
-#    warn "asynchronous_update_coordinates, session id = ",$self->session->id;
-#    warn "asynchronous_update_coordinates: \$state->{ref} = $state->{ref}";
-
     my $whole_segment_start = $state->{seg_min};
     my $whole_segment_stop  = $state->{seg_max};
 
@@ -2753,16 +2760,16 @@ sub asynchronous_update_coordinates {
 	$position_updated++;
     }
     if ( $action =~ /flip (\S+)/ ) {
-    if ( $action =~ /name/) {
-        $self->move_to_name($state, $action);
-        $position_updated++;
-    }
-        if ( $1 eq 'true' ) {
-            $state->{'flip'} = 1;
-        }
-        else {
-            $state->{'flip'} = 0;
-        }
+	if ( $action =~ /name/) {
+	    $self->move_to_name($state, $action);
+	    $position_updated++;
+	}
+	if ( $1 eq 'true' ) {
+	    $state->{'flip'} = 1;
+	}
+	else {
+	    $state->{'flip'} = 0;
+	}
     }
 
     if ($position_updated) { # clip and update param
@@ -2804,8 +2811,6 @@ sub asynchronous_update_coordinates {
 	# update our "name" state and the CGI parameter
 	$state->{name} = $self->region_string;
     }
-
-    $self->session->flush();
     $position_updated;
 }
 
@@ -2844,12 +2849,12 @@ sub region_string {
     my $state   = $self->state;
     my $source  = $self->data_source;
     my $divider = $source->unit_divider || 1;
-    $state->{view_start} ||= 0;
+    $state->{view_start}  ||= 0;
     $state->{view_stop}   ||= 0;
-    $state->{name} = "$state->{ref}:".
-	              $source->commas($state->{view_start}/$divider).
-		      '..'.
-		      $source->commas($state->{view_stop}/$divider);
+    return "$state->{ref}:".
+	$source->commas($state->{view_start}/$divider).
+	'..'.
+	$source->commas($state->{view_stop}/$divider);
 }
 
 sub zoom_to_span {
@@ -3933,6 +3938,7 @@ sub image_link {
     $img_url    .= ";keystyle=$keystyle" if $keystyle;
     $img_url    .= ";grid=$grid";
     $self->add_hilites($settings,\$img_url);
+
     return $img_url
 }
 
@@ -4264,6 +4270,11 @@ sub login_manager {
     eval "require Bio::Graphics::Browser2::Render::Login" unless
 	Bio::Graphics::Browser2::Render::Login->can('new');
     return $self->{login_manager} = Bio::Graphics::Browser2::Render::Login->new($self);
+}
+
+sub snapshot_manager {
+    my $self = shift;
+    return $self->{snapshot_manager} ||= Bio::Graphics::Browser2::Render::SnapshotManager->new($self);
 }
 
 sub tr {

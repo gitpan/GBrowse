@@ -1,3 +1,17 @@
+2.40
+   * Quash a few uninitialized variable warnings when bringing up track configuration dialog.
+   * Fix inability to toggle visibility & favorite status of plugin tracks from the
+     track titlebar.
+   * Added caching of inverted configuration file data structure to speed up track
+     rendering on really huge configuration files with many stanzas. Cache structure
+     is stored in /tmp/bio_graphics_ff_cache_$UID
+   * Add ability to save and restore named snapshots of current state.
+   * Changed behavior of render slave to a prefork model. Activate by including
+      PREFORK=5 (or other desired number of servers) in /etc/default/gbrowse-slave.
+   * Added support script for Amazon cloud image: gbrowse_attach_slaves.pl creates
+     slave instances for AMI ami-c6ca31af.
+   * Change default tmpfile location to /var/tmp/gbrowse2 (was /tmp/gbrowse2).
+
 2.39
    * Download SVG images as type application/svg+xml rather than triggering
      inline display behavior.
@@ -15,13 +29,32 @@
    * Fix "can't take log of negative number" bug when zoomed way in.
 
 2.37
-   * Fix summary mode to work again when no explicit configuration given.
+   * Preparations for faceted track searching
+     * deprecate "subtrack select" and "subtrack table" options in favor of "subtrack facets",
+       which introspects values from database (will require updates to Bio::DB::SeqFeature and friends)
+     * add "facet labels" and "facet values" options
+     * allow options to be tagged with "ex:option_name" to identify facets
+   * Fix subtracks to prevent features from appearing in the subtrack manager that won't be
+     displayed in the track panel because the feature type doesn't match the configured "feature"
+     option.
+   * Add option "track listing style" to select style of the track listing. Options are "categories" (default)
+     and "facets". Currently only "categories" works.
 
 2.36
    * Make semantic zooming work again when database option changed.
 
 2.35
    * Fix internal server error caused by certain semantic zooming declarations.
+   * Preparations for faceted track searching
+     * deprecate "subtrack select" and "subtrack table" options in favor of "subtrack facets",
+       which introspects values from database (will require updates to Bio::DB::SeqFeature and friends)
+     * add "facet labels" and "facet values" options
+     * allow options to be tagged with "ex:option_name" to identify facets
+   * Fix subtracks to prevent features from appearing in the subtrack manager that won't be
+     displayed in the track panel because the feature type doesn't match the configured "feature"
+     option.
+   * Add option "track listing style" to select style of the track listing. Options are "categories" (default)
+     and "facets". Currently only "categories" works.
 
 2.34
    * Fix broken https:// links in karyotype summary table; patch courtesy Dan Bolser

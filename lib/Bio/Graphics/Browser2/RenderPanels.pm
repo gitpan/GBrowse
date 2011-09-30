@@ -517,16 +517,17 @@ sub wrap_rendered_track {
 	$title = $source->setting($l=>'key') || $label;
     }
     $title =~ s/:(overview|region|detail)$//;
-    my $fav_click      =  "toggle_titlebar_stars('$label')";
    
     my $balloon_style = $source->global_setting('balloon style') || 'GBubble'; 
     my $favorite      = $settings->{favorites}{$label};
     my $starIcon      = $favorite ? $favicon_2 : $favicon;
     my $starclass     = $favorite ? "toolbarStar favorite" : "toolbarStar";
     (my $l = $label) =~ s/:(overview|detail|regionview)$//;
+    my $fav_click      =  "toggle_titlebar_stars('$l')";
+
     my @images = (
         $fav_click ? img({   	-src         => $starIcon,
-				-id          =>"barstar_${label}",
+				-id          =>"barstar_${l}",
 				-class       => $starclass,
 				-style       => 'cursor:pointer',
 				-onmousedown => $fav_click,
@@ -543,7 +544,7 @@ sub wrap_rendered_track {
 
 	img({   -src         => $kill,
                 -id          => "${label}_kill",
-		-onClick     => "ShowHideTrack('$label',false)",
+		-onClick     => "ShowHideTrack('$l',false)",
                 -style       => 'cursor:pointer',
                 $self->if_not_ipad(-onMouseOver => "$balloon_style.showTooltip(event,'$kill_this_track')"),
             }
@@ -678,16 +679,19 @@ sub wrap_rendered_track {
 	    -onClick => "Controller.scroll('right',0.5)",
 	});
 	
-	my $scale_div = div( { -id => "detail_scale_scale", -style => "position:absolute; top:12px", }, "" );
+	my $scale_div = div( { -id => "detail_scale_scale", 
+			       -style => "position:absolute; top:12px", }, "" );
 
-        $overlay_div = div( { -id => "${label}_overlay_div", -style => "position:absolute; top:0px; width:100%; left:0px", }, $pan_left . $pan_right . $scale_div);
+        $overlay_div = div( { -id => "${label}_overlay_div", 
+			      -style => "position:absolute; top:0px; width:100%; left:0px", }, $pan_left . $pan_right . $scale_div);
     }
 
     my $inner_div = div( { -id => "${label}_inner_div" }, $img . $pad_img ); #Should probably improve this
 
     my $subtrack_labels = join '',map {
 	my ($label,$left,$top) = @$_;
-	div({-class=>'subtrack',-style=>"top:${top}px;left:20px;background-color:white"},$label);
+	$left = PAD_DETAIL_SIDES;
+	div({-class=>'subtrack',-style=>"top:${top}px;left:${left}px;background-color:white"},$label);
     } @$titles;
 
     my $html = div({-class=>'centered_block',
@@ -1006,6 +1010,8 @@ sub render_scale_bar {
 
     my $flip = ( $section eq 'detail' and $state->{'flip'} ) ? 1 : 0;
 
+    $add_track_extra_args{'-postgrid'} = $args{'postgrid'} if $args{'postgrid'};
+
     my @panel_args = $self->create_panel_args(
         {   section        => $section, 
             segment        => $wide_segment,
@@ -1035,6 +1041,18 @@ sub render_scale_bar {
             -unit_divider   => $source->unit_divider,
             %add_track_extra_args,
         );
+
+	if (my $feats = $args{'tracks'}) {
+
+	    my @feature_types = $feats->types;
+
+	    for my $type (@feature_types) {
+	    my $features = $feats->features($type);
+	    my %options  = $feats->style($type);
+	    $panel->add_track($features,%options);  
+	    }
+
+	}
 
         # add uploaded files that have the "(over|region)view" option set
 
@@ -2243,7 +2261,7 @@ sub do_bump {
   my $self = shift;
   my ($track_name,$option,$count,$max,$length) = @_;
 
-  my $source              = $self->source;
+  my $source            = $self->source;
   my $maxb              = $source->code_setting($track_name => 'bump density');
   $maxb                 = $max unless defined $maxb;
 

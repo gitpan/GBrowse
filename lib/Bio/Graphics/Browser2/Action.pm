@@ -7,10 +7,16 @@ use strict;
 use Carp qw(croak confess cluck);
 use CGI();
 use Bio::Graphics::Browser2::TrackDumper;
+use Bio::Graphics::Browser2::Render::HTML;
+use Bio::Graphics::Browser2::SendMail;
 use File::Basename 'basename';
+use File::Path     'make_path';
 use JSON;
 use constant DEBUG => 0;
 use Data::Dumper;
+use Storable qw(dclone);;
+use POSIX;
+use Digest::MD5 'md5_hex';
 
 sub new {
     my $class  = shift;
@@ -61,6 +67,20 @@ sub handle_legacy_calls {
     return;
 }
 
+sub ACTION_render_panels {
+    my $self   = shift;
+    my $q      = shift;
+    my $render = $self->render;
+    my $seg    = eval {$render->region->seg};
+    return (204,'text/plain',undef) unless $seg;
+    my $source = $render->data_source;
+    $render->init_plugins();
+    my $html   = $render->render_panels($seg,{overview   => $source->show_section('overview'),
+					      regionview => $source->show_section('region'),
+					      detailview => $source->show_section('detail')});
+    return (200,'text/html',$html);
+}
+
 # each ACTION_* method corresponds to a "action=*" parameter on the CGI stack
 sub ACTION_navigate {
     my $self   = shift;
@@ -74,7 +94,6 @@ sub ACTION_navigate {
 
     my $view_start = $q->param('view_start');
     my $view_stop  = $q->param('view_stop');
-
     unless (!defined $view_start or $view_start eq 'NaN' or $view_stop eq 'NaN') {
 	$render->state->{view_start} = ($view_start && $view_start >= 0)? $view_start : $render->state->{view_start},
 	$render->state->{view_stop}  = ($view_stop  && $view_stop  >= 0)? $view_stop  : $render->state->{view_stop},
@@ -129,6 +148,7 @@ sub ACTION_update_sections {
 
     my $return_object = { section_html => $section_html, };
     $self->session->flush;
+
     return ( 200, 'application/json', $return_object );
 }
 
@@ -235,13 +255,14 @@ sub ACTION_add_tracks {
     my $q    = shift;
 
     my $render = $self->render;
-
     my @track_names = $q->param('track_names');
-
+	
     $render->init_database();
     $render->init_plugins();
+
     my $track_data = $render->add_tracks(\@track_names);
     my $return_object = { track_data => $track_data, };
+
     $self->session->flush;
     return ( 200, 'application/json', $return_object );
 }
@@ -282,9 +303,9 @@ sub ACTION_set_favorite {
     my $is_favorite  = $q->param('favorite');
     my $settings = $self->state;
 
-    warn "lebels = $labels" if DEBUG;
+    warn "labels = $labels" if DEBUG;
     my @labels = split(',' , $labels);
-    warn "lebels = @labels" if DEBUG;
+    warn "labels = @labels" if DEBUG;
 
     foreach my $label(@labels){
 	$settings->{favorites}{$label} = $is_favorite;
@@ -324,7 +345,184 @@ sub ACTION_clear_favorites {
     return (204,'text/plain',undef);
 }
 
+# *** The Snapshot actions
+sub ACTION_delete_snapshot {
+    my $self = shift;
+    my $q     = shift;
+    my $name = $q->param('name');
+    my $snapshots = $self->session->snapshots;
+    delete $snapshots->{$name};
+    $self->session->flush;
+    return (204,'text/plain',undef);
+}
 
+sub ACTION_save_snapshot {
+    my $self = shift;
+    my $q     = shift;
+    my $name  = $q->param('name');
+    my $snapshots = $self->session->snapshots;
+    my $settings  = $self->settings;
+    my $imageURL  = $self->render->image_link($settings);
+
+    my $UTCtime = strftime("%Y-%m-%d %H:%M:%S\n", gmtime(time));
+
+    # Creating a deep copy of the snapshot
+    my $snapshot = dclone $settings;
+    $snapshot->{image_url}            = $imageURL;
+    $snapshots->{$name}{data}         = $snapshot;
+    $snapshots->{$name}{session_time} = $UTCtime;
+
+    # Each snapshot has a unique snapshot_id (currently just an md5 sum of the unix time it is created
+    my $snapshot_id = md5_hex(time);
+    $snapshots->{$name}{snapshot_id}  = $snapshot_id;
+
+    $self->session->flush;
+    return (204,'text/plain',undef);
+}
+
+sub ACTION_set_snapshot {
+     my $self = shift; 
+     my $q = shift; 
+     my $name = $q->param('name');
+     my $settings  = $self->settings;
+     my $snapshots = $self->session->snapshots;
+
+     warn "[$$] get snapshot $name: $snapshots->{$name}" if DEBUG;
+
+     %{$settings} = %{dclone $snapshots->{$name}{data}};
+
+     my @selected_tracks  = $self->render->visible_tracks;
+     my $segment_info     = $self->render->segment_info_object();
+     $self->session->flush;
+
+     return(200,'application/json',{tracks=>\@selected_tracks,segment_info=>$segment_info});
+ }
+
+sub ACTION_send_snapshot {
+     my $self = shift; 
+     my $q = shift; 
+     my $name = $q->param('name');
+     my $url  = $q->param('url');
+     my $snapshots = $self->session->snapshots;
+
+     my $settings = $self->state;
+     my $id       = $self->session->uploadsid;
+
+     my $globals = $self->render->globals;
+     my $dir     = $globals->user_dir;
+
+     my $filename = $snapshots->{$name}{snapshot_id};
+     my $source   = $self->session->source;
+         
+     mkdir File::Spec->catfile($dir,$source,$id);
+	
+     #Storing the snapshot as a string and saving it to a textfile. Typical directory /var/lib/gbrowse2/userdata/{source}/{uploadid}: 
+     my $snapshot = Dumper($snapshots->{$name}{data});
+     open SNAPSHOT, ">$dir/$source/$id/$filename.txt" or die "Can't open $dir: $!";
+     print SNAPSHOT "$snapshot";
+     close SNAPSHOT;
+
+     # The snapshot information is embedded into the URL
+     $url = "$url?id=$id&snapname=$name&snapcode=$filename&source=$source";
+     $url =~ s/ /%20/g;
+     $self->session->flush;
+
+     return(200,'text/plain',$url); 
+ }
+
+sub ACTION_mail_snapshot {
+     my $self = shift; 
+     my $q = shift; 
+
+     my $name     = $q->param('name');
+     my $to_email = $q->param('email');
+     my $url      = $q->param('url');
+     $url         =~ s/\?.+$//;
+
+     my $settings = $self->state;
+     my $snapshots = $self->session->snapshots;
+     my $id = $self->session->uploadsid;
+     my $source   = $self->session->source;
+
+     my $globals = $self->render->globals;
+     my $dir     = $globals->user_dir;
+
+     my $filename = $snapshots->{$name}{snapshot_id};
+         
+     make_path(File::Spec->catfile($dir,$source,$id));
+	
+     #Storing the snapshot as a string and saving it to a textfile. Typical directory /var/lib/gbrowse2/userdata/{source}/{uploadid}: 
+     my $snapshot = Dumper($snapshots->{$name}{data});
+     open SNAPSHOT, ">$dir/$source/$id/$filename.txt" or die "Can't open $dir/$source/$id/$filename.txt: $!";
+     print SNAPSHOT "$snapshot";
+     close SNAPSHOT;
+	
+     # The snapshot information is embedded into the URL
+     $url = "$url?id=$id&snapname=$name&snapcode=$filename&source=$source";
+     $url =~ s/ /%20/g;
+
+     my $subject = "Genome Browser Snapshot";
+     my $contents = "Please follow this link to load the GBrowse snapshot: $url"; 
+ 
+     # An email is sent containing the snapshot information
+     my ($result,$msg) = Bio::Graphics::Browser2::SendMail->do_sendmail({
+	 from       => $globals->email_address,
+	 from_title => $globals->application_name,
+	 to         => $to_email,
+	 subject    => $subject,
+	 msg        => $contents},$globals);
+     return (200,'application/json',
+	     {
+		 success => $result,
+		 msg     => $msg
+	     });
+ }
+
+sub ACTION_load_snapshot_from_file {
+     my $self = shift; 
+     my $q = shift; 
+     my $source   = $q->param('browser_source');
+     my $filename = $q->param('snapcode');
+     my $name     = $q->param('snapname');
+     $filename    =~ s/%20/ /g;  # not needed?
+     $filename    =~ s![/.]!!g;
+     my $from_id = $q->param('id');
+     
+     my $settings = $self->state;
+     my $userid   = $settings->{userid};
+     
+     # The snapshot is loaded from the global variable
+     my $globals = $self->render->globals;
+     my $dir = $globals->user_dir;
+     my $snapshot_data;
+     
+     open SNAPSHOT, "<$dir/$source/$from_id/$filename.txt" or die "Can't open $dir: $!";
+     $snapshot_data = do { local $/; <SNAPSHOT> };
+     close SNAPSHOT;
+     my $VAR1;
+     my $snapshot = eval $snapshot_data;
+     warn $@ if $@;
+
+     if (!$snapshot){
+	return(504,'text/plain',undef);
+     } else {
+	 my $snapshots = $self->session->snapshots;
+
+	 my $UTCtime = strftime("%Y-%m-%d %H:%M:%S\n", gmtime(time));
+	 $snapshots->{$name}{session_time} = $UTCtime;
+	 $snapshots->{$name}{userid}       = $userid;
+
+	 my $snapshot_id = md5_hex(time);
+	 $snapshots->{$name}{snapshot_id} = $snapshot_id;
+	 $snapshots->{$name}{data} = $snapshot;
+
+	 warn "[$$] create snapshot $name: ",$self->session->snapshots->{$name}{data} if DEBUG;
+	 $self->session->flush;
+	 return(204,'text/plain',undef);
+     }
+ }
+
+# END snapshot section
 
 sub ACTION_reconfigure_plugin {
     my $self   = shift;
@@ -640,7 +838,7 @@ sub ACTION_delete_upload {
     foreach (@tracks) {
 	my (undef,@db_args) = $self->data_source->db_settings($_);
 	Bio::Graphics::Browser2::DataBase->delete_database(@db_args);
-	$render->remove_track_from_state($_);
+	$render->remove_track_frdata__state($_);
     }
     $usertracks->delete_file($file);
     $self->render->data_source->clear_cached_config;

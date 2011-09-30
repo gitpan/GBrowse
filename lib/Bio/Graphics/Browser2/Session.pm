@@ -50,7 +50,6 @@ sub new {
 
 	$self->session_argv($driver,$id,$session_args);
 	$self->{session} = $self->lock_ex($id);
-
 	warn "CGI::Session->new($driver,$id,$session_args)=>",$self->{session}->id if DEBUG;
 
 	# never expire private (authenticated) sessions
@@ -67,7 +66,6 @@ sub new {
 sub load_session {
     my $self = shift;
     $self->session_argv(@_);
-#     print Dumper("session = "(\%{$self->session_argv(@_)});
     return CGI::Session->new($self->session_argv);
 }
 
@@ -284,6 +282,12 @@ sub page_settings {
   return $hash->{page_settings};
 }
 
+sub snapshots {
+    my $self = shift;
+    my $hash = $self->config_hash;
+    return $hash->{snapshots}       ||= {};
+}
+
 sub plugin_settings {
   my $self = shift;
   my $plugin_base = shift;
@@ -370,7 +374,6 @@ sub config_hash {
   my $self = shift;
   my $source  = $self->source;
   my $session = $self->{session};
-
   $session->param($source=>{}) unless $session->param($source);
   return $session->param($source);
 }

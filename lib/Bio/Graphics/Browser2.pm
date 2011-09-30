@@ -2,7 +2,7 @@ package Bio::Graphics::Browser2;
 # $Id$
 # Globals and utilities for GBrowse and friends
 
-our $VERSION = '2.39';
+our $VERSION = '2.40';
 
 use strict;
 use warnings;
@@ -28,6 +28,7 @@ sub open_globals {
     my $conf_dir  = $self->config_base;
     my $conf_file = $ENV{GBROWSE_MASTER} || DEFAULT_MASTER;
     my $path      = File::Spec->catfile($conf_dir,$conf_file);
+    die "No GBrowse configuration file at $path!" unless -r $path;
     return $self->new($path);
 }
 
@@ -95,7 +96,8 @@ sub config_base {$ENV{GBROWSE_CONF}
 		    || eval {shift->setting(general=>'config_base')}
 			|| GBrowse::ConfigData->config('conf')
 		              || '/etc/GBrowse2' }
-sub htdocs_base {eval{shift->setting(general=>'htdocs_base')}
+sub htdocs_base {$ENV{GBROWSE_HTDOCS}
+		 || eval{shift->setting(general=>'htdocs_base')}
                     || GBrowse::ConfigData->config('htdocs')
 		        || '/var/www/gbrowse2'     }
 sub url_base    {eval{shift->setting(general=>'url_base')}   
@@ -252,7 +254,8 @@ sub url_fetch_max_size     { shift->setting(general=>'url_fetch_max_size')      
 sub application_name       { shift->setting(general=>'application_name')      || 'GBrowse'                    }
 sub application_name_long  { shift->setting(general=>'application_name_long') || 'The Generic Genome Browser' }
 sub email_address          { shift->setting(general=>'email_address')         || 'noreply@gbrowse.com'        }
-sub smtp                   { shift->setting(general=>'smtp_gateway')          || 'smtp.res.oicr.on.ca'        }
+sub smtp                   { my $smtp = shift->setting(general=>'smtp_gateway'); return  if $smtp eq 'none'; return $smtp  }
+sub smtp_enabled           { return defined shift->smtp;                                                      }
 sub user_account_db        { shift->setting(general=>'user_account_db')                                       } # Used by uploads & user databases, they set their own defaults.
 sub user_accounts	   { my $self = shift;
 			     return $self->setting(general=>'user_accounts') ||
