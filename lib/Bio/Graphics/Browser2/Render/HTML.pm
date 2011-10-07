@@ -1976,7 +1976,7 @@ sub wrap_track_in_track_div {
     # track_type used in register_track() javascript method
     my $track_type = $args{'track_type'} || 'standard';
 
-    my $section = $self->get_section_from_label($track_id);
+    my $section = $self->data_source->get_section_from_label($track_id);
     my $class   = $track_id =~ /scale/i ? 'scale' : 'track';
 
     return div(
@@ -2166,8 +2166,6 @@ sub source_menu {
 # This is currently somewhat hacky, hard to extend and needs to be generalized.
 # NOTE: to add new configuration rows, the name of the form element must begin with "conf_" and
 # the rest must correspond to a valid glyph option.
-
-# BUG: MOVE THIS INTO ITS OWN MODULE!
 sub track_config {
     my $self        = shift;
     my $label              = shift;
