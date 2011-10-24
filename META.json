@@ -107,7 +107,7 @@
       },
       "Bio::Graphics::Browser2" : {
          "file" : "lib/Bio/Graphics/Browser2.pm",
-         "version" : "2.42"
+         "version" : "2.43"
       },
       "Bio::Graphics::Browser2::Action" : {
          "file" : "lib/Bio/Graphics/Browser2/Action.pm",
@@ -392,5 +392,5 @@
          "http://dev.perl.org/licenses/"
       ]
    },
-   "version" : "2.42"
+   "version" : "2.43"
 }

@@ -30,6 +30,7 @@ cgi-bin/gbrowse
 cgi-bin/gbrowse_details
 cgi-bin/gbrowse_gmap
 cgi-bin/gbrowse_img
+cgi-bin/gbrowse_key_img
 cgi-bin/gbrowse_login
 cgi-bin/gbrowse_syn
 Changes
