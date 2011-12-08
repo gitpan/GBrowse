@@ -2,7 +2,7 @@ package Bio::Graphics::Browser2;
 # $Id$
 # Globals and utilities for GBrowse and friends
 
-our $VERSION = '2.43';
+our $VERSION = '2.44';
 
 use strict;
 use warnings;
@@ -397,6 +397,13 @@ sub create_data_source {
   return $source;
 }
 
+sub max_features {
+    my $self = shift;
+    my $max = $self->setting(general => 'maximum features');
+    return 5000 unless defined $max;
+    return $max;
+}
+
 sub default_source {
   my $self    = shift;
   my $source  = $self->setting(general => 'default source');
@@ -477,7 +484,7 @@ sub time2sec {
 ## methods for dealing with the session
 sub session {
   my $self  = shift;
-  my $id    = shift;
+  my ($id,$mode) = @_;
 
   $id ||= undef;
   my @args       = (driver   => $self->session_driver,
@@ -485,16 +492,17 @@ sub session {
                     source   => $self->default_source,
                     lockdir  => $self->session_locks,
                     locktype => $self->session_locktype,
+		    mode     => $mode || 'exclusive',
                     expires  => $self->remember_settings_time);
   return Bio::Graphics::Browser2::Session->new(@args,id => $id);
 }
 
 sub authorized_session {
   my $self                     = shift;
-  my ($id,$authority) = @_;
+  my ($id,$authority,$shared_ok) = @_;
 
   $id       ||= undef;
-  my $session = $self->session($id);
+  my $session = $self->session($id,$shared_ok ? 'shared' : 'exclusive');
 
   return $session unless $session->private;
 

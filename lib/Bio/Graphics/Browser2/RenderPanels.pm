@@ -128,6 +128,7 @@ sub request_panels {
   my $args    = shift;
 
   my $data_destinations = $self->make_requests($args);
+  my $render            = $args->{render};
 
   # sort the requests out into local and remote ones
   my ($local_labels,
@@ -158,9 +159,10 @@ sub request_panels {
 	  my $db = eval { $source->open_database($l,$length)};
       }
 
-      my $child = Bio::Graphics::Browser2::Render->fork();
+      my $child = $render->fork();
 
       if ($child) {
+	  warn "[$$] Forked new rendering panel $child for $args->{section}" if DEBUG;
 	  return $data_destinations;
       }
 
@@ -169,7 +171,7 @@ sub request_panels {
       POSIX::setsid()          or die "Couldn't start new session";
 
       if ( $do_local && $do_remote ) {
-          if ( Bio::Graphics::Browser2::Render->fork() ) {
+          if ( $render->fork() ) {
               $self->run_local_requests( $data_destinations,
 					 $args,
 					 $local_labels );
@@ -181,11 +183,14 @@ sub request_panels {
           }
       }
       elsif ($do_local) {
+	  warn "[$$] run_local_requests (@$local_labels)" if DEBUG;
           $self->run_local_requests( $data_destinations, $args,$local_labels );
       }
       elsif ($do_remote) {
           $self->run_remote_requests( $data_destinations, $args,$remote_labels );
       }
+
+      warn "[$$] $args->{section} RENDERER EXITING" if DEBUG;
       CORE::exit 0;
   }
 
@@ -514,7 +519,7 @@ sub wrap_rendered_track {
     }
     else {
 	(my $l = $label) =~ s/:\w+$//;
-	$title = $source->setting($l=>'key') || $label;
+	$title = $source->setting( $label => 'key') || $l;
     }
     $title =~ s/:(overview|region|detail)$//;
    
@@ -742,6 +747,7 @@ sub run_remote_requests {
   my ($requests,$args,$labels) = @_;
 
   warn "[$$] run_remote_requests on @$labels" if DEBUG;
+  my $render = $args->{render};
 
   my @labels_to_generate = @$labels;
   return unless @labels_to_generate;
@@ -802,7 +808,7 @@ sub run_remote_requests {
 
   for my $url (keys %renderers) {
 
-      my $child   = Bio::Graphics::Browser2::Render->fork();
+      my $child   = $render->fork();
       next if $child;
 
       my $total_time = time();
@@ -1170,69 +1176,121 @@ sub make_scale_feature {
 
 sub make_map {
   my $self = shift;
-  my ($boxes,$panel,$map_name,$trackmap,$first_box_is_scale) = @_;
-  my @map = ($map_name);
+  my ($boxes,$panel,$label,$trackmap,$first_box_is_scale) = @_;
+  my @map = ($label);
 
   my $source = $self->source;
 
-  my $flip = $panel->flip;
-  my $tips = $source->global_setting('balloon tips') && $self->settings->{'show_tooltips'};
-  my $use_titles_for_balloons = $source->global_setting('titles are balloons');
-
-  my $did_map;
+  my $length   = $self->segment->length;
+  my $settings = $self->settings;
+  my $flip     = $panel->flip;
+  my ($track_dbid) = $source->db_settings($label,$length);
 
   local $^W = 0; # avoid uninit variable warnings due to poor coderefs
 
-  if ($first_box_is_scale) {
-    push @map, $self->make_centering_map(shift @$boxes,$flip,0,$first_box_is_scale);
+  push @map, $self->make_centering_map(shift @$boxes,$flip,0,$first_box_is_scale)
+      if $first_box_is_scale;
+
+  my $inline = $source->use_inline_imagemap($label,$length);
+  my $inline_options = {};
+
+  if ($inline) {
+      $inline_options = {tips                    => $source->global_setting('balloon tips') && $settings->{'show_tooltips'},
+			 summary                 => $source->show_summary($label,$length,$self->settings),
+			 use_titles_for_balloons => $source->global_setting('titles are balloons'),
+			 balloon_style           => $source->global_setting('balloon style') || 'GBubble',
+			 balloon_sticky          => $source->semantic_fallback_setting($label,'balloon sticky',$length),
+			 balloon_height          => $source->semantic_fallback_setting($label,'balloon height',$length) || 300,
+      }
   }
 
   foreach my $box (@$boxes){
-    next unless $box->[0]->can('primary_tag');
+      my $feature = $box->[0];
+      next unless $feature->can('primary_tag');
 
-    my $label  = $box->[5] ? $trackmap->{$box->[5]} : '';
+      my $attributes = $inline ? $self->make_imagemap_element_inline($feature,$panel,$label,$box->[5],$inline_options)
+	                       : $self->make_imagemap_element_callback($feature,$track_dbid);
+      $attributes or next;
+      my $fname = eval {$feature->display_name} || eval{$box->[0]->name} || 'unnamed';
+      my $ftype = $feature->primary_tag || 'feature';
+      $ftype   =  "$ftype:$fname";
+      my $line = join("\t",$ftype,@{$box}[1..4]);
+      for my $att (keys %$attributes) {
+	  next unless defined $attributes->{$att} && length $attributes->{$att};
+	  $line .= "\t$att\t$attributes->{$att}";
+      }
+      push @map, $line;
+  }
+  return \@map;
+}
 
-    my $href   = $self->make_link($box->[0],$panel,$label,$box->[5]);
-    my $title  = unescape($self->make_title($box->[0],$panel,$label,$box->[5]));
-    my $target = $self->make_link_target($box->[0],$panel,$label,$box->[5]);
+sub make_imagemap_element_callback {
+    my $self = shift;
+    my ($feature,$dbid) = @_;
+    my $id       = eval {CGI::escape($feature->primary_id || $feature->name)};
+    $id        ||= '*summary*' if eval {$feature->has_tag('coverage')};
+    return unless $id;
+    return {
+        dbid        => $dbid,
+        fid         => $id,
+	href        => 'javascript:void(0)',
+	};
+}
+
+sub make_imagemap_element_inline {
+    my $self    = shift;
+    my ($feature,$panel,$label,$track,$options) = @_;
+
+    my $tips                    = $options->{tips};
+    my $use_titles_for_balloons = $options->{use_titles_for_balloons};
+    my $balloon_style           = $options->{balloon_style};
+    my $sticky                  = $options->{balloon_sticky};
+    my $height                  = $options->{balloon_height};
+    my $summary                 = $options->{summary};
+
+    if ($summary) {
+	return {onmouseover => $self->render->feature_summary_message('mouseover',$label),
+		onmouseeown => $self->render->feature_summary_message('mousedown',$label),
+		href        => 'javascript:void(0)',
+		inline      => 1
+	}
+    }
+    my $source = $self->source;
+    my $href   = $self->make_link($feature,$panel,$label,$track);
+    my $title  = unescape($self->make_title($feature,$panel,$label,$track));
+    my $target = $self->make_link_target($feature,$panel,$label,$track);
 
     my ($mouseover,$mousedown,$style);
-    if ($tips) {
 
+    if ($tips) {
       #retrieve the content of the balloon from configuration files
       # if it looks like a URL, we treat it as a URL.
       my ($balloon_ht,$balloonhover)     =
-	$self->balloon_tip_setting('balloon hover',$label,$box->[0],$panel,$box->[5]);
+        $self->balloon_tip_setting('balloon hover',$label,$feature,$panel,$track,'inline');
       my ($balloon_ct,$balloonclick)     =
-	$self->balloon_tip_setting('balloon click',$label,$box->[0],$panel,$box->[5]);
+        $self->balloon_tip_setting('balloon click',$label,$feature,$panel,$track,'inline');
 
-      my $sticky             = $source->setting($label,'balloon sticky');
-      my $height             = $source->setting($label,'balloon height') || 300;
-
-      if ($use_titles_for_balloons) {
-	$balloonhover ||= $title;
-      }
-
-      $balloon_ht ||= $source->global_setting('balloon style') || 'GBubble';
+      $balloonhover ||= $title if $use_titles_for_balloons;
+      $balloon_ht ||= $balloon_style;
       $balloon_ct ||= $balloon_ht;
 
       if ($balloonhover) {
         my $stick = defined $sticky ? $sticky : 0;
         $mouseover = $balloonhover =~ /^(https?|ftp):/
-	    ? "$balloon_ht.showTooltip(event,'<iframe width='+$balloon_ct.maxWidth+' height=$height frameborder=0 " .
-	      "src=$balloonhover></iframe>',$stick)"
-	    : "$balloon_ht.showTooltip(event,'$balloonhover',$stick)";
-	undef $title;
+            ? "$balloon_ht.showTooltip(event,'<iframe width='+$balloon_ct.maxWidth+' height=$height frameborder=0 " .
+              "src=$balloonhover></iframe>',$stick)"
+            : "$balloon_ht.showTooltip(event,'$balloonhover',$stick)";
+        undef $title;
       }
       if ($balloonclick) {
-	my $stick = defined $sticky ? $sticky : 1;
+        my $stick = defined $sticky ? $sticky : 1;
         $style = "cursor:pointer";
-	$mousedown = $balloonclick =~ /^(http|ftp):/
-	    ? "$balloon_ct.showTooltip(event,'<iframe width='+$balloon_ct.maxWidth+' height=$height " .
-	      "frameborder=0 src=$balloonclick></iframe>',$stick,$balloon_ct.maxWidth)"
-	    : "$balloon_ct.showTooltip(event,'$balloonclick',$stick)";
-	undef $href;
-	undef $target;
+        $mousedown = $balloonclick =~ /^(http|ftp):/
+            ? "$balloon_ct.showTooltip(event,'<iframe width='+$balloon_ct.maxWidth+' height=$height " .
+              "frameborder=0 src=$balloonclick></iframe>',$stick,$balloon_ct.maxWidth)"
+            : "$balloon_ct.showTooltip(event,'$balloonclick',$stick)";
+        undef $href;
+        undef $target;
       }
     }
 
@@ -1241,29 +1299,16 @@ sub make_map {
     $href    ||=     'javascript:void(0)';
 
     my %attributes = (
-		      title       => $title,
-	              href        => $href,
-	              target      => $target,
-		      onmouseover => $mouseover,
-		      onmousedown => $mousedown,
-		      style       => $style,
-		      );
+                      title       => $title,
+                      href        => $href,
+                      target      => $target,
+                      onmouseover => $mouseover,
+                      onmousedown => $mousedown,
+                      style       => $style,
+	              inline      => 1,
+                      );
 
-    my $ftype = $box->[0]->primary_tag || 'feature';
-    my $fname = $box->[0]->display_name if $box->[0]->can('display_name');
-    $fname  ||= $box->[0]->name if $box->[0]->can('name');
-    $fname  ||= 'unnamed';
-    $ftype = "$ftype:$fname";
-    my $line = join("\t",$ftype,@{$box}[1..4]);
-    for my $att (keys %attributes) {
-      next unless defined $attributes{$att} && length $attributes{$att};
-      $line .= "\t$att\t$attributes{$att}";
-    }
-    push @map, $line;
-  }
-
-  return \@map;
-
+    return \%attributes;
 }
 
 # this creates image map for rulers and scales, where clicking on the scale
@@ -1357,6 +1402,7 @@ sub run_local_requests {
     my $cache_extra    = $args->{cache_extra} || [];
     my $section        = $args->{section}     || 'detail';
     my $nocache        = $args->{nocache};
+    my $render         = $args->{render};
 
     my $settings       = $self->settings;
     my $segment        = $self->segment;
@@ -1391,11 +1437,11 @@ sub run_local_requests {
     my (%children,%reaped);
 
     local $SIG{CHLD} = sub {
-	while ((my $pid = waitpid(-1, WNOHANG)) > 0) {
-	    warn "[$$] reaped child $pid" if DEBUG;
-	    $reaped{$pid}++;
-	    delete $children{$pid} if $children{$pid};
-	}
+    	while ((my $pid = waitpid(-1, WNOHANG)) > 0) {
+    	    print STDERR "[$$] reaped render child $pid" if DEBUG;
+    	    $reaped{$pid}++;
+    	    delete $children{$pid} if $children{$pid};
+    	}
     };
 
     my $max_processes = $self->source->global_setting('max_render_processes')
@@ -1413,10 +1459,11 @@ sub run_local_requests {
 	    sleep 1;
 	}
 
-	my $child = Bio::Graphics::Browser2::Render->fork();
+	$render ||= 'Bio::Graphics::Browser2::Render';
+	my $child = $render->fork();
 	croak "Can't fork: $!" unless defined $child;
 	if ($child) {
-	    warn "Launched rendering process $child for $label" if DEBUG;
+	    warn "[$$] Launched rendering process $child for $label" if DEBUG;
 	    $children{$child}++ unless $reaped{$child}; # in case child was reaped before it was sown
 	    next;
 	}
@@ -1518,7 +1565,6 @@ sub run_local_requests {
 	    }
 
 	    $requests->{$label}->put_data($gd, $map, $titles );
-	    alarm(0);
 	};
 	alarm(0);
 
@@ -1535,9 +1581,14 @@ sub run_local_requests {
 	}
 	CORE::exit 0; # in child;
     }
-    warn "waiting for children" if DEBUG;
-    sleep while %children;
+    warn "[$$] waiting for children" if DEBUG;
+    if ($ENV{MOD_PERL}) {
+	$SIG{CHLD}->(); # hacky workaround
+    } else {
+	sleep while %children;
+    }
     warn "done waiting" if DEBUG;
+
     my $elapsed = time() - $time;
     warn "[$$] run_local_requests (@$labels): $elapsed seconds" if DEBUG;
 
@@ -1668,7 +1719,7 @@ sub add_features_to_track {
   # The effect of this loop is to fetch a feature from each iterator in turn
   # using a queueing scheme. This allows streaming iterators to parallelize a
   # bit. This may not be worth the effort.
-  my (%feature2dbid,%classes,%max_features,%limit_hit,%has_subtracks);
+  my (%feature2dbid,%classes,%limit_hit,%has_subtracks);
 
   while (keys %iterators) {
     for my $iterator (values %iterators) {
@@ -1858,10 +1909,11 @@ sub add_features_to_track {
       if $limit && $limit > 0;
 
     if (eval{$tracks->{$l}->features_clipped}) { # may not be present in older Bio::Graphics
-	my $max   = $tracks->{$l}->feature_limit;
-	my $count = $tracks->{$l}->feature_count;
+	my $max       = $tracks->{$l}->feature_limit;
+	my $count     = $tracks->{$l}->feature_count;
+	my $message   = $count == $self->source->globals->max_features ? 'FEATURES_CLIPPED_MAX' : 'FEATURES_CLIPPED';
 	$tracks->{$l}->panel->key_style('between');
-	$tracks->{$l}->configure(-key => $self->language->translate('FEATURES_CLIPPED',$max,$count));
+	$tracks->{$l}->configure(-key => $self->language->translate($message,$max,$count));
     }
   }
 
@@ -1869,7 +1921,7 @@ sub add_features_to_track {
 
 sub get_iterator {
   my $self = shift;
-  my ($db,$segment,$feature_types,$max) = @_;
+  my ($db,$segment,$feature_types) = @_;
 
   # The Bio::DB::SeqFeature::Store database supports correct
   # semantics for directly retrieving features that overlap
@@ -1877,13 +1929,13 @@ sub get_iterator {
   # and then to query the segment! This is a problem, because it
   # means that the reference sequence (e.g. the chromosome) is
   # repeated in each database, even if it isn't the primary one :-(
+  my $max = $self->source->globals->max_features;
   if ($db->can('get_seq_stream')) {
       my @args = (-type   => $feature_types,
 		  -seq_id => $segment->seq_id,
 		  -start  => $segment->start,
-		  -end    => $segment->end,
-		  -max_features => $max,  # some adaptors allow this
-	  );
+		  -end    => $segment->end);
+      push @args,(-max_features => $max) if $max > 0;  # some adaptors allow this
       return $db->get_seq_stream(@args);
   }
 
@@ -2139,11 +2191,6 @@ sub create_track_args {
       );
   }
 
-  if (my $stt = $self->subtrack_manager($label)) {
-      my $sub = $stt->sort_feature_sub;
-      push @default_args,(-sort_order => $sub);
-  }
-
   my @args;
   if ($source->semantic_setting($label=>'global feature',$length)) {
       eval { # honor the database indicated in the track config
@@ -2170,6 +2217,12 @@ sub create_track_args {
 	     @override,
 	    );
   }
+
+  if (my $stt = $self->subtrack_manager($label)) {
+      my $sub = $stt->sort_feature_sub;
+      push @args,(-sort_order => $sub);
+  }
+
   return @args;
 }
 
@@ -2506,7 +2559,7 @@ sub make_link_target {
 
 sub balloon_tip_setting {
   my $self = shift;
-  my ($option,$label,$feature,$panel,$track) = @_;
+  my ($option,$label,$feature,$panel,$track,$inline) = @_;
   my $length = $self->segment_length($label);
   $option ||= 'balloon tip';
   my $source = $self->source;
@@ -2531,7 +2584,11 @@ sub balloon_tip_setting {
   }
   # escape quotes
   $val =~ s/'/\\'/g;
-  $val =~ s/"/&quot;/g;
+  if ($inline) {
+      $val =~ s/"/&quot;/g;
+  } else {
+      $val =~ s/"/\\"/g;
+  }
 
   return ($balloon_type,$val);
 }

@@ -10,6 +10,7 @@ use Carp qw(croak cluck);
 use File::Basename 'dirname','basename';
 use Text::Tabs;
 use Data::Dumper;
+use English;
 
 use Bio::Graphics::Browser2::I18n;
 use Bio::Graphics::Browser2::PluginSet;
@@ -46,6 +47,7 @@ my %PLUGINS;       # cache initialized plugins
 my $FCGI_REQUEST;  # stash fastCGI request handle
 my $STATE;         # stash state for use by callbacks
 
+
 # new() can be called with two arguments: ($data_source,$session)
 # or with one argument: ($globals)
 # in the latter case, it will invoke this code:
@@ -64,8 +66,10 @@ sub new {
     my $globals = shift;
     $requested_id = param('id')        || CGI::cookie('gbrowse_sess');
     $authority    = param('authority') || CGI::cookie('authority');
-
-    $session = $globals->authorized_session($requested_id, $authority);
+    my $shared_ok = Bio::Graphics::Browser2::Action->shared_lock_ok(param('action'));
+    $session      = $globals->authorized_session($requested_id, 
+						 $authority,
+						 $shared_ok);
     $globals->update_data_source($session);
     $data_source = $globals->create_data_source($session->source);
   } else {
@@ -85,8 +89,8 @@ sub new {
 sub set_signal_handlers {
     my $self = shift;
     $SIG{CHLD} = sub {
-    	my $kid; 
-		do { $kid = waitpid(-1, WNOHANG) } while $kid > 0;
+	my $kid; 
+	do { $kid = waitpid(-1, WNOHANG) } while $kid > 0;
     };
 }
 
@@ -554,7 +558,7 @@ sub add_tracks {
     my $self        = shift;
     my $track_names = shift;
 
-    warn "add_tracks(@$track_names)" if DEBUG; 
+    warn "[$$] add_tracks(@$track_names)" if DEBUG; 
 
     my %track_data;
     my $segment = $self->segment;
@@ -2024,7 +2028,7 @@ sub add_track_to_state {
   my $label = shift;
   my $state = $self->state;
 
-  cluck "add_track_to_state($label)" if DEBUG;
+  warn '[',Bio::Graphics::Browser2::Session->time,'] ',"[$$] add_track_to_state($label)" if DEBUG;
 
   return unless length $label; # refuse to add empty tracks!
 
@@ -2057,6 +2061,7 @@ sub add_track_to_state {
 sub remove_track_from_state {
   my $self  = shift;
   my $label = shift;
+  warn '[',Bio::Graphics::Browser2::Session->time,'] ',"[$$] remove_track_from_state($label)" if DEBUG;
   delete $self->state->{features}{$label};
 }
 
@@ -2122,10 +2127,11 @@ sub reconfigure_track {
     $state->{features}{$label}{options}          = param('format_option');
     my $dynamic = $self->translate('DYNAMIC_VALUE');
     my $mode    = param('mode');
+    my $mult    = $self->details_mult;
 
-    my $length            = param('segment_length')       || 0;
-    my $semantic_low      = param('apply_semantic_low')   || 0;
-    my $semantic_hi       = param('apply_semantic_hi')    || 0;
+    my $length            = param('segment_length') * $mult       || 0;
+    my $semantic_low      = param('apply_semantic_low') * $mult   || 0;
+    my $semantic_hi       = param('apply_semantic_hi')  * $mult   || 0;
     my $delete_semantic   = param('delete_semantic');
     my $summary           = param('summary_mode');
 
@@ -2176,7 +2182,7 @@ sub reconfigure_track {
 	    }
 	}
     }
-    if (defined $o->{autoscale} && $o->{autoscale} eq 'local') { 
+    if (defined $o->{autoscale} && $o->{autoscale}=~/local|global|chromosome/) { 
 	undef $o->{min_score}; 
 	undef $o->{max_score} 
     }
@@ -3522,7 +3528,6 @@ sub render_deferred {
 	);
 
     my $h_callback = $self->make_hilite_callback();
-
     my $requests = $renderer->request_panels(
         {   labels           => $labels,
             section          => $section,
@@ -3533,6 +3538,7 @@ sub render_deferred {
             cache_extra      => $cache_extra,
 	    nocache          => $nocache || 0,
 	    remotes          => $self->remote_sources,
+	    render           => $self,
             flip => ( $section eq 'detail' ) ? $self->state()->{'flip'} : 0,
         }
     );
@@ -3966,7 +3972,7 @@ sub fcgi_request {
 
 sub fork {
     my $self = shift;
-
+    
     $self->prepare_modperl_for_fork();
     $self->prepare_fcgi_for_fork('starting');
 
@@ -3975,10 +3981,12 @@ sub fork {
     die "Couldn't fork: $!" unless defined $child;
 
     if ($child) { # parent process
+	$self->session->was_forked('parent') if ref $self;
 	$self->prepare_fcgi_for_fork('parent');
     }
 
     else {
+	$self->session->was_forked('child')  if ref $self;
 	Bio::Graphics::Browser2::DataBase->clone_databases();
 	Bio::Graphics::Browser2::Render->prepare_fcgi_for_fork('child');
 	if (ref $self) {
@@ -4012,6 +4020,7 @@ sub prepare_fcgi_for_fork {
 	$req->Attach();
     } elsif ($state eq 'child') {
 	$req->LastCall();
+	$FCGI_REQUEST = 0;
 	undef *FCGI::DESTROY;
     }
 }
@@ -4261,6 +4270,47 @@ sub snapshot_manager {
     return $self->{snapshot_manager} ||= Bio::Graphics::Browser2::Render::SnapshotManager->new($self);
 }
 
+sub feature_summary_message {
+    my $self = shift;
+    my ($event_type,$label) = @_;
+    my $sticky = $event_type eq 'mousedown' || 0;
+    my $message= $self->data_source->setting($label=>'key'). ' '.lc($self->tr('FEATURE_SUMMARY'));
+    return "GBubble.showTooltip(event,'$message',$sticky)";
+}
+
+sub feature_interaction {
+    my $self = shift;
+    my ($event_type,$label,$feature) = @_;
+    my $source    = $self->data_source;
+    my $settings  = $self->state;
+    my $tips      = $source->global_setting('balloon tips') && $settings->{'show_tooltips'};
+    my $renderer  = $self->get_panel_renderer($self->segment);
+
+    if ($tips) {
+	my $sticky  = $source->setting($label,'balloon sticky');
+	my $height  = $source->setting($label,'balloon height') || 300;
+
+	my $stick   = defined $sticky ? $sticky : $event_type eq 'mousedown';
+	$stick     ||= 0;
+	my ($balloon_style,$balloon_action) 
+	    = $renderer->balloon_tip_setting($event_type eq 'mousedown' ? 'balloon click' : 'balloon hover',$label,$feature,undef,undef);
+	$balloon_action ||= $renderer->make_title($feature,undef,$label,undef) 
+	    if $source->global_setting('titles are balloons') && $event_type eq 'mouseover';
+	$balloon_style  ||= 'GBubble';
+	if ($balloon_action) {
+	    my $action = $balloon_action =~ /^(http|ftp):/
+		? "$balloon_style.showTooltip(event,'<iframe width='+$balloon_style.maxWidth+' height=$height " .
+		"frameborder=0 src=$balloon_action></iframe>',$stick,$balloon_style.maxWidth)"
+		: "$balloon_style.showTooltip(event,'$balloon_action',$stick)";
+	    return ('text/plain',$action)
+	}
+    }
+
+    my $link   = $renderer->make_link($feature,undef,$label,undef);
+    my $target = $renderer->make_link_target($feature,undef,$label,undef);
+    return ('text/plain',$target ? "window.open('$link','$target')" : "document.location='$link'") if $link;
+    return;
+}
 sub tr {
 	my $self = shift;
 	my $lang = $self->language or return @_;

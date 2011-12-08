@@ -18,6 +18,37 @@ use Storable qw(dclone);;
 use POSIX;
 use Digest::MD5 'md5_hex';
 
+# these are actions for which shared session locks are all right
+my %SHARED_LOCK_OK = (retrieve_multiple => 1,
+		      rerender_track    => 1,
+		      render_panels     => 1,
+		      upload_status     => 1,
+		      cite_track        => 1,
+		      download_track_menu => 1,
+		      scan                => 1,
+		      share_track         => 1,
+		      send_snapshot       => 1,
+		      mail_snapshot       => 1,
+		      bookmark            => 1,
+		      autocomplete        => 1,
+		      autocomplete_upload_search      => 1,
+		      autocomplete_user_search        => 1,
+		      get_feature_info     => 1,
+		      upload_status        => 1,
+		      share_file           => 1,
+		      unshare_file         => 1,
+		      change_permissions   => 1,
+		      show_subtracks       => 1,
+		      select_subtracks     => 1,
+		      chrom_sizes          => 1,
+		      about_gbrowse        => 1,
+		      about_dsn            => 1,
+		      about_me             => 1,
+		      get_ids              => 1,
+		      list                 => 1,
+		      get_translation_tables => 1,
+    );
+
 sub new {
     my $class  = shift;
     my $render = shift;
@@ -171,7 +202,6 @@ sub ACTION_configure_track {
 sub ACTION_cite_track {
     my $self = shift;
     my $q    = shift;
-    $self->session->unlock;
 
     my $track_name = $q->param('track') or croak;
 
@@ -217,7 +247,6 @@ sub ACTION_reconfigure_track {
 sub ACTION_share_track {
     my $self = shift;
     my $q    = shift;
-    $self->session->unlock;
 
     my $track_name = $q->param('track') or croak;
     my $html = $self->render->share_track($track_name);
@@ -227,7 +256,6 @@ sub ACTION_share_track {
 sub ACTION_retrieve_multiple {
     my $self = shift;
     my $q    = shift;
-    $self->session->unlock;
 
     my $render = $self->render;
 
@@ -618,7 +646,6 @@ sub ACTION_set_display_option {
 
 sub ACTION_bookmark {
     my $self = shift;
-    $self->session->unlock;
     my $q    = shift;
     $self->state->{start} = $q->param('view_start') || $self->state->{start};
     $self->state->{stop}  = $q->param('view_stop')  || $self->state->{stop};
@@ -629,7 +656,6 @@ sub ACTION_autocomplete {
     my $self   = shift;
     my $q      = shift;
     my $render = $self->render;
-    $self->session->unlock;
 
     my $match  = $q->param('prefix') or croak;
 
@@ -646,7 +672,6 @@ sub ACTION_autocomplete {
 sub ACTION_autocomplete_upload_search {
     my $self   = shift;
     my $q      = shift;
-    $self->session->unlock;
 
     my $render = $self->render;
     warn "prefix search...";
@@ -662,13 +687,34 @@ sub ACTION_autocomplete_user_search {
     my $self   = shift;
     my $q      = shift;
     my $render = $self->render;
-    $self->session->unlock;
 
     my $match  = $q->param('prefix') or croak;
     my $usertracks = $render->user_tracks;
     my $matches    = $usertracks->user_search($match);
     my $autocomplete = $render->format_upload_autocomplete($matches,$match);
     return (200,'text/html',$autocomplete);
+}
+
+sub ACTION_get_feature_info {
+    my $self = shift;
+    my $q    = shift;
+    defined(my $etype = CGI::unescape($q->param('event_type'))) or croak;
+    defined(my $track = CGI::unescape($q->param('track')))      or croak;
+    defined(my $dbid  = CGI::unescape($q->param('dbid')))       or croak;
+    defined(my $fid   = CGI::unescape($q->param('feature_id'))) or croak;
+    $fid or return (204,'text/plain','nothing at all');
+
+    if ($fid eq '*summary*') {
+	return (200,'text/plain',$self->render->feature_summary_message($etype,$track));
+    }
+
+    my $state = $self->state;
+    local $state->{dbid} = $dbid;
+    my $search   = $self->render->get_search_object();
+    my $features = $search->search_features({-name=>"id:$fid"});
+    return (204,'text/plain','nothing at all') unless @$features;
+    my ($mime_type,$payload)  = $self->render->feature_interaction($etype,$track,$features->[0]);
+    return (200,$mime_type,$payload);
 }
 
 sub ACTION_reset_dsn {
@@ -764,7 +810,6 @@ sub ACTION_upload_file {
                                                : $usertracks->upload_file($track_name, $fh, $content_type, $overwrite);
     }
 
-    $session->lock_ex;
     delete $self->state->{uploads}{$upload_id};
     $session->flush();
 
@@ -810,7 +855,6 @@ sub ACTION_import_track {
     $session->flush;
     
     my ($result, $msg, $tracks) = $usertracks->import_url($url);
-    $session->lock_ex;
     delete $self->state->{uploads}{$upload_id};
     $session->flush;
     
@@ -850,7 +894,6 @@ sub ACTION_delete_upload {
 sub ACTION_upload_status {
     my $self = shift;
     my $q    = shift;
-    $self->session->unlock;
 
     my $upload_id = $q->param('upload_id');
 
@@ -940,7 +983,6 @@ sub ACTION_share_file {
     my $self = shift;
     my $q = shift;
     my $render = $self->render;
-    $render->session->unlock(); # session manipulation happening here
 
     my $fileid = $q->param('fileid') or confess "No file ID given to share_file.";
     my $userid = $q->param('userid'); #Will use defailt (logged-in user) if not given.
@@ -957,7 +999,6 @@ sub ACTION_share_file {
 sub ACTION_unshare_file {
     my $self = shift;
     my $q = shift;
-    $self->session->unlock;
 
     my $render = $self->render;
     $render->session->unlock(); # will need this
@@ -973,7 +1014,6 @@ sub ACTION_unshare_file {
 sub ACTION_change_permissions {
     my $self = shift;
     my $q = shift;
-    $self->session->unlock;
 
     my $render = $self->render;
     my $fileid = $q->param('fileid') or confess "No file ID given to change_permissions.";
@@ -1013,7 +1053,6 @@ sub ACTION_modifyUserData {
 sub ACTION_show_subtracks {
     my $self = shift;
     my $q    = shift;
-    $self->session->unlock;
 
     my $track_name = $q->param('track') or croak 'provide "track" argument';
     my $stt = $self->render->create_subtrack_manager($track_name)
@@ -1024,7 +1063,6 @@ sub ACTION_show_subtracks {
 sub ACTION_select_subtracks {
     my $self = shift;
     my $q    = shift;
-    $self->session->unlock;
     my $label= $q->param('track') or return (200,'text/plain','Programming error');
     my $html = $self->render->subtrack_table($label);
     return (200,'text/html',$html);
@@ -1044,7 +1082,6 @@ sub ACTION_set_subtracks {
 sub ACTION_chrom_sizes {
     my $self = shift;
     my $q    = shift;
-    $self->session->unlock;
     my $loader = Bio::Graphics::Browser2::DataLoader->new(undef,undef,undef,
 							  $self->data_source,
 							  undef);
@@ -1156,7 +1193,6 @@ sub ACTION_get_ids {
     my $q    = shift;
     my $state = $self->state;
     my $session=$self->session;
-    $session->unlock;
 
     my $sessionid = $session->id;
     my $uploadid  = $session->uploadsid;
@@ -1170,7 +1206,6 @@ END
 sub ACTION_list {
     my $self = shift;
     my $q    = shift;
-    $self->session->unlock;
 
     my $globals = $self->render->globals;
     my $username = eval {$self->session->username};
@@ -1204,7 +1239,6 @@ sub ACTION_list {
 sub ACTION_get_translation_tables {
     my $self = shift;
     my $render   = $self->render;
-    $self->session->unlock;
     
     my $lang = $render->language;
 
@@ -1265,6 +1299,13 @@ sub ACTION_plugin_authenticate {
 	};
     }
     return (200,'application/json',$result);
+}
+
+sub shared_lock_ok {
+    my $self = shift;
+    my $action = shift;
+    return unless $action;
+    return $SHARED_LOCK_OK{$action};
 }
 
 1;

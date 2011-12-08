@@ -43,13 +43,14 @@ sub config_dialog {
 	delete $state->{features}{$label}{summary_mode_len};
     }
 
+    my $scaled_length  = $length/$render->details_mult;
     my $semantic_override = $render->find_override_region($state->{features}{$label}{semantic_override},$length);
     $semantic_override   ||= 0;
 
     my ($semantic_level)   = $slabel =~ /(\d+)$/;
     $semantic_level      ||= 0;
     my @level              = map {
-	scalar $render->data_source->unit_label($_)
+	scalar $render->data_source->unit_label($_/$render->details_mult)
     } split ':',($semantic_override || $semantic_level);
     my $level              = join '..',@level;
 
@@ -64,7 +65,8 @@ sub config_dialog {
 
     my $return_html = start_html();
 
-    my $title   = div({-class=>'config-title'},$key);
+    my $showing = $render->data_source->unit_label($scaled_length);
+    my $title   = div({-class=>'config-title'},$key,br(),div({-style=>'font-size:9pt'},$render->translate('Currently_Showing',$showing)));
     my $dynamic = $render->translate('DYNAMIC_VALUE');
 
     my $height        = $self->setting( $label => 'height' ,        $length, $summary_mode)    || 10;
@@ -84,7 +86,7 @@ sub config_dialog {
     $autoscale  ||= 'local';
 
     my $sd_fold   = $self->setting( $label => 'z_score_bound' ,     $length, $summary_mode);
-    $sd_fold    ||= 4;
+    $sd_fold    ||= 8;
 
     my $bicolor_pivot = $self->setting( $label => 'bicolor_pivot' ,  $length, $summary_mode);
     my $graph_type    = $self->setting( $label => 'graph_type' ,     $length, $summary_mode);
@@ -393,13 +395,16 @@ END
 		    th( { -align => 'right' },$render->translate('SD_MULTIPLES')),
 		    td( $picker->popup_menu(
 			    -name    => "conf_z_score_bound",
-			    -values  => [qw(1 2 3 4 5 6)],
+			    -values  => [qw(1 2 3 4 5 6 8 10 20)],
 			    -labels  => {1   =>'1 SD',
 					 2   =>'2 SD',
 					 3   =>'3 SD',
 					 4   =>'4 SD',
 					 5   =>'5 SD',
 					 6   =>'6 SD',
+					 8   =>'8 SD',
+					 10   =>'10 SD',
+					 20   =>'20 SD',
 					 },
 			    -default => $sd_fold,
 			    -current => $override->{z_score_bound}
@@ -492,17 +497,18 @@ END
 		  )
         );
 
-    my ($low,$hi)   = $render->find_override_bounds($state->{features}{$label}{semantic_override},$length);
-    $low ||= $semantic_level;
+    my ($low,$hi)   = $render->find_override_bounds($state->{features}{$label}{semantic_override},$scaled_length);
+    $low = $semantic_level unless defined $low;
     $hi  ||= MAX;
+    my $mult = $render->details_mult;
     push @rows,TR({-class=>'general'},
 		  th( {-align => 'right' }, 
 		      $render->translate('APPLY_CONFIG')
 		      ),
 		  td(
-		      $self->region_size_menu('apply_semantic_low',$length,MIN),
+		      $self->region_size_menu('apply_semantic_low',$scaled_length,[$low/$mult,MIN],$low/$mult),
 		      '-',
-		      $self->region_size_menu('apply_semantic_hi',$hi,MAX),
+		      $self->region_size_menu('apply_semantic_hi',$scaled_length,[$hi/$mult,MAX],$hi/$mult),
 		  )
 	) unless $summary_mode;
 
@@ -544,7 +550,7 @@ END
 
     $form .= table({-id=>'config_table',-border => 0 },@rows);
     $form .= end_form();
-	$return_html
+    $return_html
         .= table( TR( td( { -valign => 'top' }, [ $form ] ) ) );
     $return_html .= script({-type=>'text/javascript'},"track_configure.glyph_select(\$('config_table'),\$('glyph_picker_id'))");
     $return_html .= end_html();
@@ -573,23 +579,24 @@ sub setting {
 
 sub region_size_menu {
   my $self = shift;
-  my ($name,$length,$extra_val) = @_;
-  $extra_val ||= 0;
+  my ($name,$length,$extra_vals,$default) = @_;
+  $extra_vals ||= [];
 
   my $source =  $self->render->data_source;
   my %seen;
-  my @r         = sort {$a<=>$b} $source->get_ranges(),$length,$extra_val;
+  my @r         = sort {$a<=>$b} ($source->get_ranges(),$length,@$extra_vals);
   my @ranges	= grep {!$seen{$source->unit_label($_)}++} @r;
   my %labels    = map  {$_=> scalar $source->unit_label($_)} @ranges;
 
   $labels{MIN()}   = $self->render->translate('MIN');
   $labels{MAX()}   = $self->render->translate('MAX');
-  @ranges = sort {$b||0<=>$a||0} @ranges;
+  @ranges  = sort {$b||0<=>$a||0} @ranges;
+  $default = $length unless defined $default;
 
   return popup_menu(-name    => $name,
 		    -values  => \@ranges,
 		    -labels  => \%labels,
-		    -default => $length,
+		    -default => $default,
 		    -force   => 1,
 		   );
 }

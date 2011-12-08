@@ -407,6 +407,7 @@ ScriptAlias  "/gb2"      "$cgibin"
   FastCgiConfig -idle-timeout 600 -maxClassProcesses 20 $fcgi_inc -initial-env GBROWSE_CONF=$conf 
 </IfModule>
 
+# Use of mod_perl is no longer supported. Use at your own risk.
 <IfModule mod_perl.c>
    Alias /mgb2 "$cgibin"
    $modperl_switches
@@ -561,7 +562,7 @@ sub process_conf_files {
 	    (my $new = $base) =~ s/^conf\///;
 	    my $installed = File::Spec->catfile($install_path,$new);
 	    if (-e $installed && $base =~ /\.conf$/ && (compare($base,$installed) != 0)) {
-		warn "$installed conf file is already installed. New version will be installed as $installed.new\n";
+		warn "$installed is already installed. New version will be installed as $installed.new\n";
 		rename ("blib/$base","blib/$base.new");
 		print $skip '^',"blib/",quotemeta($base),'$',"\n";
 	    }

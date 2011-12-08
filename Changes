@@ -1,3 +1,24 @@
+2.44
+  * Modest performance improvements when rendering multiple tracks.
+  * Set absolute cap of 5000 features per track to avoid performance issues on NGS data.
+    This cap can be changed by setting "maximum features" in the [GENERAL] section. Set
+    to 0 to return to unlimited behavior.
+  * Imagemap is now generated in such a way that time-consuming callbacks are only executed when
+    mouse hovers or clicks on the feature. This noticeably speeds up track generation time. Drawback
+    is that this increases the delay before balloon pops up on the hover operation when run in
+    cgi-bin mode (still fast in FastCGI mode). Restore original behavior by setting 
+    "inline imagemaps" (or "inline imagemap") to true in [TRACK DEFAULTS] 
+    or individual track definitions.
+  * Can now close tracks from main view even when corresponding track checkbox not showing
+    in the track listing.
+  * Default to flock locking instead of NFS locking; the former seems to be faster.
+  * Enable shared session locking to improve performance.
+  * Fix bad database pathnames in yeast configuration file examples.
+  * Fix track finder plugin to avoid annoying extra refresh after leaving text entry field.
+  * Fix broken sorting of subtracks.
+  * Improve dynamic range of wiggle tracks.
+  * mod_perl is no longer supported due to unfixable issues with zombie processes.
+
 2.43
   * Fix semantic zooming bug which caused features to disappear when feature type changed between
      semantic zooming levels. Also speeded up rendering process.
@@ -8,6 +29,7 @@
 
 2.41
    * Quash bugs related to miscalculating semantic zooming settings.
+   * Fix inability to close tracks in the overview by clicking on their close box.
 
 2.40
    * Quash a few uninitialized variable warnings when bringing up track configuration dialog.

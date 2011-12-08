@@ -245,30 +245,17 @@ var GBrowseController = Class.create({
         //element back out.  This keeps the other tracks intact.
         if (onTop == null) onTop = false;
 
-        var tmp_element       = document.createElement("tmp_element");
-        tmp_element.innerHTML = child_html;
+//        var tmp_element       = document.createElement("tmp_element");
+//        tmp_element.innerHTML = child_html;
 
         var tracks      = parent_obj.getElementsByClassName('track');
         var first_track = tracks[0];
 
         if (onTop && first_track != null)
-	    parent_obj.insert(tmp_element,{before: first_track[0]});
+	    first_track.insert({before: child_html});
         else
-            parent_obj.insert(tmp_element);
+            parent_obj.insert(child_html);
         
-        // Move each child node but skip if it is a comment (class is undef)
-        if (tmp_element.hasChildNodes()) {
-            var children = tmp_element.childNodes;
-            for (var i = 0; i < children.length; i++) {
-                if (children[i].className == undefined)
-                    continue;
-                if (onTop && first_track != null)
-                    parent_obj.insert(children[i],{before:first_track});
-                else
-                    parent_obj.insert(children[i]);
-            }
-        }
-        parent_obj.removeChild(tmp_element);
     },
 
     // Update Section Methods *****************************************
@@ -724,15 +711,17 @@ var GBrowseController = Class.create({
                         }
                     }
                 }
-                Controller.reset_after_track_load();
                 if (continue_requesting) {
                     setTimeout( function() {
                         Controller.get_remaining_tracks(track_keys,time_out*decay,decay,time_key)
                     } ,time_out);
                 } else {
-		    //		    Controller.linkTrackLegend();   try to find different workaround
+		    var area = $$('area[inline!=1]');
+		    area.invoke('observe', 'mousedown', Controller.feature_callback);
+		    area.invoke('observe', 'mouseover', Controller.feature_callback);
                     Controller.idle();
                 }
+                Controller.reset_after_track_load();
             } // end onSuccess
         }); // end new Ajax.Request
 
@@ -1357,7 +1346,32 @@ show_info_message:
   function(event, url) {
     GBox.showTooltip(event, url);
 	Controller.update_sections(new Array(custom_tracks_id));
-  }
+  },
+
+  feature_callback:
+	function(event) {
+	    // find track information
+	    var element = event.element();
+	    var track_element = element.up(1).id;
+	    var track         = track_element.sub(/^track_/,'');
+	    var javascript;
+	    new Ajax.Request(Controller.url, {
+		    method:      'post',
+			asynchronous: false,
+			parameters:{  
+			    action:      'get_feature_info',
+			    event_type:  event.type,
+			    track:       track,
+			    dbid:        element.getAttribute('dbid'),
+			    feature_id:  element.getAttribute('fid')
+			    },
+		    onSuccess: function(transport) {
+			javascript  = transport.responseText;
+		    }
+	    });
+	    if (javascript != '')
+		eval(javascript);
+	}
 
 });
 

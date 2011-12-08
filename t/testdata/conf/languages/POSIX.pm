@@ -250,6 +250,8 @@ END
 
    FEATURES_CLIPPED => 'Showing %s of %s features',
 
+   FEATURES_CLIPPED_MAX => 'Showing %s of >%s features',
+
    FILE_INFO    => 'Last modified %s.  Annotated landmarks: %s',
 
    FOOTER_1     => <<END,
@@ -480,7 +482,7 @@ END
 
  CONFIGURE_THIS_TRACK   => '<b>Configure this track</b>',
 
- DOWNLOAD_THIS_TRACK   => '<b>Download this track test</b>',
+ DOWNLOAD_THIS_TRACK   => '<b>Download this track</b>',
 
  ABOUT_THIS_TRACK   => '<b>About this track</b>',
 
