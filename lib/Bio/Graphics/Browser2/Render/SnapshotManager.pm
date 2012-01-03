@@ -36,7 +36,7 @@ sub render_snapshots_listing {
     my $deleteSnapshotPath = "$buttons/snap_trash.png";
     my $sendSnapshotPath	= "$buttons/snap_share.png";
     my $mailSnapshotPath 	= "$buttons/snap_mail.png";
-    my $closeImage 	= "$buttons/ex.png";
+    my $closeImage 	   = "$buttons/ex.png";
     my $nameHeading        = $render->translate('SNAPSHOT_FORM');
     my $timeStampHeading   = $render->translate('TIMESTAMP');
     my $url                = $render->globals->gbrowse_url();
@@ -46,7 +46,9 @@ sub render_snapshots_listing {
 		   h1({-id=>'snapshot_section_title'},$render->translate('SNAPSHOT_SELECT')),
 		   input({-type => "button", -name => "Save Snapshot", -value => "Save Snapshot", 
 			  -onClick => '$(\'save_snapshot_2\').show(); $(\'snapshot_name_2\').select();',}),
-		   div({-id => 'save_snapshot_2'},
+		   div({-id => 'save_snapshot_2',
+			-style=>'display:none',
+		       },
 		       div({
 			   -id=>'snapshot_form_2',},
 			   input({
@@ -68,9 +70,12 @@ sub render_snapshots_listing {
 				   -value => "Cancel",
 				   -onclick => '$(\'save_snapshot_2\').hide(); this.style.zIndex = \'0\'',}),
 		       )),
-		   div({-id => "enlarge_image"},
-		       img({-onclick=> '$(\'enlarge_image\').hide(); Box.prototype.greyout(false);', -src => "$closeImage"},),
-		       img({-id => 'large_snapshot',     -width=>'1000', -height => 'auto'})
+		   div({-id => "enlarge_image",
+		       -style => 'display:none',
+		       },
+		       img({-id    => 'large_snapshot_close', 
+			    -onclick=> '$(\'enlarge_image\').hide(); Box.prototype.greyout(false);', -src => "$closeImage"},),
+		       img({-id => 'large_snapshot',       -width=>'1000', -height => 'auto'})
 		   )
 	);
 
@@ -82,11 +87,12 @@ sub render_snapshots_listing {
     my $innerHTML = '';
     for my $snapshot_name (@sortedSnapshots) { 
 	next unless $snapshot_name && $snapshot_name =~ /\S/;
-	
+
 	$timeStamp  = $snapshots->{$snapshot_name}{session_time};
 	$imageURL   = $snapshots->{$snapshot_name}{data}{image_url};
 	($base,$s)  = $render->globals->gbrowse_base;
 	($escapedKey = $snapshot_name) =~ s/(['"])/\\$1/g;
+	my $readable_name = CGI::unescape($snapshot_name);  # ugly, but easier to fix here than where the real bug is 
 	 
 	warn "time = $timeStamp" if DEBUG;
 	
@@ -157,7 +163,7 @@ sub render_snapshots_listing {
 						   -value => "Cancel",
 						   -onclick => '$(\'' . "mail_snapshot_$escapedKey" . '\').hide(); this.style.zIndex = \'0\'',}),
 				       ));
-	my $snapshot_image = span({-class=>'snapshot_image_frame'},span({-class => "snapshot_names"}, (substr $escapedKey, 5))).
+	my $snapshot_image = span({-class=>'snapshot_image_frame'},span({-class => "snapshot_names"}, (substr $readable_name, 5))).
 				  span({-class => "timestamps"},$timeStamp,
 					img({-src => $imageURL, -width=>"50",-height=>"30",-class=>'snapshot_image',
 					     -onclick => 'Controller.enlarge_image(' . "'${imageURL}'" . '); $(' . "'$escapedKey'" . ').style.zIndex = \'0\';',
