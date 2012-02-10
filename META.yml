@@ -44,7 +44,7 @@ provides:
     version: 0
   Bio::Graphics::Browser2:
     file: lib/Bio/Graphics/Browser2.pm
-    version: 2.45
+    version: 2.46
   Bio::Graphics::Browser2::Action:
     file: lib/Bio/Graphics/Browser2/Action.pm
     version: 0
@@ -292,4 +292,4 @@ requires:
   perl: 5.008
 resources:
   license: http://dev.perl.org/licenses/
-version: 2.45
+version: 2.46

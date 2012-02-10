@@ -73,9 +73,11 @@ sub config_dialog {
     my $width         = $self->setting( $label => 'linewidth',      $length, $summary_mode )   || 1;
     my $glyph         = $self->setting( $label => 'glyph',          $length, $summary_mode )   || 'box';
     my $stranded      = $self->setting( $label => 'stranded',       $length, $summary_mode);
-    my $variance_band = $self->setting( $label => 'variance_band',$length, $summary_mode);
+    my $variance_band = $self->setting( $label => 'variance_band',  $length, $summary_mode);
+    my $color_series  = $self->setting( $label => 'color_series',   $length, $summary_mode);
     my $limit         = $self->setting( $label => 'feature_limit' , $length, $summary_mode)    || 0;
     my $summary_length= $self->setting( $label => 'show summary' , $length, $summary_mode) || 0;
+    my $opacity       = $override->{'opacity'} || $self->setting($label => 'opacity',$length,$summary_mode) || 0.3;
 
     # options for wiggle & xy plots
     my $min_score= $self->setting( $label => 'min_score' ,     $length, $summary_mode);
@@ -97,6 +99,12 @@ sub config_dialog {
     my $mean_color  = $self->setting( $label => 'mean_color' ,  $length, $summary_mode);
     my $stdev_color = $self->setting( $label => 'stdev_color' , $length, $summary_mode);
 
+    # packing images
+    my $buttons     = $data_source->globals->button_url;
+    my $red_peaks   = "$buttons/red_peaks.png";
+    my $blue_peaks  = "$buttons/blue_peaks.png";
+    my $opacity_thumb  = "$buttons/opacity_thumb.png";
+
     my @glyph_select = shellwords(
 	    $self->setting( $label => 'glyph select', $length, $summary_mode )
 	);
@@ -117,6 +125,7 @@ sub config_dialog {
                                          two_bolts wave);
     }
 
+    my $auto_packing_label = $quantitative ? $render->translate('Expand_Label') : $render->translate('Auto');
     my %glyphs       = map { $_ => 1 } ( $glyph, @glyph_select );
     my @all_glyphs   = sort keys %glyphs;
     my $g = $override->{'glyph'} || $glyph;
@@ -143,22 +152,57 @@ END
         -id   => $form_name,
     );
 
+    # NOTE: the -class option determines which form elements are shown for
+    # which track types. See htdocs/js/track_config.js
     my @rows;
     push @rows, TR({-class=>'general'},
 		   td( {-colspan => 2}, $title));
 
-    push @rows, TR({-class=>'general'},
-		   th( { -align => 'right' }, $render->translate('Show') ),
-		   td( checkbox(
-			   -name     => 'show_track',
-			   -value    => $label,
+    push @rows,TR( {-class => 'general',
+		    -id    => 'packing'},
+		   th( { -align => 'right' }, $render->translate('Packing') ),
+		   td( popup_menu(
+			   -name     => 'format_option',
+			   -id       => 'format_option',
+			   -values   => ($quantitative ? [0,4] : [ 0..4 ]),
 			   -override => 1,
-			   -checked  => $state->{features}{$label}{visible},
-			   -label    => ''
+			   -default  => $state->{features}{$label}{options},
+			   -labels   => {
+			       0 => $auto_packing_label,
+			       1 => $render->translate('Compact'),
+			       2 => $render->translate('Expand'),
+			       3 => $render->translate('Expand_Label'),
+			       4 => $render->translate('Overlap'),
+			   }
 		       )
-		   ),
+		   )
         );
-    
+
+    push @rows,TR( {-class => 'general',
+		    -id    => 'opacity'},
+		   th( {-align => 'right' }, 'Opacity'),
+		   td( input({-type  => 'text',
+			      -name => 'conf_opacity',
+			      -id    => 'opacity_value',
+			      -style => "display:inline-block;position:relative;top:-4",
+			      -value => '0.00',
+			      -size  => 2,
+			      -maxlength => 4}),
+		       div({-id=>'opacity_box',
+			    -style => 'display:inline-block;position:relative;background:beige;width:100px;height:16px;border:inset 1px',
+			   },
+			   img({-id=>'opacity_thumb',
+				-style=>'position:absolute;left:0',
+				-src  => $opacity_thumb})),
+		       div({-style=>'display:inline-block;position:relative;width:20px;height:20px'},
+			   img({-class=>'opacity',
+				-src  => $red_peaks,
+				-style => 'position:absolute;left:2px;top:0px'}),
+			   img({-class=>'opacity',
+				-src  => $blue_peaks,
+				-style => 'position:absolute;left:0px;top:5px'}),
+		       )));
+
     push @rows,TR( {-class=>'general'},
 		   th( { -align => 'right' }, $render->translate('GLYPH') ),
 		   td($picker->popup_menu(
@@ -207,23 +251,23 @@ END
 	}
     }
 
-    push @rows,TR( {-class => 'features',
-		    -id    => 'packing'},
-		   th( { -align => 'right' }, $render->translate('Packing') ),
-		   td( popup_menu(
-			   -name     => 'format_option',
-			   -values   => [ 0 .. 3 ],
-			   -override => 1,
-			   -default  => $state->{features}{$label}{options},
-			   -labels   => {
-			       0 => $render->translate('Auto'),
-			       1 => $render->translate('Compact'),
-			       2 => $render->translate('Expand'),
-			       3 => $render->translate('Expand_Label'),
-			   }
-		       )
-		   )
-        );
+    #######################
+    # cycling colors
+    #######################
+    push @rows,TR({
+	-id   => 'color_series',
+	-class=> 'general'
+		  },
+		  th ( { -align=>'right' }, $render->tr('AUTO_COLORS') ),
+		  td(hidden(-name => 'conf_color_series',-value=>0),
+		     checkbox(-name => 'conf_color_series',
+			      -id   => 'conf_color_series',
+			      -override=> 1,
+			      -value   => 1,
+			      -checked => defined $override->{'color_series'} 
+			                  ? $override->{'color_series'} 
+			                  : $color_series,
+			      -label   => '')));
 
     #######################
     # bicolor pivot stuff
@@ -231,10 +275,11 @@ END
     my $p = $override->{bicolor_pivot} || $bicolor_pivot || 'none';
     my $has_pivot = $g =~ /wiggle_xyplot|wiggle_density|xyplot/;
 
-    push @rows,TR( {-class=>'xyplot density',
+    push @rows,TR( {-class=>'xyplot density color_picker',
 		     -id   =>'bicolor_pivot_id'},
                    th( { -align => 'right'}, $render->translate('BICOLOR_PIVOT')),
 		   td( $picker->popup_menu(
+			   -class   => 'color_picker',
 			   -name    => 'conf_bicolor_pivot',
 			   -values  => [qw(none zero mean 1SD 2SD 3SD value)],
 			   -labels  => {value => 'value entered below',
@@ -251,14 +296,14 @@ END
         );
 
     my $pv    = $p =~ /^[\d.-eE]+$/ ? $p : 0.0;
-    push @rows,TR({-class =>'xyplot density',
+    push @rows,TR({-class =>'xyplot density color_picker',
 		   -id=>'switch_point_other'},
 		  th( {-align => 'right' },$render->translate('BICOLOR_PIVOT_VALUE')),
                   td( textfield(-name  => 'bicolor_pivot_value',
 				-value => $pv)));
     
 
-    push @rows,TR({-class=>'switch_point_color xyplot density'}, 
+    push @rows,TR({-class=>'switch_point_color xyplot density color_picker'}, 
 		  th( { -align => 'right' }, $render->translate('BICOLOR_PIVOT_POS_COLOR')),
 		   td( $picker->color_pick(
 			   'conf_pos_color',
@@ -268,7 +313,7 @@ END
 		   )
         );
 
-    push @rows,TR( {-class=>'switch_point_color xyplot density'}, 
+    push @rows,TR( {-class=>'switch_point_color xyplot density color color_picker'}, 
 		   th( { -align => 'right' }, $render->translate('BICOLOR_PIVOT_NEG_COLOR') ),
 		   td( $picker->color_pick(
 			   'conf_neg_color',
@@ -279,18 +324,18 @@ END
         );
 
     push @rows,TR( { -id    => 'bgcolor_picker',
-		     -class => 'xyplot density features peaks',
+		     -class => 'xyplot density features peaks color_picker',
 		   },
 		   th( { -align => 'right' }, $render->translate('BACKGROUND_COLOR') ),
 		   td( $picker->color_pick(
 			   'conf_bgcolor',
 			   $self->setting( $label => 'bgcolor', $length, $summary_mode ),
-			   $override->{'bgcolor'}
+			   $override->{'bgcolor'},
 		       )
 		   )
         );
     push @rows,TR( { -id    => 'startcolor_picker',
-		     -class => 'peaks',
+		     -class => 'peaks color_picker',
 		   },
 		   th( { -align => 'right' }, 'Peak gradient start'),
 		   td( $picker->color_pick(
@@ -301,7 +346,7 @@ END
 		   )
         );
     push @rows,TR( { -id    => 'endcolor_picker',
-		     -class => 'peaks',
+		     -class => 'peaks color_picker',
 		   },
 		   th( { -align => 'right' }, 'Peak gradient end'),
 		   td( $picker->color_pick(
@@ -311,7 +356,7 @@ END
 		       )
 		   )
         );
-    push @rows,TR( {-class=>'xyplot features peaks'},
+    push @rows,TR( {-class=>'xyplot features peaks color_picker'},
 		   th( { -align => 'right' }, $render->translate('FG_COLOR') ),
 		   td( $picker->color_pick(
 			   'conf_fgcolor',
@@ -325,7 +370,7 @@ END
     #######################
     # wiggle colors
     #######################
-    push @rows,TR( {-class=>'whiskers'}, 
+    push @rows,TR( {-class=>'whiskers color_picker'}, 
 		   th( { -align => 'right' }, $render->translate('WHISKER_MEAN_COLOR')),
 		   td( $picker->color_pick(
 			   'conf_mean_color',
@@ -335,7 +380,7 @@ END
 		   )
         );
 
-    push @rows,TR( {-class=>'whiskers'}, 
+    push @rows,TR( {-class=>'whiskers color_picker'}, 
 		   th( { -align => 'right' }, $render->translate('WHISKER_STDEV_COLOR') ),
 		   td( $picker->color_pick(
 			   'conf_stdev_color',
@@ -345,7 +390,7 @@ END
 		   )
         );
 
-    push @rows,TR( {-class=>'whiskers'}, 
+    push @rows,TR( {-class=>'whiskers color_picker'}, 
 		   th( { -align => 'right' }, $render->translate('WHISKER_MAX_COLOR') ),
 		   td( $picker->color_pick(
 			   'conf_max_color',
@@ -459,6 +504,7 @@ END
 		       { -align => 'right' }, $render->translate('HEIGHT') ),
 		   td( $picker->popup_menu(
 			   -name    => 'conf_height',
+			   -id      => 'conf_height',
 			   -current => $override->{'height'},
 			   -default => $height,
 			   -values  => [
@@ -552,7 +598,8 @@ END
     $form .= end_form();
     $return_html
         .= table( TR( td( { -valign => 'top' }, [ $form ] ) ) );
-    $return_html .= script({-type=>'text/javascript'},"track_configure.glyph_select(\$('config_table'),\$('glyph_picker_id'))");
+
+    $return_html .= script({-type=>'text/javascript'},"track_configure.init($opacity)");
     $return_html .= end_html();
     return $return_html;
 }

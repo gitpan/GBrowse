@@ -851,6 +851,7 @@ sub render_toggle_track_table {
 
   $html .= div({-style=>'font-weight:bold'},
 	       span({-style=>'padding-right:80px'},'<<',$self->render_select_browser_link('link')),
+	       span({-id=>'showselectedtext',-style=>'padding-right:80px'},$self->render_show_active_tracks_link()),
 	       span({-id => 'showfavoritestext',-style=>'padding-right:80px'},
 		    $self->render_select_favorites_link('link')),
 	       span({-id => 'clearfavs'},
@@ -862,7 +863,7 @@ sub render_toggle_track_table {
 							   $self->render_track_filter($filter)));
   }
 
-  $html .= $self->toggle('Tracks',$self->render_track_table);
+  $html .= $self->toggle({nodiv=>1},'Tracks',$self->render_track_table);
   $html .= div({-style=>'text-align:center'},$self->render_select_browser_link('button'));
   return $html;
 }
@@ -1068,6 +1069,15 @@ sub render_select_clear_link {
 		  -onClick => "clearallfav($clear);",
 		 },
 		 $title),$showicon);
+}
+
+sub render_show_active_tracks_link {
+    my $self = shift;
+    my $active = $self->state->{active_only} ? 'true' : 'false';
+    return a({-href    => 'javascript:void(0)',
+	      -class   => $active ? 'show_active' : 'inactive',
+	      -onClick => "show_active_tracks(this,$active)"},
+	     $self->translate('SHOW_ACTIVE_TRACKS'));
 }
 
 sub render_select_favorites_link {
@@ -2250,14 +2260,16 @@ sub download_track_menu {
     my $byebye      = 'Balloon.prototype.hideTooltip(1)';
 
     my $segment_str = segment_str($segment);
+    my $glyph       = $data_source->setting($track=>'glyph') || 'generic';
     
     my @format_options = Bio::Graphics::Browser2::TrackDumper->available_formats($data_source,$track);
     my %foptions       = map {$_=>1} @format_options;
     my $default     = $foptions{$state->{preferred_dump_format}||''} ? $state->{preferred_dump_format}
-                                                                     : $foptions{gff3}  ? 'gff3'
-								     : $foptions{bed}   ? 'bed'
-								     : $foptions{sam}   ? 'sam'
-								     : $foptions{vista} ? 'vista'
+                                                                     : $glyph =~ /vista/ && $foptions{vista} ? 'vista'
+                                                                     : $foptions{gff3}   ? 'gff3'
+								     : $foptions{bed}    ? 'bed'
+								     : $foptions{sam}    ? 'sam'
+								     : $foptions{vista}  ? 'vista'
 								     : 'fasta';
     my @radios      = radio_group(-name   => 'format',
 				  -values => \@format_options,
@@ -2522,11 +2534,12 @@ sub toggle_section {
 		      -style=>$visible ? 'display:inline' : 'display:none',
 		      -class => 'el_visible'},
 		     @section_body);
-  my @result =  $config{nodiv} ? (div({-style=>'float:left'},
+  my @class  = (-class=>'toggleable');
+  my @result =  $config{nodiv} ? (div({-style=>'float:left',@class},
 				      $show_ctl.$hide_ctl),$content)
-                :$config{tight}? (div({-style=>'float:left;position:absolute;z-index:10'},
+                :$config{tight}? (div({-style=>'float:left;position:absolute;z-index:10',@class},
 				      $show_ctl.$hide_ctl).$break,$content)
-                : div($show_ctl.$hide_ctl,$content);
+                : div({@class},$show_ctl.$hide_ctl,$content);
   return wantarray ? @result : "@result";
 }
 

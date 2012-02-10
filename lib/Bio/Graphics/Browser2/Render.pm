@@ -89,8 +89,9 @@ sub new {
 sub set_signal_handlers {
     my $self = shift;
     $SIG{CHLD} = sub {
-	my $kid; 
-	do { $kid = waitpid(-1, WNOHANG) } while $kid > 0;
+	while ((my $kid = waitpid(-1,WNOHANG))>0) {
+	    1;
+	}
     };
 }
 
@@ -2112,6 +2113,7 @@ sub create_subtrack_manager {
 								     -aliases => $aliases,
 								     -comment => $comment);
     $stt->set_selected($selected) if $selected;
+    eval {$stt->overlap(($state->{features}{$label}{options}||0)==4)};  # options == 4 means "overlap", for legacy reasons
     return $stt;
 }
 
@@ -2123,15 +2125,14 @@ sub reconfigure_track {
     my $state  = $self->state();
     my $source = $self->data_source;
 
-    $state->{features}{$label}{visible}          = param('show_track') ? 1 : 0;
-    $state->{features}{$label}{options}          = param('format_option');
+    $state->{features}{$label}{options}  = param('format_option');
     my $dynamic = $self->translate('DYNAMIC_VALUE');
-    my $mode    = param('mode');
+    my $mode    = param('mode') || 'details';
     my $mult    = $self->details_mult;
 
-    my $length            = param('segment_length') * $mult       || 0;
-    my $semantic_low      = param('apply_semantic_low') * $mult   || 0;
-    my $semantic_hi       = param('apply_semantic_hi')  * $mult   || 0;
+    my $length            = (param('segment_length')||0)     * $mult;
+    my $semantic_low      = (param('apply_semantic_low')||0) * $mult;
+    my $semantic_hi       = (param('apply_semantic_hi')||0)  * $mult   || $self->get_max_segment;
     my $delete_semantic   = param('delete_semantic');
     my $summary           = param('summary_mode');
 
@@ -3997,7 +3998,6 @@ sub fork {
 
     return $child;
 }
-
 
 sub prepare_modperl_for_fork {
     my $self = shift;

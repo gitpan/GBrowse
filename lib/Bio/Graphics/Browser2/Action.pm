@@ -173,12 +173,13 @@ sub ACTION_update_sections {
     my @section_names = $q->param('section_names');
     my $keyword = $q->param('keyword');
     my $offset = $q->param('offset');
+
+    # no state changing occurs here
+    $self->session->unlock;
     
     my @args = (\@section_names);
     my $section_html = $render->asynchronous_update_sections(\@section_names, $keyword, $offset);
-
     my $return_object = { section_html => $section_html, };
-    $self->session->flush;
 
     return ( 200, 'application/json', $return_object );
 }
@@ -236,12 +237,27 @@ sub ACTION_scan {
 sub ACTION_reconfigure_track {
     my $self = shift;
     my $q    = shift;
-
     my $track_name     = $q->param('track') or croak;
     my $semantic_label = $q->param('semantic_label');
+
     $self->render->reconfigure_track($track_name,$semantic_label);
     $self->session->flush;
+    $self->session->unlock;
     return ( 200, 'application/json', {} );
+}
+
+sub ACTION_track_overlapping {
+    my $self = shift;
+    my $q    = shift;
+    my $track_name     = $q->param('track') or croak;
+    my $overlapping    = $q->param('overlapping') or croak;
+    my $state          = $self->state;
+    $q->param('format_option'     => $overlapping eq 'true' ? 4 : 0);
+    $q->param('conf_color_series' => $overlapping eq 'true' ? 1 : 0);
+    $self->render->reconfigure_track($track_name);
+    $self->session->flush;
+    $self->session->unlock;
+    return ( 200, 'application/json', {} );    
 }
 
 sub ACTION_share_track {
@@ -367,11 +383,23 @@ sub ACTION_clear_favorites {
     my $q     = shift;
     my $clear = $q->param('clear');
     my $settings = $self->state;
-    $settings->{favorites}={} if $clear;	
+    $settings->{favorites}={} if $clear;
     warn "show_favorites($settings->{show_favorites})" if DEBUG;
     $self->session->flush;
     return (204,'text/plain',undef);
 }
+
+sub ACTION_show_active_tracks {
+    my $self = shift;
+    my $q     = shift;
+    my $active_only = $q->param('active') eq 'true';
+    my $settings    = $self->state;
+    $settings->{active_only}=$active_only;
+    warn "show_active_tracks($settings->{active_only})" if DEBUG;
+    $self->session->flush;
+    return (204,'text/plain',undef);
+}
+
 
 # *** The Snapshot actions
 sub ACTION_delete_snapshot {
@@ -1073,6 +1101,7 @@ sub ACTION_set_subtracks {
     my $q    = shift;
     my $label= $q->param('label');
     my $subtracks = JSON::from_json($q->param('subtracks'));
+    my $overlap   = $q->param('overlap');
     my $settings  = $self->state;
     $self->state->{subtracks}{$label} = $subtracks;
     $self->session->flush;

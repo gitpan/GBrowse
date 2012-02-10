@@ -26,6 +26,19 @@ function gbCheck (button,state) {
   return true;
 }
 
+function gbExpandAll(title_element,parent_element_id,event) {
+    var el = $(parent_element_id);
+    if (el == null) return;
+    var subsections = el.select('div.el_visible');
+    var titles      = $$('img.'+parent_element_id+'_expand');
+    titles.each(function(s){
+	    s.addClassName('expanded');
+	});
+    subsections.each(function(s){if (s.id!=null) visibility(s.id,1)});
+    if (parent_element_id != null) visibility(parent_element_id,1);
+    Event.stop(event);
+}
+
 function gbToggleTrack (track_name) {
     ShowHideTrack(track_name);
 }

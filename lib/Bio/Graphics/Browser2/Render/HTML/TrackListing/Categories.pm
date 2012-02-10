@@ -21,10 +21,15 @@ sub render_track_listing {
     my @labels = $render->potential_tracks;
     
     warn "favorites = {$settings->{show_favorites}} " if DEBUG;
+    warn "active    = {$settings->{active_only}} "    if DEBUG;
 
     if( $settings->{show_favorites}){
 	warn "favorites = @labels = $settings->{show_favorites}" if DEBUG;	
 	@labels= grep {$settings->{favorites}{$_}} @labels;
+    }
+
+    if ($settings->{active_only}) {
+	@labels = grep {$settings->{features}{$_}{visible}} @labels;
     }
 
     warn "label = @labels" if DEBUG;
@@ -39,8 +44,15 @@ sub render_track_listing {
 	$filter_active = @labels<$tracks;  # mark filter active if the filter has changed the track count
     }
 
-    my %labels     = map {$_  => $self->render_one_track($_,\@hilite)} @labels;
-    my %label_sort = map {$_  => $render->label2key($_)              } @labels;
+    $filter_active++ if $settings->{active_only} || $settings->{show_favorites};
+
+    # for unknown reasons, replacing the below loop with "map" 
+    # causes lots of undefined variable warnings.
+    my (%labels,%label_sort);
+    for my $l (@labels) {
+	$labels{$l}      = $self->render_one_track($l,\@hilite);
+	$label_sort{$l}  = $render->label2key($l);
+    }
 
     my @defaults   = grep {$settings->{features}{$_}{visible}        } @labels;
     
@@ -131,8 +143,9 @@ sub render_track_listing {
 		)."&nbsp;".span({-class => "list",
 				 -id => "${id}_list",
 				 -style => "display: " . ($visible? "none" : "inline") . ";"},"")
-		.br()   if exists $track_groups{$category};
-	    $section_contents{$category} = div($control.$section);
+		.br();
+	    $section_contents{$category} = div({-class=>'track_section'},$control.$section);
+	    
 	}
 	else {
 	    next;
@@ -141,10 +154,14 @@ sub render_track_listing {
 
     autoEscape(1);
     my $slice_and_dice = $self->indent_categories(\%section_contents,\@categories,$filter_active);
+
+    my $expand_all = '&nbsp;' .img({-class  =>  'clickable expand_all range_expand',
+				    -src    => $source->globals->button_url .'/open_open.png',
+				    -onClick => "gbExpandAll(this,'range',event)"});
     return join( "\n",
 		 start_form(-name=>'trackform',
 			    -id=>'trackform'),
-		 div({-class=>'searchbody',-id=> 'range', -style=>'padding-left:1em'},$slice_and_dice),
+		 div({-class=>'searchbody',-id=> 'range', -style=>'padding-left:1em'},$expand_all,br(),$slice_and_dice),
 		 end_form);
 }
 
@@ -176,22 +193,22 @@ sub categorize_track {
     return $render->translate('EXTERNAL') if $label =~ /^(http|ftp|file):/;
     return $render->translate('ANALYSIS') if $label =~ /^plugin:/;
 
-  if ($user_labels->{$label}) {
-      my $cat = $render->user_tracks->is_mine($user_labels->{$label}) 
-	  ? $render->translate('UPLOADED_TRACKS_CATEGORY')
-	  : $render->translate('SHARED_WITH_ME_CATEGORY');
-      return "$cat:".$render->user_tracks->title($user_labels->{$label});
-  }
-
-  my $category;
-  for my $l ($render->language->language) {
-    $category      ||= $render->setting($label=>"category:$l");
-  }
-  $category        ||= $render->setting($label => 'category');
-  $category        ||= '';  # prevent uninit variable warnings
-  $category         =~ s/^["']//;  # get rid of leading quotes
-  $category         =~ s/["']$//;  # get rid of trailing quotes
-  return $category ||= $render->translate('GENERAL');
+    if ($user_labels->{$label}) {
+	my $cat = $render->user_tracks->is_mine($user_labels->{$label}) 
+	    ? $render->translate('UPLOADED_TRACKS_CATEGORY')
+	    : $render->translate('SHARED_WITH_ME_CATEGORY');
+	return "$cat:".$render->user_tracks->title($user_labels->{$label});
+    }
+    
+    my $category;
+    for my $l ($render->language->language) {
+	$category      ||= $render->setting($label=>"category:$l");
+    }
+    $category        ||= $render->setting($label => 'category');
+    $category        ||= '';  # prevent uninit variable warnings
+    $category         =~ s/^["']//;  # get rid of leading quotes
+    $category         =~ s/["']$//;  # get rid of trailing quotes
+    return $category ||= $render->translate('GENERAL');
 }
 
 # Category Table - This returns the hash of the category table.
@@ -259,22 +276,27 @@ sub nest_toggles {
     for my $key (sort { 
 	           ($sort->{$a}||0)<=>($sort->{$b}||0) || $a cmp $b
 		      }  keys %$hash) {
-	    if ($key eq '__contents__') {
-	        $result .= $hash->{$key}."\n";
-	    } elsif ($key eq '__next__') {
-	        $result .= $self->nest_toggles($hash->{$key},$sort,$force_open);
-	    } elsif ($hash->{$key}{__next__}) {
-	        my $id =  "${key}_section";
-	        $settings->{section_visible}{$id} = $default unless exists $settings->{section_visible}{$id};
-		$result .= $render->toggle_section({on=>$force_open||$settings->{section_visible}{$id}},
-						   $id,
-						   b($key).span({-class => "list",
-								 -id => "${id}_list"},""),
-						   div({-style=>'margin-left:1.5em;margin-right:1em'},
-						       $self->nest_toggles($hash->{$key},$sort,$force_open)));
-	    } else {
-	        $result .= $self->nest_toggles($hash->{$key},$sort,$force_open);
-	    }
+	if ($key eq '__contents__') {
+	    $result .= $hash->{$key}."\n";
+	} elsif ($key eq '__next__') {
+	    $result .= $self->nest_toggles($hash->{$key},$sort,$force_open);
+	} elsif ($hash->{$key}{__next__}) {
+	    my $id =  "${key}_section";
+	    my $ea = '&nbsp;' . img({-class  =>  "clickable expand_all ${id}_expand",
+				     -src    => $source->globals->button_url .'/open_open.png',
+				     -onClick => "gbExpandAll(this,'$id',event)"});
+	    $settings->{section_visible}{$id} = $default unless exists $settings->{section_visible}{$id};
+	    $result .= $render->toggle_section({on=>$force_open||$settings->{section_visible}{$id}},
+					       $id,
+					       b($key).
+					       $ea.
+					       span({-class   => "list",
+						     -id      => "${id}_list"},''),
+					       div({-style=>'margin-left:1.5em;margin-right:1em'},
+						   $self->nest_toggles($hash->{$key},$sort,$force_open)));
+	} else {
+	    $result .= $self->nest_toggles($hash->{$key},$sort,$force_open);
+	}
     }
     return $result;
 }
