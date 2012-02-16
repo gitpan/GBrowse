@@ -8,7 +8,7 @@ build_requires:
 configure_requires:
   Module::Build: 0.38
 dynamic_config: 1
-generated_by: 'Module::Build version 0.38, CPAN::Meta::Converter version 2.112150'
+generated_by: 'Module::Build version 0.38, CPAN::Meta::Converter version 2.110930'
 license: perl
 meta-spec:
   url: http://module-build.sourceforge.net/META-spec-v1.4.html
@@ -44,7 +44,7 @@ provides:
     version: 0
   Bio::Graphics::Browser2:
     file: lib/Bio/Graphics/Browser2.pm
-    version: 2.46
+    version: 2.47
   Bio::Graphics::Browser2::Action:
     file: lib/Bio/Graphics/Browser2/Action.pm
     version: 0
@@ -272,7 +272,7 @@ recommends:
   Template: 2.2
   Term::ReadKey: 0
 requires:
-  Bio::Graphics: 2.24
+  Bio::Graphics: 2.26
   Bio::Root::Version: 1.0069
   CGI::Session: 4.02
   Date::Parse: 0
@@ -292,4 +292,4 @@ requires:
   perl: 5.008
 resources:
   license: http://dev.perl.org/licenses/
-version: 2.46
+version: 2.47
