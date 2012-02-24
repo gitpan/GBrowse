@@ -880,7 +880,7 @@ sub generate_title {
          : @$features == 0                   ? $self->translate('NOT_FOUND',$state->{name})
 	 : @$features == 1 ? "$description: ".
 				   $self->translate('SHOWING_FROM_TO',
-					     scalar $dsn->unit_label($state->{view_stop} - $state->{view_start}),
+					     scalar $dsn->unit_label($state->{view_stop} - $state->{view_start}+1),
 					     $state->{ref},
 					     $dsn->commas($state->{view_start}),
 					     $dsn->commas($state->{view_stop}))
@@ -923,7 +923,7 @@ sub segment_info_object {
         flip                 => $state->{flip},
         initial_view_start   => $state->{view_start},
         initial_view_stop    => $state->{view_stop},
-        length_label         => scalar $self->data_source->unit_label($state->{view_stop} - $state->{view_start}),
+        length_label         => scalar $self->data_source->unit_label($state->{view_stop} - $state->{view_start}+1),
         description          => $self->data_source->description,
     );
     if ( $state->{region_size} ) {
@@ -1089,6 +1089,14 @@ sub init_database {
 
   $self->db($db);
   $db;
+}
+
+sub name2segments {
+    my $self = shift;
+    my $name = shift;
+    my $search   = $self->get_search_object();
+    my @features = $search->search_features($name);
+    return map {$search->segment($_)} map {$search->feature2segment($_)} @features;
 }
 
 sub region {
@@ -1470,7 +1478,6 @@ sub handle_plugins {
 
     ### FIND #####################################################
     if ( $plugin_action eq $self->translate('Find') ) {
-
         #$self->do_plugin_find( $state, $plugin_base, $features )
         #    or ( $plugin_action = 'Configure' );    #reconfigure
         return;
