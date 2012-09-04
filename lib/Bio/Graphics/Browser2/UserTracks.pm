@@ -507,13 +507,14 @@ sub upload_file {
     my $filename = $self->trackname_from_url($file_name, !$overwrite);
     
     $content_type ||= '';
-
-    if ($content_type eq 'application/gzip' or $original_name =~ /\.gz$/) {
-		$fh = $self->install_filter($fh,'gunzip -c');
-    } elsif ($content_type eq 'application/bzip2' or $original_name =~ /\.bz2$/) {
-		$fh = $self->install_filter($fh,'bunzip2 -c');
-    }
     
+    if ($original_name =~ /\.sam\.gz/) { # special case compressed sam files - do not uncompress!
+#	$filename = $original_name;
+    } elsif ($content_type eq 'application/gzip' or $original_name =~ /\.gz$/) {
+	$fh = $self->install_filter($fh,'gunzip -c');
+    } elsif ($content_type eq 'application/bzip2' or $original_name =~ /\.bz2$/) {
+	$fh = $self->install_filter($fh,'bunzip2 -c');
+    }
     
     my $fileid = $self->get_file_id($filename) if $self->database;
     my $file   = $self->database ? $fileid ? $fileid : $self->add_file($filename) : $filename;
@@ -845,12 +846,12 @@ fgcolor      = black
 bgcolor      = black
 autoscale    = local
 
-
 [$track_id]
 database     = $dbname
 feature      = read_pair
 glyph        = segments
-draw_target  = 1
+feature_limit = 500
+draw_target   = 1
 show_mismatch = 1
 mismatch_color = red
 bgcolor      = blue
@@ -858,6 +859,7 @@ fgcolor      = blue
 height       = 3
 label        = 1
 label density = 50
+stranded     = 1
 bump         = fast
 key          = $key
 END

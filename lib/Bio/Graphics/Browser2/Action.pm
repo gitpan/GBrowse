@@ -730,7 +730,9 @@ sub ACTION_get_feature_info {
     defined(my $track = CGI::unescape($q->param('track')))      or croak;
     defined(my $dbid  = CGI::unescape($q->param('dbid')))       or croak;
     defined(my $fid   = CGI::unescape($q->param('feature_id'))) or croak;
-    $fid or return (204,'text/plain','nothing at all');
+    $fid                 or  return (204,'text/plain','nothing at all');
+    ($dbid =~ /^remote/ && $etype eq 'mouseover')
+                        &&  return (204,'text/plain','nothing at all');
 
     if ($fid eq '*summary*') {
 	return (200,'text/plain',$self->render->feature_summary_message($etype,$track));
@@ -806,16 +808,15 @@ sub ACTION_upload_file {
 					      error_msg=>'empty file'}
 	       ));
 	       
-	my $upload_id = $q->param('upload_id');
-
-    my $render   = $self->render;
-    my $state    = $self->state;
-    my $session  = $render->session;
+    my $upload_id = $q->param('upload_id');
+    my $render    = $self->render;
+    my $state     = $self->state;
+    my $session   = $render->session;
 
     my $usertracks = $render->user_tracks;
     my $name       = $fh ? basename($fh) 
-	           			: $url ? $url
-                          : $q->param('name');
+	                 : $url ? $url
+                         : $q->param('name');
     $name  ||= 'Uploaded file';
 
     my $content_type = "text/plain"; #? fh? $q->uploadInfo($fh)->{'Content-Type'} : 'text/plain'; - seems to be a problem with UploadInfo().
@@ -824,6 +825,7 @@ sub ACTION_upload_file {
 
     $state->{uploads}{$upload_id} = [$track_name,$$];
     $session->flush();
+    $session->unlock();
 
     my ($result,$msg,$tracks,$pid);
     # in case user pasted the "share link" into the upload field.
@@ -833,11 +835,12 @@ sub ACTION_upload_file {
 	($result,$msg,$tracks,$pid) = (1,'shared track added to your session',$t,$$);
     }
     else {
-	($result, $msg, $tracks, $pid) = $url  ? $usertracks->mirror_url($track_name, $url, 1,$self->render)
-                                        :$data ? $usertracks->upload_data($track_name, $data, $content_type, 1)
-                                               : $usertracks->upload_file($track_name, $fh, $content_type, $overwrite);
+	($result, $msg, $tracks, $pid) = $url  ? $usertracks->mirror_url($track_name,  $url,  1            , $self->render)
+                                        :$data ? $usertracks->upload_data($track_name, $data, $content_type, 1            )
+                                               : $usertracks->upload_file($track_name, $fh,   $content_type, $overwrite   );
     }
 
+    $session->lock();
     delete $self->state->{uploads}{$upload_id};
     $session->flush();
 
@@ -933,8 +936,10 @@ sub ACTION_upload_status {
 	
     if ($file_name = $state->{uploads}{$upload_id}[0]) {
 	my $usertracks = $render->user_tracks;
-	my $file = $usertracks->database? $usertracks->get_file_id($file_name) : $file_name;
-	$status		   = $usertracks->status($file);
+	(my $base = $file_name) =~ s/\.(gz|zip|bz2)$//i;
+	my $file       = $usertracks->database ? $usertracks->get_file_id($file_name)||$usertracks->get_file_id($base)
+	                                       : $file_name;
+	$status	       = $usertracks->status($file) || $render->translate('PENDING');
 	return (200,'text/html', "<b>$file_name:</b> <i>$status</i>");
     } else {
 	my $waiting = $render->translate('PENDING');

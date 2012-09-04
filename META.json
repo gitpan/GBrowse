@@ -28,7 +28,7 @@
       "runtime" : {
          "recommends" : {
             "Bio::DB::BigFile" : "1",
-            "Bio::DB::Sam" : "1.2",
+            "Bio::DB::Sam" : "1.36",
             "Bio::Das" : 0,
             "Crypt::SSLeay" : 0,
             "DBD::Pg" : 0,
@@ -85,6 +85,18 @@
          "file" : "lib/Bio/DB/GFF/Aggregator/wormbase_gene.pm",
          "version" : "0.30"
       },
+      "Bio::DB::SeqFeature::Store::Alias" : {
+         "file" : "lib/Bio/DB/SeqFeature/Store/Alias.pm",
+         "version" : 0
+      },
+      "Bio::DB::SeqFeature::Store::Alias::Iterator" : {
+         "file" : "lib/Bio/DB/SeqFeature/Store/Alias.pm",
+         "version" : 0
+      },
+      "Bio::DB::SeqFeature::Store::Alias::Segment" : {
+         "file" : "lib/Bio/DB/SeqFeature/Store/Alias.pm",
+         "version" : 0
+      },
       "Bio::DB::SeqFeature::Store::BedLoader" : {
          "file" : "lib/Bio/DB/SeqFeature/Store/BedLoader.pm",
          "version" : 0
@@ -107,7 +119,7 @@
       },
       "Bio::Graphics::Browser2" : {
          "file" : "lib/Bio/Graphics/Browser2.pm",
-         "version" : "2.49"
+         "version" : "2.50"
       },
       "Bio::Graphics::Browser2::Action" : {
          "file" : "lib/Bio/Graphics/Browser2/Action.pm",
@@ -400,5 +412,5 @@
          "http://dev.perl.org/licenses/"
       ]
    },
-   "version" : "2.49"
+   "version" : "2.50"
 }
