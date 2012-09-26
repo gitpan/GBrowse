@@ -53,7 +53,7 @@ provides:
     version: 0
   Bio::Graphics::Browser2:
     file: lib/Bio/Graphics/Browser2.pm
-    version: 2.51
+    version: 2.52
   Bio::Graphics::Browser2::Action:
     file: lib/Bio/Graphics/Browser2/Action.pm
     version: 0
@@ -287,7 +287,7 @@ recommends:
   Template: 2.2
   Term::ReadKey: 0
 requires:
-  Bio::Graphics: 2.28
+  Bio::Graphics: 2.31
   Bio::Root::Version: 1.0069
   CGI::Session: 4.02
   Date::Parse: 0
@@ -307,4 +307,4 @@ requires:
   perl: 5.008
 resources:
   license: http://dev.perl.org/licenses/
-version: 2.51
+version: 2.52
