@@ -198,7 +198,8 @@ sub plugins {
 sub plugin_name {
     my $self = shift;
     my $label = shift;
-    my ($id) = $label =~ /^plugin:(\w+)/;
+    #my ($id) = $label =~ /^plugin:(\w+)/;
+    my (undef,$id) = split(/:/,$label);
     return $self->plugins->plugin($id)->name;
 }
 
@@ -922,6 +923,7 @@ sub segment_info_object {
         details_mult         => $self->details_mult(),
         hilite_fill          => $self->data_source->global_setting('hilite fill')    || 'red',  # Not sure if there's a
         hilite_outline       => $self->data_source->global_setting('hilite outline') || 'gray', # better place for this
+	hilite_height        => $self->data_source->global_setting('hilite height')  || '400px',
         flip                 => $state->{flip},
         initial_view_start   => $state->{view_start},
         initial_view_stop    => $state->{view_stop},
@@ -1135,6 +1137,13 @@ sub region {
     else { # a feature search
 	my $search   = $self->get_search_object();
 	my $features = $search->search_features();
+	my $max_feats = $self->data_source->global_setting('max keyword results');
+	if ($features && @$features > $max_feats) {
+	    $max_feats--;
+	    @$features = $max_feats ?                # How many search results?
+		         @{$features}[0..$max_feats] # max is > 1 
+			 : ($features->[0]);         # max is 1
+	}
 	if ($@) {
 	    (my $msg = $@) =~ s/\sat.+line \d+//;
 	    $self->error_message($msg);
@@ -1536,6 +1545,11 @@ sub handle_plugins {
         $self->do_plugin_header( $plugin, $cookie );
         $self->do_plugin_dump( $plugin, $metasegment, $state )
             && return 1;
+    }
+
+    if ($plugin_type eq 'annotator' && $plugin_action eq $self->translate('Go')) {
+	warn "HERE I AM";
+	return 1;
     }
 
     return;
@@ -2031,7 +2045,8 @@ sub auto_open {
 	    warn "auto_open(): add_track_to_state($desired_label)" if DEBUG;
 	    $self->add_track_to_state($desired_label);
 	    $state->{h_feat} = {};
-	    $state->{h_feat}{ lc $feature->display_name } = 'yellow'
+	    my $h_color = $self->data_source->global_setting('hilite color') || 'yellow';
+	    $state->{h_feat}{ lc $feature->display_name } = $h_color
 		unless param('h_feat') && param('h_feat') eq '_clear_';
 	}
     }
@@ -3734,7 +3749,7 @@ sub make_hilite_callback {
    
     # if we get here, we select the search term for highlighting
     my %names = map 
-                 {lc $_=> 1}
+                 {lc $_=> 1} grep { defined $_ }
                   $feature->display_name,
                   eval{$feature->get_tag_values('Alias')};
     return unless %names;

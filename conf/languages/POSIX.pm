@@ -168,6 +168,8 @@ END
 
    SELECT_SUBTRACKS   => 'showing %d/%d subtracks',
 
+   TRACK_ID   => 'Track ID=<i>%s</i>',
+
    EDIT       => 'Edit File...',
 
    DELETE     => 'Delete File',
@@ -489,6 +491,8 @@ END
  KILL_THIS_TRACK    => '<b>Turn off this track</b>',
 
  CONFIGURE_THIS_TRACK   => '<b>Configure this track</b>',
+
+ POP_OUT               => '<b>Pop out/in</b>',
 
  DOWNLOAD_THIS_TRACK   => '<b>Download this track</b>',
 
